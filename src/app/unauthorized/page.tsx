@@ -1,0 +1,1 @@
+export default function UnauthorizedPage() { return <main className="mx-auto max-w-xl px-6 py-24"><h1 className="text-3xl font-bold">Access not authorized</h1><p className="mt-4 text-[#705a54]">Your account does not have an SSFI application role. Contact an administrator.</p></main>; }

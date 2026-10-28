@@ -1,0 +1,2 @@
+-- Phase 2 seeds live in 202610270001_phase2_core.sql so a fresh migration applies
+-- roles, the SSFI campaign, and prizes atomically. Never seed customers, payments, or tickets.

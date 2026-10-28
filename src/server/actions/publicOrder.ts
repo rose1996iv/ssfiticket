@@ -59,7 +59,15 @@ export async function createPublicCustomerOrder(formData: FormData) {
     .eq("seller_code", parsed.data.sellerCode)
     .maybeSingle();
 
-  if (sellerErr || !seller) {
+  if (sellerErr) {
+    console.error("[Public Order Diagnostic] Seller lookup failed:", {
+      code: sellerErr.code,
+      message: sellerErr.message,
+    });
+    throw new Error("Unable to verify seller referral code at this time.");
+  }
+
+  if (!seller) {
     throw new Error(`Referral code "${parsed.data.sellerCode}" was not found.`);
   }
 
@@ -67,7 +75,46 @@ export async function createPublicCustomerOrder(formData: FormData) {
     throw new Error(`The seller associated with "${parsed.data.sellerCode}" is currently inactive.`);
   }
 
-  // 2. Execute order creation RPC with verified seller_id
+  // 2. Strict Server-Side Campaign State Verification
+  const { data: campaign, error: campaignErr } = await admin
+    .from("campaigns")
+    .select("id, status, total_ticket_limit, sold_ticket_count")
+    .eq("public_id", "ssfi-fundraising-lucky-draw")
+    .maybeSingle();
+
+  if (campaignErr) {
+    console.error("[Public Order Diagnostic] Campaign lookup failed:", {
+      code: campaignErr.code,
+      message: campaignErr.message,
+    });
+    throw new Error("Unable to verify fundraising campaign status. Please try again later.");
+  }
+
+  if (!campaign) {
+    console.error("[Public Order Diagnostic] Campaign 'ssfi-fundraising-lucky-draw' not found in database.");
+    throw new Error("Fundraising campaign configuration was not found.");
+  }
+
+  if (campaign.status !== "ACTIVE") {
+    console.warn(`[Public Order Diagnostic] Order rejected: Campaign status is '${campaign.status}' (must be 'ACTIVE').`);
+    if (campaign.status === "PAUSED") {
+      throw new Error("Ticket sales are temporarily paused. Please check back shortly.");
+    }
+    if (campaign.status === "DRAFT") {
+      throw new Error("Ticket sales have not officially opened yet. This campaign is currently in preview.");
+    }
+    if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED") {
+      throw new Error("Ticket sales for this lucky draw have ended.");
+    }
+    throw new Error(`Ticket sales are currently not active (campaign status: ${campaign.status}).`);
+  }
+
+  const remaining = Math.max(0, campaign.total_ticket_limit - campaign.sold_ticket_count);
+  if (parsed.data.quantity > remaining) {
+    throw new Error(`Sorry, the requested quantity (${parsed.data.quantity}) exceeds remaining campaign capacity (${remaining} tickets available).`);
+  }
+
+  // 3. Execute order creation RPC with verified seller_id and active campaign
   const { data: orderId, error: orderErr } = await admin.rpc("create_seller_order", {
     p_seller_id: seller.id,
     p_name: parsed.data.name,
@@ -77,12 +124,24 @@ export async function createPublicCustomerOrder(formData: FormData) {
   });
 
   if (orderErr || !orderId) {
+    console.error("[Public Order Diagnostic] RPC create_seller_order failed:", {
+      code: orderErr?.code,
+      message: orderErr?.message,
+      hint: orderErr?.hint,
+    });
+
     const errorMsg = orderErr?.message ?? "Failed to create order.";
     if (errorMsg.includes("capacity")) {
       throw new Error("Sorry, the requested quantity exceeds remaining campaign ticket capacity.");
     }
-    if (errorMsg.includes("not found")) {
-      throw new Error("Ticket sales are currently not active.");
+    if (errorMsg.includes("active campaign not found")) {
+      throw new Error("Ticket sales are currently not active for this campaign.");
+    }
+    if (errorMsg.includes("seller is inactive")) {
+      throw new Error("The attributed seller is currently inactive.");
+    }
+    if (orderErr?.code === "42501" || errorMsg.includes("permission denied")) {
+      throw new Error("Order creation failed due to database authorization restrictions.");
     }
     throw new Error("Unable to create your order at this time. Please try again.");
   }

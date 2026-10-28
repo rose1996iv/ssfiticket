@@ -166,16 +166,22 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
       <div className="mx-auto mt-6 max-w-xl px-4 sm:px-0">
         {/* Campaign Inactive Notice */}
         {!isCampaignActive && (
-          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <div className="flex items-center gap-2 font-bold">
-              <AlertCircle size={18} />
-              <span>Notice: Campaign In Draft / Paused</span>
+          <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-950 shadow-xs">
+            <div className="flex items-center gap-2 font-bold text-amber-900">
+              <AlertCircle size={20} className="text-amber-700 shrink-0" />
+              <span>
+                Ticket Orders Closed — Campaign {campaign?.status === "PAUSED" ? "Paused" : "Not Yet Launched"}
+              </span>
             </div>
-            <p className="mt-1 text-xs text-amber-800">
-              The SSFI Lucky Draw campaign is currently set to{" "}
-              <b>{campaign?.status ?? "DRAFT"}</b>. Orders submitted now are processed in preview/staging
-              mode and will require manual admin approval before issuance.
+            <p className="mt-2 text-xs leading-relaxed text-amber-800">
+              {campaign?.status === "PAUSED"
+                ? "Fundraising ticket sales are temporarily paused. Orders cannot be accepted at this time. Please check back shortly or contact SSFI administrators."
+                : "This fundraising lucky draw campaign is currently in DRAFT status and is not yet open for public ticket purchases. Online orders and UPI payments will be enabled once administrators officially launch the campaign."}
             </p>
+            <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 font-mono text-[11px] text-amber-900">
+              <p><span className="font-bold">Campaign Status:</span> {campaign?.status ?? "DRAFT"} | <span className="font-bold">Sales Mode:</span> INACTIVE</p>
+              <p className="text-amber-700 mt-0.5">Attributed seller referral ({seller.seller_code}) is validated and ready for launch.</p>
+            </div>
           </div>
         )}
 
@@ -217,6 +223,8 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
             sellerName={seller.display_name}
             unitPricePaise={ticketPricePaise}
             remainingCapacity={remainingTickets}
+            isCampaignActive={Boolean(isCampaignActive)}
+            campaignStatus={campaign?.status ?? "DRAFT"}
           />
         </section>
       </div>

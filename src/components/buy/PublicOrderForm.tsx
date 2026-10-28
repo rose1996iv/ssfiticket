@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, Loader2, Minus, Plus, ShieldCheck, Ticket } from "lucide-react";
+import { AlertTriangle, ArrowRight, Loader2, Minus, Plus, ShieldCheck, Ticket } from "lucide-react";
 import { createPublicCustomerOrder } from "@/server/actions/publicOrder";
 
 type Props = {
@@ -9,9 +9,18 @@ type Props = {
   sellerName: string;
   unitPricePaise: number;
   remainingCapacity: number;
+  isCampaignActive?: boolean;
+  campaignStatus?: string;
 };
 
-export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remainingCapacity }: Props) {
+export function PublicOrderForm({
+  sellerCode,
+  sellerName,
+  unitPricePaise,
+  remainingCapacity,
+  isCampaignActive = true,
+  campaignStatus = "ACTIVE",
+}: Props) {
   const [quantity, setQuantity] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -31,6 +40,12 @@ export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remain
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMsg(null);
+
+    if (!isCampaignActive) {
+      setErrorMsg(`Ticket sales are currently not active (campaign status: ${campaignStatus}). Orders cannot be submitted at this time.`);
+      return;
+    }
+
     setIsSubmitting(true);
 
     const form = event.currentTarget;
@@ -56,6 +71,18 @@ export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remain
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {!isCampaignActive && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 shadow-xs">
+          <p className="flex items-center gap-1.5 font-bold text-amber-950">
+            <AlertTriangle size={15} className="text-amber-700" />
+            Ticket Orders Currently Inactive
+          </p>
+          <p className="mt-1 leading-relaxed text-amber-800">
+            This fundraising campaign is in <b>{campaignStatus}</b> status. Online payments and ticket submissions are currently disabled.
+          </p>
+        </div>
+      )}
+
       {errorMsg && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           <p className="font-semibold">Unable to complete order</p>
@@ -140,7 +167,7 @@ export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remain
             <button
               type="button"
               onClick={decrement}
-              disabled={quantity <= 1 || isSubmitting}
+              disabled={quantity <= 1 || isSubmitting || !isCampaignActive}
               className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#eadbcf] bg-white text-lg font-bold text-[#7c1619] shadow-xs hover:bg-gray-50 disabled:opacity-40"
               aria-label="Decrease quantity"
             >
@@ -152,7 +179,7 @@ export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remain
             <button
               type="button"
               onClick={increment}
-              disabled={quantity >= maxAllowed || isSubmitting}
+              disabled={quantity >= maxAllowed || isSubmitting || !isCampaignActive}
               className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#eadbcf] bg-white text-lg font-bold text-[#7c1619] shadow-xs hover:bg-gray-50 disabled:opacity-40"
               aria-label="Increase quantity"
             >
@@ -170,13 +197,18 @@ export function PublicOrderForm({ sellerCode, sellerName, unitPricePaise, remain
       {/* Submit Button */}
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#7c1619] p-4 font-bold text-white shadow-md transition hover:bg-[#631214] disabled:opacity-60"
+        disabled={isSubmitting || !isCampaignActive}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#7c1619] p-4 font-bold text-white shadow-md transition hover:bg-[#631214] disabled:cursor-not-allowed disabled:bg-gray-400 disabled:opacity-75"
       >
         {isSubmitting ? (
           <>
             <Loader2 className="animate-spin" size={18} />
             <span>Processing your order...</span>
+          </>
+        ) : !isCampaignActive ? (
+          <>
+            <AlertTriangle size={18} />
+            <span>Ticket Sales Inactive (Campaign {campaignStatus})</span>
           </>
         ) : (
           <>

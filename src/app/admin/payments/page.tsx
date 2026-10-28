@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { ExportDropdown } from "@/components/admin/ExportDropdown";
 
 export const instant = false;
 
@@ -20,7 +21,7 @@ type PaymentRow = {
 export default async function PaymentsPage() {
   await connection();
   const db = createSupabaseAdminClient();
-  const { data = [] } = await db
+  const { data, error } = await db
     .from("payments")
     .select(
       "id, status, amount_paise, utr_reference, submitted_at, orders(order_number, customers(full_name, whatsapp_number), sellers(display_name, seller_code))"
@@ -29,7 +30,51 @@ export default async function PaymentsPage() {
     .order("submitted_at", { ascending: true })
     .limit(100);
 
-  const payments = data as unknown as PaymentRow[];
+  if (error) {
+    console.error("[Admin Payments Query Error]", {
+      code: error.code,
+      message: error.message,
+      hint: error.hint,
+    });
+
+    return (
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-950 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 shrink-0 text-red-600" size={24} />
+            <div className="space-y-3">
+              <div>
+                <h1 className="text-lg font-bold text-red-950">
+                  Unable to Load Pending Payments
+                </h1>
+                <p className="mt-1 text-xs leading-relaxed text-red-800">
+                  Failed to fetch pending payment submissions from the database.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-red-200 bg-white/90 p-3.5 font-mono text-xs text-red-900">
+                <p><span className="font-bold">Error Code:</span> {error.code || "UNKNOWN"}</p>
+                <p><span className="font-bold">Message:</span> {error.message || "Query failed"}</p>
+                {error.hint && <p className="mt-1 text-red-700"><span className="font-bold">Hint:</span> {error.hint}</p>}
+              </div>
+
+              <div>
+                <Link
+                  href="/admin/payments"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-red-700 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-red-800"
+                >
+                  <RefreshCw size={14} />
+                  <span>Retry Payments Query</span>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const payments = (data ?? []) as unknown as PaymentRow[];
 
   return (
     <div className="space-y-6">
@@ -42,9 +87,12 @@ export default async function PaymentsPage() {
             Review bank UTR references and verify payments to atomically issue ticket numbers.
           </p>
         </div>
-        <span className="rounded-full bg-amber-100 px-3 py-1 font-mono text-xs font-bold text-amber-900">
-          {payments.length} awaiting review
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="rounded-full bg-amber-100 px-3 py-1 font-mono text-xs font-bold text-amber-900">
+            {payments.length} awaiting review
+          </span>
+          <ExportDropdown resource="payments" resourceName="Payments" status="SUBMITTED" />
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-[#eadbcf] bg-white shadow-sm">

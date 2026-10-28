@@ -1,17 +1,20 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import {
+  AlertTriangle,
   ArrowRight,
   Banknote,
   CheckCircle2,
   Clock,
   QrCode,
+  RefreshCw,
   ShoppingBag,
   Sparkles,
   Ticket,
   Users,
 } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { ExportDropdown } from "@/components/admin/ExportDropdown";
 
 export const instant = false;
 
@@ -21,26 +24,153 @@ export default async function AdminPage() {
   await connection();
   const db = createSupabaseAdminClient();
 
-  const { data: campaign } = await db
-    .from("campaigns")
-    .select("total_ticket_limit, sold_ticket_count, ticket_price_paise, status, name")
-    .eq("public_id", "ssfi-fundraising-lucky-draw")
-    .maybeSingle();
+  // Execute all admin queries concurrently
+  const [campaignResult, paymentsResult, ordersResult, sellersResult] = await Promise.all([
+    db
+      .from("campaigns")
+      .select("total_ticket_limit, sold_ticket_count, ticket_price_paise, status, name")
+      .eq("public_id", "ssfi-fundraising-lucky-draw")
+      .maybeSingle(),
+    db
+      .from("payments")
+      .select("status, amount_paise"),
+    db
+      .from("orders")
+      .select("id", { count: "exact", head: true }),
+    db
+      .from("sellers")
+      .select("id", { count: "exact", head: true })
+      .eq("is_active", true),
+  ]);
 
-  const { data: rawPayments = [] } = await db
-    .from("payments")
-    .select("status, amount_paise");
-  const payments = rawPayments as PaymentSummary[];
+  const { data: campaign, error: campaignError } = campaignResult;
+  const { data: paymentsData, error: paymentsError } = paymentsResult;
+  const { count: ordersCount, error: ordersError } = ordersResult;
+  const { count: sellersCount, error: sellersError } = sellersResult;
 
-  const { count: ordersCount = 0 } = await db
-    .from("orders")
-    .select("id", { count: "exact", head: true });
+  // Check for any query failure before computing metrics
+  if (paymentsError || campaignError || ordersError || sellersError) {
+    const primaryError = paymentsError || campaignError || ordersError || sellersError;
+    const failedTable = paymentsError
+      ? "payments"
+      : campaignError
+      ? "campaigns"
+      : ordersError
+      ? "orders"
+      : "sellers";
 
-  const { count: sellersCount = 0 } = await db
-    .from("sellers")
-    .select("id", { count: "exact", head: true })
-    .eq("is_active", true);
+    console.error("[Admin Dashboard Query Error]", {
+      table: failedTable,
+      code: primaryError?.code,
+      message: primaryError?.message,
+      hint: primaryError?.hint,
+    });
 
+    return (
+      <div className="space-y-6">
+        {/* Clear, intentional dashboard error state */}
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-950 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 shrink-0 text-red-600" size={24} />
+            <div className="space-y-3">
+              <div>
+                <h1 className="text-lg font-bold text-red-950">
+                  Dashboard Data Query Failed
+                </h1>
+                <p className="mt-1 text-xs leading-relaxed text-red-800">
+                  The administrator dashboard encountered an error while querying the <b>{failedTable}</b> table.
+                  {primaryError?.code === "42501" ? (
+                    <> This indicates PostgreSQL <b>permission denied (error 42501)</b>. The Supabase service role requires table grant privileges in PostgreSQL.</>
+                  ) : null}
+                </p>
+              </div>
+
+              {primaryError && (
+                <div className="rounded-xl border border-red-200 bg-white/90 p-3.5 font-mono text-xs text-red-900">
+                  <p><span className="font-bold">Error Code:</span> {primaryError.code || "UNKNOWN"}</p>
+                  <p><span className="font-bold">Message:</span> {primaryError.message || "Failed to query database table."}</p>
+                  {primaryError.hint && (
+                    <p className="mt-1 text-red-700"><span className="font-bold">Hint:</span> {primaryError.hint}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="pt-1">
+                <Link
+                  href="/admin"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-red-700 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-red-800"
+                >
+                  <RefreshCw size={14} />
+                  <span>Retry Dashboard Query</span>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Administrative shortcuts remain accessible */}
+        <div>
+          <h2 className="text-lg font-bold text-[#35110f]">Administrative Shortcuts</h2>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Link
+              href="/admin/payments"
+              className="flex items-center gap-3.5 rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs transition hover:bg-[#fffaf7] hover:border-[#7c1619]"
+            >
+              <div className="rounded-xl bg-[#fceeee] p-3 text-[#7c1619]">
+                <Banknote size={22} />
+              </div>
+              <div>
+                <p className="font-bold text-sm text-[#35110f]">Verify Payments</p>
+                <p className="text-xs text-[#705a54]">Match UTR & issue tickets</p>
+              </div>
+            </Link>
+
+            <Link
+              href="/admin/sellers"
+              className="flex items-center gap-3.5 rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs transition hover:bg-[#fffaf7] hover:border-[#7c1619]"
+            >
+              <div className="rounded-xl bg-[#fceeee] p-3 text-[#7c1619]">
+                <QrCode size={22} />
+              </div>
+              <div>
+                <p className="font-bold text-sm text-[#35110f]">Sellers & QR Codes</p>
+                <p className="text-xs text-[#705a54]">View & download QR standees</p>
+              </div>
+            </Link>
+
+            <Link
+              href="/admin/orders"
+              className="flex items-center gap-3.5 rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs transition hover:bg-[#fffaf7] hover:border-[#7c1619]"
+            >
+              <div className="rounded-xl bg-[#fceeee] p-3 text-[#7c1619]">
+                <ShoppingBag size={22} />
+              </div>
+              <div>
+                <p className="font-bold text-sm text-[#35110f]">Orders Directory</p>
+                <p className="text-xs text-[#705a54]">Audit all customer sales</p>
+              </div>
+            </Link>
+
+            <Link
+              href="/admin/tickets"
+              className="flex items-center gap-3.5 rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs transition hover:bg-[#fffaf7] hover:border-[#7c1619]"
+            >
+              <div className="rounded-xl bg-[#fceeee] p-3 text-[#7c1619]">
+                <Ticket size={22} />
+              </div>
+              <div>
+                <p className="font-bold text-sm text-[#35110f]">Issued Tickets</p>
+                <p className="text-xs text-[#705a54]">Assigned SSFI ticket numbers</p>
+              </div>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Safe normalization of nullable collections only after confirming no query errors
+  const payments = (paymentsData ?? []) as PaymentSummary[];
   const verifiedPayments = payments.filter((p) => p.status === "VERIFIED");
   const verifiedCollectionPaise = verifiedPayments.reduce((acc, p) => acc + p.amount_paise, 0);
   const verifiedCollectionInr = verifiedCollectionPaise / 100;
@@ -50,6 +180,8 @@ export default async function AdminPage() {
   const soldCount = campaign?.sold_ticket_count ?? 0;
   const remainingCount = Math.max(0, totalLimit - soldCount);
   const percentageSold = Math.min(100, Math.round((soldCount / totalLimit) * 100));
+  const safeOrdersCount = ordersCount ?? 0;
+  const safeSellersCount = sellersCount ?? 0;
 
   return (
     <div className="space-y-8">
@@ -68,7 +200,7 @@ export default async function AdminPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span
             className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${
               campaign?.status === "ACTIVE"
@@ -78,6 +210,7 @@ export default async function AdminPage() {
           >
             Campaign: {campaign?.status ?? "DRAFT"}
           </span>
+          <ExportDropdown resource="dashboard" resourceName="KPI Summary" />
         </div>
       </div>
 
@@ -155,8 +288,8 @@ export default async function AdminPage() {
               <Users size={20} />
             </div>
           </div>
-          <p className="mt-3 text-3xl font-bold text-[#35110f]">{sellersCount}</p>
-          <p className="mt-1 text-xs text-[#705a54]">{ordersCount} total orders registered</p>
+          <p className="mt-3 text-3xl font-bold text-[#35110f]">{safeSellersCount}</p>
+          <p className="mt-1 text-xs text-[#705a54]">{safeOrdersCount} total orders registered</p>
         </div>
       </div>
 

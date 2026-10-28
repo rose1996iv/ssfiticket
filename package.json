@@ -8,11 +8,14 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/referral.test.ts"
+    "test": "node --test tests/referral.test.ts tests/youtube.test.ts tests/export.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "lucide-react": "^1.61.0",
     "next": "16.4.3",
     "qrcode": "^1.5.4",

@@ -107,3 +107,4 @@ export function SellerReferralCard({ sellerCode, sellerName }: Props) {
     </div>
   );
 }
+

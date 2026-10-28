@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { AlertCircle, Gift, QrCode, ShieldAlert, Sparkles, Ticket } from "lucide-react";
+import { AlertCircle, Gift, ShieldAlert, Sparkles, Ticket } from "lucide-react";
+import { Logo } from "@/components/brand/Logo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getActiveSellerByReferralCode } from "@/lib/validation/referral";
 import { PublicOrderForm } from "@/components/buy/PublicOrderForm";
@@ -29,9 +30,14 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
     return (
       <main className="min-h-screen bg-[#fffaf7] px-4 py-12 text-[#35110f] sm:px-6 sm:py-16">
         <div className="mx-auto max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:p-8">
-          <div className="flex items-center gap-2 text-[#7c1619]">
-            <QrCode size={24} />
-            <span className="text-xs font-bold tracking-widest uppercase">SSFI Fundraising</span>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-1.5 shadow-xs">
+              <Logo size="xs" />
+            </div>
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-[#7c1619]">SSFI Fundraising</p>
+              <p className="text-[11px] text-[#705a54]">Lucky Draw Portal</p>
+            </div>
           </div>
 
           <h1 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -148,6 +154,11 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
       {/* Top Banner */}
       <header className="border-b border-[#e8d6c5] bg-[#7c1619] px-4 py-8 text-white sm:px-6">
         <div className="mx-auto max-w-xl text-center">
+          <div className="mb-3 flex justify-center">
+            <div className="rounded-xl bg-white p-2 shadow-sm">
+              <Logo size="xs" />
+            </div>
+          </div>
           <p className="text-xs font-bold tracking-[0.2em] text-[#f3ce75]">SSFI FUNDRAISING</p>
           <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Lucky Draw Ticket Order</h1>
           <p className="mt-2 text-xs text-[#f8e9df]">
@@ -216,3 +227,4 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
     </main>
   );
 }
+

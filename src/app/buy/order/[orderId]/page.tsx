@@ -13,6 +13,7 @@ import {
 import { manualUpiConfig } from "@/lib/config/payment";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { submitPublicUpiPayment } from "@/server/actions/publicOrder";
+import { Logo } from "@/components/brand/Logo";
 
 export const instant = false;
 
@@ -83,6 +84,11 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
       {/* Header */}
       <header className="border-b border-[#e8d6c5] bg-[#7c1619] px-4 py-8 text-white sm:px-6">
         <div className="mx-auto max-w-xl text-center">
+          <div className="mb-3 flex justify-center">
+            <div className="rounded-xl bg-white p-2 shadow-sm">
+              <Logo size="xs" />
+            </div>
+          </div>
           <p className="text-xs font-bold tracking-[0.2em] text-[#f3ce75]">SSFI LUCKY DRAW</p>
           <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Order Confirmation</h1>
           <p className="mt-1 font-mono text-xs text-[#f8e9df]">{order.order_number}</p>

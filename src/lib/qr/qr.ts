@@ -1,4 +1,5 @@
 import QRCode from "qrcode";
+import { getBaseAppUrl } from "../config/appUrl.ts";
 
 /**
  * Returns the canonical public referral URL for a seller.
@@ -6,11 +7,7 @@ import QRCode from "qrcode";
  */
 export function getSellerReferralUrl(sellerCode: string, origin?: string): string {
   const cleanCode = sellerCode.trim().toUpperCase();
-  const base = (
-    origin ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    "https://ssfiticket.vercel.app"
-  ).replace(/\/+$/, "");
+  const base = getBaseAppUrl(origin);
 
   return `${base}/buy?ref=${encodeURIComponent(cleanCode)}`;
 }
@@ -51,3 +48,4 @@ export async function generateQrSvg(
     errorCorrectionLevel: "M",
   });
 }
+

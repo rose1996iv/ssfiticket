@@ -1,3 +1,15 @@
-import { login } from "@/server/actions/auth";
+import type { Metadata } from "next";
+import { LoginForm } from "@/components/auth/LoginForm";
 
-export default function LoginPage() { return <main className="mx-auto flex min-h-screen max-w-md items-center px-6"><form action={login} className="w-full space-y-5 rounded-2xl border border-[#eadbcf] bg-white p-7 shadow-sm"><p className="text-sm font-bold tracking-widest text-[#a41f23]">SSFI</p><h1 className="text-3xl font-bold">Sign in</h1><label className="block text-sm font-medium">Email<input required name="email" type="email" className="mt-1 w-full rounded border p-3" /></label><label className="block text-sm font-medium">Password<input required name="password" type="password" minLength={8} className="mt-1 w-full rounded border p-3" /></label><button className="w-full rounded bg-[#7c1619] p-3 font-bold text-white">Sign in</button></form></main>; }
+export const metadata: Metadata = {
+  title: "Sign in — SSFI Portal",
+  description: "Sign in to the Senthang Students Fellowship India (SSFI) Lucky Draw administration or seller portal.",
+};
+
+export default function LoginPage() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#fffaf7] px-4 py-12 sm:px-6 lg:px-8">
+      <LoginForm />
+    </main>
+  );
+}

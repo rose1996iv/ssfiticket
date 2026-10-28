@@ -1,31 +1,64 @@
 import Link from "next/link";
-import { ArrowRight, Gift, QrCode, ShieldCheck, Ticket } from "lucide-react";
+import { ArrowRight, Gift, LogIn, QrCode, ShieldCheck, Sparkles, Ticket } from "lucide-react";
+import { Logo } from "@/components/brand/Logo";
 
 const prizes = [
-  ["1st Prize", "₹10,000 Cash"],
-  ["2nd Prize", "₹8,000 Cash"],
-  ["3rd Prize", "Electric Induction"],
-  ["4th Prize", "Ukulele"],
-  ["5th Prize", "Mini Soundbox"],
+  ["1st Prize", "₹10,000 Cash Giveaway"],
+  ["2nd Prize", "₹8,000 Cash Celebration"],
+  ["3rd Prize", "Induction Cooker Giveaway"],
+  ["4th Prize", "Ukulele Celebration"],
+  ["5th Prize", "Mini Soundbox Celebration"],
 ] as const;
 
 export default function Home() {
   return (
     <main className="min-h-screen bg-[#fffaf7] text-[#35110f]">
+      {/* Top Navbar */}
+      <nav className="border-b border-[#e8d6c5] bg-[#7c1619] px-6 py-4 text-white">
+        <div className="mx-auto flex max-w-5xl items-center justify-between">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="rounded-xl bg-white p-1.5 shadow-sm">
+              <Logo size="xs" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-bold tracking-tight text-white">SSFI Lucky Draw</span>
+              <span className="text-[10px] text-[#f8e9df]">Senthang Students Fellowship India</span>
+            </div>
+          </Link>
+
+          <div className="flex items-center gap-3">
+            <Link
+              href="/login"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20"
+            >
+              <LogIn size={14} />
+              <span>Staff / Seller Sign in</span>
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
       <section className="relative overflow-hidden border-b border-[#e8d6c5] bg-[#7c1619] px-6 py-16 text-white sm:px-10 sm:py-24">
-        <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full border-[28px] border-[#d6a23b]/30" />
+        <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full border-[32px] border-[#d6a23b]/20" />
         <div className="relative mx-auto max-w-5xl">
-          <p className="mb-5 text-sm font-bold tracking-[0.24em] text-[#f3ce75]">SSFI</p>
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold tracking-widest uppercase text-[#f3ce75]">
+            <Sparkles size={14} />
+            <span>Official Fundraising Campaign</span>
+          </div>
+
           <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl">
             Senthang Students Fellowship India
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df]">
-            Fundraising Ticket System for the SSFI Fundraising Lucky Draw.
+            Support student fellowship and education initiatives by participating in the official
+            SSFI Fundraising Lucky Draw.
           </p>
+
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
               href="/buy"
-              className="inline-flex items-center gap-2 rounded-full bg-[#d6a23b] px-6 py-3.5 text-sm font-bold text-[#35110f] shadow-md transition hover:bg-[#c29130]"
+              className="inline-flex items-center gap-2 rounded-full bg-[#d6a23b] px-7 py-4 text-sm font-bold text-[#35110f] shadow-lg transition hover:bg-[#c29130] hover:scale-105"
             >
               <QrCode size={18} aria-hidden="true" />
               <span>Buy Tickets via Seller Referral</span>
@@ -35,32 +68,44 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Information Cards */}
       <section className="mx-auto grid max-w-5xl gap-6 px-6 py-12 sm:grid-cols-3 sm:px-10 sm:py-16">
         <article className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:col-span-1">
-          <Ticket className="mb-4 text-[#a41f23]" aria-hidden="true" />
-          <p className="text-sm font-semibold uppercase tracking-wider text-[#80635b]">Ticket Price</p>
+          <Ticket className="mb-4 text-[#a41f23]" size={24} aria-hidden="true" />
+          <p className="text-xs font-bold uppercase tracking-wider text-[#80635b]">Ticket Price</p>
           <p className="mt-2 text-4xl font-bold text-[#7c1619]">₹100</p>
-          <p className="mt-3 text-sm leading-6 text-[#705a54]">Ticket purchase will open in a future phase.</p>
+          <p className="mt-3 text-xs leading-5 text-[#705a54]">
+            Scan any active seller’s QR code to purchase your tickets securely online via manual UPI.
+          </p>
         </article>
+
         <article className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:col-span-2">
           <div className="flex items-center gap-3">
-            <Gift className="text-[#a41f23]" aria-hidden="true" />
-            <h2 className="text-xl font-bold">Prize summary</h2>
+            <Gift className="text-[#a41f23]" size={24} aria-hidden="true" />
+            <h2 className="text-xl font-bold">Guaranteed Celebration Prizes</h2>
           </div>
           <dl className="mt-5 grid gap-3 sm:grid-cols-2">
             {prizes.map(([place, prize]) => (
-              <div key={place} className="flex items-baseline justify-between gap-3 border-b border-[#f0e7df] pb-3 text-sm">
+              <div
+                key={place}
+                className="flex items-baseline justify-between gap-3 border-b border-[#f0e7df] pb-3 text-sm"
+              >
                 <dt className="font-semibold text-[#7c1619]">{place}</dt>
-                <dd className="text-right text-[#594541]">{prize}</dd>
+                <dd className="text-right text-[#594541] font-medium">{prize}</dd>
               </div>
             ))}
           </dl>
         </article>
       </section>
 
-      <section className="mx-auto flex max-w-5xl items-start gap-3 px-6 pb-12 text-sm leading-6 text-[#705a54] sm:px-10 sm:pb-16">
+      {/* Security & Verification Notice */}
+      <section className="mx-auto flex max-w-5xl items-start gap-3 px-6 pb-16 text-xs leading-6 text-[#705a54] sm:px-10">
         <ShieldCheck className="mt-0.5 shrink-0 text-[#a41f23]" size={20} aria-hidden="true" />
-        <p>This site is currently in its foundation phase. Ticket sales, payment collection, and ticket verification are not yet available.</p>
+        <p>
+          All ticket numbers are securely generated by database sequence upon manual staff
+          verification of incoming payments. No automated lottery algorithms or live gateway
+          transactions are used without human oversight.
+        </p>
       </section>
     </main>
   );

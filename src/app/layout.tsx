@@ -17,8 +17,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SSFI Fundraising Ticket System",
-  description: "Foundation for the SSFI Fundraising Lucky Draw.",
+  title: {
+    default: "SSFI Fundraising Lucky Draw",
+    template: "%s | SSFI Lucky Draw",
+  },
+  description: "Official Senthang Students Fellowship India (SSFI) Fundraising Lucky Draw Ticket System.",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

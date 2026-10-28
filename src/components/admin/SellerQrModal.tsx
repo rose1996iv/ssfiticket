@@ -155,3 +155,4 @@ export function SellerQrModal({ sellerCode, sellerName, isActive }: Props) {
     </>
   );
 }
+

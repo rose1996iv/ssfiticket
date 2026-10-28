@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Gift, LogIn, QrCode, ShieldCheck, Sparkles, Ticket } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
+import { HeroBackgroundVideo } from "@/components/home/HeroBackgroundVideo";
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash Giveaway"],
@@ -16,13 +17,11 @@ export default function Home() {
       {/* Top Navbar */}
       <nav className="border-b border-[#e8d6c5] bg-[#7c1619] px-6 py-4 text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="rounded-xl bg-white p-1.5 shadow-sm">
-              <Logo size="xs" />
-            </div>
+          <Link href="/" className="group flex items-center gap-3">
+            <Logo size="sm" className="transition-transform group-hover:scale-105" />
             <div className="flex flex-col">
-              <span className="text-sm font-bold tracking-tight text-white">SSFI Lucky Draw</span>
-              <span className="text-[10px] text-[#f8e9df]">Senthang Students Fellowship India</span>
+              <span className="text-base font-bold tracking-tight text-white leading-tight">SSFI Lucky Draw</span>
+              <span className="text-[11px] text-[#f8e9df] leading-tight">Senthang Students Fellowship India</span>
             </div>
           </Link>
 
@@ -39,18 +38,23 @@ export default function Home() {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden border-b border-[#e8d6c5] bg-[#7c1619] px-6 py-16 text-white sm:px-10 sm:py-24">
-        <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full border-[32px] border-[#d6a23b]/20" />
-        <div className="relative mx-auto max-w-5xl">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold tracking-widest uppercase text-[#f3ce75]">
+      <section className="relative overflow-hidden border-b border-[#e8d6c5] px-6 py-16 text-white sm:px-10 sm:py-24">
+        {/* YouTube Background Video & Static Fallback Gradient */}
+        <HeroBackgroundVideo />
+
+        {/* Decorative Gold Accent Ring */}
+        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full border-[32px] border-[#d6a23b]/20 z-1" />
+
+        <div className="relative z-10 mx-auto max-w-5xl">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold tracking-widest uppercase text-[#f3ce75] backdrop-blur-xs">
             <Sparkles size={14} />
             <span>Official Fundraising Campaign</span>
           </div>
 
-          <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl">
+          <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl drop-shadow-sm">
             Senthang Students Fellowship India
           </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df]">
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df] drop-shadow-xs">
             Support student fellowship and education initiatives by participating in the official
             SSFI Fundraising Lucky Draw.
           </p>

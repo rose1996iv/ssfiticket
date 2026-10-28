@@ -1,10 +1,12 @@
 import "server-only";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type AppRole = "SUPER_ADMIN" | "ADMIN" | "FUNDRAISING_MANAGER" | "SELLER";
 
 export async function getCurrentUser() {
+  await connection();
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error) return null;

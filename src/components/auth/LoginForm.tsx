@@ -42,9 +42,7 @@ export function LoginForm() {
         {/* Top Branded Bar */}
         <div className="border-b border-[#e8d6c5] bg-[#7c1619] px-8 py-8 text-center text-white">
           <div className="flex justify-center">
-            <div className="rounded-2xl bg-white p-3 shadow-md">
-              <Logo size="md" />
-            </div>
+            <Logo size="lg" className="transition-transform hover:scale-105" />
           </div>
           <h1 className="mt-4 text-2xl font-bold tracking-tight">SSFI Lucky Draw</h1>
           <p className="mt-1 text-xs font-medium text-[#f8e9df]">

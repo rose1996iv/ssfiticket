@@ -1,12 +1,12 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { requireRole } from "@/lib/auth/server";
 import { logout } from "@/server/actions/auth";
 import { Logo } from "@/components/brand/Logo";
 import { LogOut, PlusCircle, ShoppingBag } from "lucide-react";
 
-export const instant = false;
-
 export default async function SellerLayout({ children }: { children: React.ReactNode }) {
+  await connection();
   const user = await requireRole("SELLER");
 
   return (
@@ -14,10 +14,8 @@ export default async function SellerLayout({ children }: { children: React.React
       {/* Branded Header */}
       <header className="border-b border-[#e8d6c5] bg-white sticky top-0 z-30 shadow-2xs">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
-          <Link href="/seller" className="flex items-center gap-2.5">
-            <div className="rounded-lg border border-[#eadbcf] bg-[#fffaf7] p-1">
-              <Logo size="xs" />
-            </div>
+          <Link href="/seller" className="group flex items-center gap-3">
+            <Logo size="sm" className="transition-transform group-hover:scale-105" />
             <div>
               <span className="text-sm font-bold tracking-tight text-[#7c1619]">SSFI Seller</span>
               <span className="hidden text-xs text-[#705a54] sm:inline"> · Partner Portal</span>

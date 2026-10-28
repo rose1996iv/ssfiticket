@@ -8,9 +8,7 @@ export default function UnauthorizedPage() {
     <main className="flex min-h-screen items-center justify-center bg-[#fffaf7] px-4 py-12 sm:px-6">
       <div className="w-full max-w-md rounded-2xl border border-red-200 bg-white p-8 text-center shadow-lg">
         <div className="mx-auto flex justify-center">
-          <div className="rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-2.5">
-            <Logo size="md" />
-          </div>
+          <Logo size="lg" className="transition-transform hover:scale-105" />
         </div>
 
         <div className="mt-6 flex items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-700">

@@ -31,9 +31,7 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
       <main className="min-h-screen bg-[#fffaf7] px-4 py-12 text-[#35110f] sm:px-6 sm:py-16">
         <div className="mx-auto max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:p-8">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-1.5 shadow-xs">
-              <Logo size="xs" />
-            </div>
+            <Logo size="sm" />
             <div>
               <p className="text-xs font-bold tracking-widest uppercase text-[#7c1619]">SSFI Fundraising</p>
               <p className="text-[11px] text-[#705a54]">Lucky Draw Portal</p>
@@ -155,9 +153,7 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
       <header className="border-b border-[#e8d6c5] bg-[#7c1619] px-4 py-8 text-white sm:px-6">
         <div className="mx-auto max-w-xl text-center">
           <div className="mb-3 flex justify-center">
-            <div className="rounded-xl bg-white p-2 shadow-sm">
-              <Logo size="xs" />
-            </div>
+            <Logo size="md" className="transition-transform hover:scale-105" />
           </div>
           <p className="text-xs font-bold tracking-[0.2em] text-[#f3ce75]">SSFI FUNDRAISING</p>
           <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Lucky Draw Ticket Order</h1>
@@ -227,4 +223,3 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
     </main>
   );
 }
-

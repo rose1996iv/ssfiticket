@@ -52,10 +52,8 @@ export function AdminSidebar({ userEmail, isOpen, onClose }: Props) {
       >
         {/* Brand Header */}
         <div className="flex h-20 items-center justify-between border-b border-[#f0e7df] px-6">
-          <Link href="/admin" className="flex items-center gap-3">
-            <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-1.5 shadow-xs">
-              <Logo size="xs" />
-            </div>
+          <Link href="/admin" className="group flex items-center gap-3">
+            <Logo size="sm" className="transition-transform group-hover:scale-105" />
             <div className="flex flex-col">
               <span className="text-sm font-bold tracking-tight text-[#7c1619]">SSFI Admin</span>
               <span className="text-[11px] font-medium text-[#705a54]">Lucky Draw Portal</span>

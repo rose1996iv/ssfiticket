@@ -29,9 +29,7 @@ export default async function PublicTicketVerificationPage({ params }: PageProps
       <div className="w-full max-w-md rounded-2xl border border-[#eadbcf] bg-white p-8 text-center shadow-lg">
         {/* Logo */}
         <div className="mx-auto flex justify-center">
-          <div className="rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-2.5">
-            <Logo size="md" />
-          </div>
+          <Logo size="lg" className="transition-transform hover:scale-105" />
         </div>
 
         <p className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-[#a41f23]">

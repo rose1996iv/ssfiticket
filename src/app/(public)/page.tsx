@@ -1,4 +1,5 @@
-import { ArrowRight, Gift, ShieldCheck, Ticket } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Gift, QrCode, ShieldCheck, Ticket } from "lucide-react";
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash"],
@@ -21,13 +22,16 @@ export default function Home() {
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df]">
             Fundraising Ticket System for the SSFI Fundraising Lucky Draw.
           </p>
-          <button
-            type="button"
-            disabled
-            className="mt-9 inline-flex cursor-not-allowed items-center gap-2 rounded-full bg-[#d6a23b] px-5 py-3 text-sm font-bold text-[#35110f] opacity-90"
-          >
-            Coming soon <ArrowRight size={16} aria-hidden="true" />
-          </button>
+          <div className="mt-9 flex flex-wrap items-center gap-4">
+            <Link
+              href="/buy"
+              className="inline-flex items-center gap-2 rounded-full bg-[#d6a23b] px-6 py-3.5 text-sm font-bold text-[#35110f] shadow-md transition hover:bg-[#c29130]"
+            >
+              <QrCode size={18} aria-hidden="true" />
+              <span>Buy Tickets via Seller Referral</span>
+              <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+          </div>
         </div>
       </section>
 

@@ -4,6 +4,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SellerQrModal } from "@/components/admin/SellerQrModal";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
+import { CreateSellerModal } from "@/components/admin/CreateSellerModal";
 
 export const instant = false;
 
@@ -79,11 +80,12 @@ export default async function AdminSellersPage() {
             Manage fundraisers, generate QR cards, and monitor sales attribution.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <p className="font-mono text-xs font-semibold text-[#705a54]">
             {sellers.length} registered {sellers.length === 1 ? "seller" : "sellers"}
           </p>
           <ExportDropdown resource="sellers" resourceName="Sellers" />
+          <CreateSellerModal />
         </div>
       </div>
 

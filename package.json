@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/referral.test.ts tests/youtube.test.ts tests/export.test.ts"
+    "test": "node --test tests/referral.test.ts tests/youtube.test.ts tests/export.test.ts tests/seller.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

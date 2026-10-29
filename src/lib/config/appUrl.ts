@@ -1,20 +1,23 @@
 /**
- * Resolves the canonical base application URL for SSFI Lucky Draw.
- * Automatically handles local development, Vercel deployments, custom domains,
- * and ensures no trailing slashes or malformed URLs.
+ * SSFI Lucky Draw — Environment-Aware Application URLs
+ *
+ * Guarantees that generated links and QR codes point to the SAME environment
+ * and database that owns the record:
+ * - Production environment -> https://ssfiticket.vercel.app
+ * - Vercel Preview environment -> Preview deployment URL (VERCEL_BRANCH_URL or VERCEL_URL), NEVER Production
+ * - Local development -> http://localhost:3000 (or custom request origin)
  */
 
-type AppUrlOptions = {
-  /**
-   * If true, guarantees the link will resolve to the canonical public production domain
-   * (or configured APP_BASE_URL), preventing any accidental exposure of private,
-   * authentication-protected Vercel Preview deployment URLs to real customers.
-   */
-  forCustomerFacingLink?: boolean;
+export type AppUrlResolution = {
+  baseUrl: string;
+  isProduction: boolean;
+  isPreview: boolean;
+  isSafePreviewUrlAvailable: boolean;
+  isInternalTestingOnly: boolean;
 };
 
 /**
- * Validates, trims, and normalizes a base URL string.
+ * Validates, trims, and normalizes a base URL string without trailing slashes.
  */
 function normalizeUrl(url: string): string {
   let cleaned = url.trim().replace(/\/+$/, "");
@@ -24,25 +27,23 @@ function normalizeUrl(url: string): string {
   return cleaned;
 }
 
-export function getBaseAppUrl(
-  requestOrigin?: string,
-  options?: AppUrlOptions
-): string {
-  // 1. Explicit request origin if provided (e.g. from request headers or test runners)
+/**
+ * Resolves the environment-accurate base URL with strict environment isolation.
+ */
+export function resolveEnvironmentAppUrl(requestOrigin?: string): AppUrlResolution {
+  // 1. Explicit request origin if provided (e.g. from server request headers or tests)
   if (requestOrigin && requestOrigin.trim() !== "") {
-    return normalizeUrl(requestOrigin);
+    const isProd = /ssfiticket\.vercel\.app/i.test(requestOrigin);
+    const isPrev = /vercel\.app/i.test(requestOrigin) && !isProd;
+    return {
+      baseUrl: normalizeUrl(requestOrigin),
+      isProduction: isProd,
+      isPreview: isPrev,
+      isSafePreviewUrlAvailable: true,
+      isInternalTestingOnly: isPrev,
+    };
   }
 
-  // 2. Explicit server-side or public environment variables (highest priority configuration)
-  const explicitEnvUrl =
-    process.env.APP_BASE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL;
-
-  if (explicitEnvUrl && explicitEnvUrl.trim() !== "") {
-    return normalizeUrl(explicitEnvUrl);
-  }
-
-  // 3. Environment classification
   const isVercelProduction =
     process.env.VERCEL_ENV === "production" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
@@ -51,39 +52,92 @@ export function getBaseAppUrl(
     process.env.VERCEL_ENV === "preview" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
 
-  // 4. Production or Customer-Facing Links:
-  // Customer links must ALWAYS use the public production domain (https://ssfiticket.vercel.app)
-  // so external supporters never encounter Vercel Deployment Protection auth barriers.
-  if (isVercelProduction || options?.forCustomerFacingLink) {
-    if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-      return normalizeUrl(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
-    }
-    return "https://ssfiticket.vercel.app";
+  // 2. Production Environment: Canonical public production domain
+  if (isVercelProduction) {
+    const prodUrl =
+      process.env.APP_BASE_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : "https://ssfiticket.vercel.app");
+    return {
+      baseUrl: normalizeUrl(prodUrl),
+      isProduction: true,
+      isPreview: false,
+      isSafePreviewUrlAvailable: true,
+      isInternalTestingOnly: false,
+    };
   }
 
-  // 5. Vercel Preview internal navigation (only for internal staff/dev preview browsing)
+  // 3. Vercel Preview Environment: Must point to the preview deployment, NEVER silently to Production!
   if (isVercelPreview) {
-    const previewUrl = process.env.VERCEL_URL || process.env.NEXT_PUBLIC_VERCEL_URL;
-    if (previewUrl && previewUrl.trim() !== "") {
-      return normalizeUrl(`https://${previewUrl}`);
+    // Prefer VERCEL_BRANCH_URL (stable branch deployment URL) then VERCEL_URL
+    const previewCandidate =
+      process.env.VERCEL_BRANCH_URL ||
+      process.env.VERCEL_URL ||
+      process.env.NEXT_PUBLIC_VERCEL_URL;
+
+    // Use APP_BASE_URL only if explicitly configured for preview (not pointing to production)
+    const envCandidate =
+      process.env.APP_BASE_URL && !process.env.APP_BASE_URL.includes("ssfiticket.vercel.app")
+        ? process.env.APP_BASE_URL
+        : process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("ssfiticket.vercel.app")
+        ? process.env.NEXT_PUBLIC_APP_URL
+        : null;
+
+    const chosenPreview = envCandidate || (previewCandidate ? `https://${previewCandidate}` : null);
+
+    if (chosenPreview) {
+      return {
+        baseUrl: normalizeUrl(chosenPreview),
+        isProduction: false,
+        isPreview: true,
+        isSafePreviewUrlAvailable: true,
+        isInternalTestingOnly: true,
+      };
     }
+
+    // If no preview URL candidate exists, NEVER silently fall back to production.
+    return {
+      baseUrl: "https://preview.ssfiticket.internal",
+      isProduction: false,
+      isPreview: true,
+      isSafePreviewUrlAvailable: false,
+      isInternalTestingOnly: true,
+    };
   }
 
-  // 6. Localhost development fallback
-  if (process.env.NODE_ENV !== "production") {
-    return "http://localhost:3000";
-  }
+  // 4. Localhost development fallback
+  const localUrl =
+    process.env.APP_BASE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "http://localhost:3000";
 
-  // 7. Default canonical production domain fallback
-  return "https://ssfiticket.vercel.app";
+  return {
+    baseUrl: normalizeUrl(localUrl),
+    isProduction: false,
+    isPreview: false,
+    isSafePreviewUrlAvailable: true,
+    isInternalTestingOnly: true,
+  };
+}
+
+/**
+ * Returns the environment-aware base URL for general navigation.
+ */
+export function getBaseAppUrl(
+  requestOrigin?: string,
+  options?: { forCustomerFacingLink?: boolean }
+): string {
+  void options;
+  return resolveEnvironmentAppUrl(requestOrigin).baseUrl;
 }
 
 /**
  * Returns the exact public customer order status link.
- * Ensures that customer links always resolve to the public production domain
- * (https://ssfiticket.vercel.app) and never to a private, password-protected Preview URL.
+ * Ensures the link targets the environment matching the database that owns the order.
  */
 export function getCustomerOrderUrl(orderId: string, customOrigin?: string): string {
-  const base = getBaseAppUrl(customOrigin, { forCustomerFacingLink: true });
-  return `${base}/buy/order/${encodeURIComponent(orderId)}`;
+  const { baseUrl } = resolveEnvironmentAppUrl(customOrigin);
+  return `${baseUrl}/buy/order/${encodeURIComponent(orderId)}`;
 }

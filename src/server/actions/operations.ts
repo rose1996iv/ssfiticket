@@ -303,6 +303,10 @@ export async function verifyPayment(formData: FormData) {
     } catch (deliveryErr) {
       console.warn("[Operations Diagnostic] Automated delivery dispatch warning:", deliveryErr);
     }
+
+    // Revalidate customer order page and seller workspace to eliminate stale cache
+    revalidatePath(`/buy/order/${paymentRecord.order_id}`);
+    revalidatePath(`/seller/orders/${paymentRecord.order_id}`);
   }
 
   revalidatePath("/admin/payments");
@@ -336,6 +340,18 @@ export async function rejectPayment(formData: FormData) {
     });
     throw new Error("Payment rejection failed. It may already have been processed.");
   }
+
+  const { data: rejectedPayment } = await admin
+    .from("payments")
+    .select("order_id")
+    .eq("id", parsed.data.paymentId)
+    .maybeSingle();
+
+  if (rejectedPayment?.order_id) {
+    revalidatePath(`/buy/order/${rejectedPayment.order_id}`);
+    revalidatePath(`/seller/orders/${rejectedPayment.order_id}`);
+  }
+
   revalidatePath("/admin/payments");
   revalidatePath("/admin");
   redirect("/admin/payments?rejected=1");

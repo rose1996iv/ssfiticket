@@ -34,18 +34,15 @@ export function isMockPaymentMode(): boolean {
 const isMock = isMockPaymentMode();
 
 export const manualUpiConfig = {
-  // In Preview or explicit mock mode, ensure no real UPI ID or live QR is exposed or used
-  upiId: isMock
-    ? "mock.ssfi.preview@upi"
-    : (process.env.NEXT_PUBLIC_SSFI_UPI_ID ?? "6909251270@ptaxis"),
-  displayName: isMock
-    ? "SSFI Fundraising (PREVIEW MOCK MODE)"
-    : (process.env.NEXT_PUBLIC_SSFI_UPI_DISPLAY_NAME ?? "HLAWN THA DAWT"),
+  // Real official UPI ID & Payee Name (displayed for accurate camera inspection)
+  upiId: process.env.NEXT_PUBLIC_SSFI_UPI_ID ?? "6909251270@ptaxis",
+  displayName: process.env.NEXT_PUBLIC_SSFI_UPI_DISPLAY_NAME ?? "HLAWN THA DAWT",
   currency: "INR",
   supportEmail: "Senthangstudents@gmail.com",
   instructions: isMock
-    ? "DEVELOPMENT / PREVIEW TEST MODE: Do not send real money. Use the simulated test controls to submit a mock payment."
-    : "Pay the exact order amount via UPI App or scan the official QR code, then submit the 12-digit UTR reference below for administrator review.",
-  qrImagePath: isMock ? undefined : (process.env.NEXT_PUBLIC_SSFI_UPI_QR_PATH ?? "/upi_qr.jpeg"),
+    ? "PREVIEW INSPECTION MODE: The official QR is displayed below for scannability testing only. Do NOT send real money for test orders. Use the simulated test controls below to test payment submission."
+    : "Pay the exact order amount via UPI App or scan the official QR code, then submit the 12-digit transaction UTR reference below for administrator review.",
+  // Official static QR asset is accessible in both environments so owner can inspect layout & scannability
+  qrImagePath: process.env.NEXT_PUBLIC_SSFI_UPI_QR_PATH ?? "/upi_qr.jpeg",
   isMock,
 } as const;

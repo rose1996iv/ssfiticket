@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatIstDateTime } from "@/lib/date/timezone";
-import { getCustomerOrderUrl } from "@/lib/config/appUrl";
+import { getCustomerOrderUrl, resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
 import { buildWhatsAppClickToChatUrl } from "@/lib/delivery/whatsappUrl";
 import type { DeliveryPayload } from "@/lib/delivery/types";
 
@@ -50,7 +50,18 @@ export async function prepareWhatsAppTicketDelivery(orderId: string) {
     };
   }
 
-  const ticketAccessUrl = getCustomerOrderUrl(order.id);
+  // Environment-aware resolution ensuring link points to the environment owning the database
+  const { baseUrl: envBaseUrl, isPreview, isSafePreviewUrlAvailable } = resolveEnvironmentAppUrl();
+
+  // If in Preview and no safe preview domain is available, disable external delivery
+  if (isPreview && !isSafePreviewUrlAvailable) {
+    return {
+      success: false,
+      error: "External delivery is disabled because a safe Preview deployment URL is not configured. This preview order is for internal testing only.",
+    };
+  }
+
+  const ticketAccessUrl = getCustomerOrderUrl(order.id, envBaseUrl);
   const issuedAt = payment?.verified_at || activeTickets[0]?.issued_at || new Date().toISOString();
 
   const payload: DeliveryPayload = {
@@ -67,7 +78,7 @@ export async function prepareWhatsAppTicketDelivery(orderId: string) {
     sellerAttribution: seller ? `${seller.display_name} (${seller.seller_code})` : null,
     supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
     supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
-    isSimulated: false,
+    isSimulated: isPreview,
   };
 
   const { url, recipientPhone, messageText } = buildWhatsAppClickToChatUrl(payload);

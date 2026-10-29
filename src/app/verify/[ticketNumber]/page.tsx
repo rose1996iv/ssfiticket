@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, ShieldAlert, XCircle } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/brand/Logo";
 import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
+import { resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
 
 export const instant = false;
 
@@ -29,7 +30,8 @@ export default async function PublicTicketVerificationPage({ params }: PageProps
   let qrDataUrl: string | null = null;
   if (isValid) {
     try {
-      qrDataUrl = await generateTicketQrDataUrl(ticket.ticket_number);
+      const { baseUrl: envBaseUrl } = resolveEnvironmentAppUrl();
+      qrDataUrl = await generateTicketQrDataUrl(ticket.ticket_number, envBaseUrl);
     } catch {
       // Non-fatal QR generation fallback
     }

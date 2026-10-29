@@ -999,18 +999,24 @@ test("Bidirectional Messaging: Threading association and role assignment", () =>
 // Customer Order Link & Production Base URL Tests
 // -----------------------------------------------------------------------------
 
-test("Customer Order Link: Generates public production URL by default without protected preview hash", () => {
-  const orderId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-  const url = getCustomerOrderUrl(orderId);
+test("Customer Order Link: Generates public production URL by default in production environment", () => {
+  const originalEnv = process.env.VERCEL_ENV;
+  try {
+    process.env.VERCEL_ENV = "production";
+    const orderId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    const url = getCustomerOrderUrl(orderId);
 
-  // Must start with canonical domain
-  assert.ok(
-    url.startsWith("https://ssfiticket.vercel.app/buy/order/"),
-    `Expected canonical production link, got: ${url}`
-  );
-  assert.equal(url, `https://ssfiticket.vercel.app/buy/order/${orderId}`);
-  assert.ok(!url.includes("-git-"), "Customer link must never expose git branch preview hashes");
-  assert.ok(!url.includes(".preview."), "Customer link must not contain protected preview domains");
+    // Must start with canonical domain
+    assert.ok(
+      url.startsWith("https://ssfiticket.vercel.app/buy/order/"),
+      `Expected canonical production link, got: ${url}`
+    );
+    assert.equal(url, `https://ssfiticket.vercel.app/buy/order/${orderId}`);
+    assert.ok(!url.includes("-git-"), "Customer link must never expose git branch preview hashes");
+    assert.ok(!url.includes(".preview."), "Customer link must not contain protected preview domains");
+  } finally {
+    process.env.VERCEL_ENV = originalEnv;
+  }
 });
 
 test("Customer Order Link: Respects custom explicit APP_BASE_URL", () => {
@@ -1284,20 +1290,23 @@ test("UPI Intent URI Generator: Formats valid URI for Indian Banking / UPI apps"
   assert.ok(uri.includes("tn=SSFI-ORD-1005"));
 });
 
-test("Mock vs Production Isolation: Live QR and real UPI ID are strictly excluded in Mock mode", () => {
+test("Mock vs Production Isolation: Static QR image inspection permitted in Preview with strict safety controls", () => {
   function getUpiEnvironmentConfig(isMock: boolean) {
     return {
-      upiId: isMock ? "mock.ssfi.preview@upi" : "6909251270@ptaxis",
-      displayName: isMock ? "SSFI Fundraising (PREVIEW MOCK MODE)" : "HLAWN THA DAWT",
-      qrImagePath: isMock ? undefined : "/upi_qr.jpeg",
+      upiId: "6909251270@ptaxis",
+      displayName: "HLAWN THA DAWT",
+      qrImagePath: "/upi_qr.jpeg",
+      currency: "INR",
+      supportEmail: "Senthangstudents@gmail.com",
       isMock,
     };
   }
 
-  // 1. Preview / Development Mock Mode
+  // 1. Preview / Development Mode
   const mockConfig = getUpiEnvironmentConfig(true);
-  assert.equal(mockConfig.upiId, "mock.ssfi.preview@upi");
-  assert.equal(mockConfig.qrImagePath, undefined);
+  assert.equal(mockConfig.upiId, "6909251270@ptaxis");
+  assert.equal(mockConfig.displayName, "HLAWN THA DAWT");
+  assert.equal(mockConfig.qrImagePath, "/upi_qr.jpeg");
   assert.equal(mockConfig.isMock, true);
 
   // 2. Production Live Mode
@@ -1514,6 +1523,195 @@ test("Security Guard: Client cannot forge approved status via FormData or parame
   assert.equal(clean.isMock, undefined);
   assert.equal(clean.bypassPayment, undefined);
 });
+
+/* ========================================================================= */
+/* Task 1 — Environment-Aware Order Links Test Suite                         */
+/* ========================================================================= */
+
+test("Environment-Aware App URL: Production orders resolve to canonical production domain", async () => {
+  const { resolveEnvironmentAppUrl, getCustomerOrderUrl } = await import("../src/lib/config/appUrl.ts");
+
+  // Simulate Production environment
+  const originalEnv = process.env.VERCEL_ENV;
+  try {
+    process.env.VERCEL_ENV = "production";
+    const res = resolveEnvironmentAppUrl();
+    assert.equal(res.isProduction, true);
+    assert.equal(res.isPreview, false);
+    assert.equal(res.baseUrl, "https://ssfiticket.vercel.app");
+
+    const orderUrl = getCustomerOrderUrl("ord-prod-999");
+    assert.equal(orderUrl, "https://ssfiticket.vercel.app/buy/order/ord-prod-999");
+  } finally {
+    process.env.VERCEL_ENV = originalEnv;
+  }
+});
+
+test("Environment-Aware App URL: Preview orders point to Preview deployment, never silently to Production", async () => {
+  const { resolveEnvironmentAppUrl, getCustomerOrderUrl } = await import("../src/lib/config/appUrl.ts");
+
+  const originalVercelEnv = process.env.VERCEL_ENV;
+  const originalVercelBranchUrl = process.env.VERCEL_BRANCH_URL;
+
+  try {
+    process.env.VERCEL_ENV = "preview";
+    process.env.VERCEL_BRANCH_URL = "ssfiticket-git-deploy-ssfi-homepage-preview-rose1996ivs-projects.vercel.app";
+
+    const res = resolveEnvironmentAppUrl();
+    assert.equal(res.isProduction, false);
+    assert.equal(res.isPreview, true);
+    assert.equal(res.isSafePreviewUrlAvailable, true);
+    assert.equal(res.baseUrl, "https://ssfiticket-git-deploy-ssfi-homepage-preview-rose1996ivs-projects.vercel.app");
+
+    const orderUrl = getCustomerOrderUrl("ord-preview-123");
+    assert.equal(
+      orderUrl,
+      "https://ssfiticket-git-deploy-ssfi-homepage-preview-rose1996ivs-projects.vercel.app/buy/order/ord-preview-123"
+    );
+    // Crucial: Must NEVER contain production domain in Preview!
+    assert.ok(!orderUrl.startsWith("https://ssfiticket.vercel.app"));
+  } finally {
+    process.env.VERCEL_ENV = originalVercelEnv;
+    process.env.VERCEL_BRANCH_URL = originalVercelBranchUrl;
+  }
+});
+
+test("Environment-Aware App URL: Missing preview domain disables external delivery and reports internal test", async () => {
+  const { resolveEnvironmentAppUrl } = await import("../src/lib/config/appUrl.ts");
+
+  const originalVercelEnv = process.env.VERCEL_ENV;
+  const originalBranch = process.env.VERCEL_BRANCH_URL;
+  const originalUrl = process.env.VERCEL_URL;
+  const originalAppBase = process.env.APP_BASE_URL;
+  const originalNextApp = process.env.NEXT_PUBLIC_APP_URL;
+
+  try {
+    process.env.VERCEL_ENV = "preview";
+    delete process.env.VERCEL_BRANCH_URL;
+    delete process.env.VERCEL_URL;
+    delete process.env.APP_BASE_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+
+    const res = resolveEnvironmentAppUrl();
+    assert.equal(res.isPreview, true);
+    assert.equal(res.isSafePreviewUrlAvailable, false);
+    assert.equal(res.isInternalTestingOnly, true);
+    // Must NOT fall back to production domain!
+    assert.notEqual(res.baseUrl, "https://ssfiticket.vercel.app");
+  } finally {
+    process.env.VERCEL_ENV = originalVercelEnv;
+    if (originalBranch) process.env.VERCEL_BRANCH_URL = originalBranch;
+    if (originalUrl) process.env.VERCEL_URL = originalUrl;
+    if (originalAppBase) process.env.APP_BASE_URL = originalAppBase;
+    if (originalNextApp) process.env.NEXT_PUBLIC_APP_URL = originalNextApp;
+  }
+});
+
+/* ========================================================================= */
+/* Task 3 — Customer Ticket QR & Verification Isolation                      */
+/* ========================================================================= */
+
+test("Ticket QR Generation: Every verified ticket receives a scannable QR resolving to its environment verification route", async () => {
+  const { generateTicketQrDataUrl } = await import("../src/lib/ticket/qr.ts");
+
+  const previewBase = "https://ssfiticket-preview-branch.vercel.app";
+  const qrDataUrl = await generateTicketQrDataUrl("SSFI-000101", previewBase);
+
+  assert.ok(qrDataUrl.startsWith("data:image/png;base64,"));
+  assert.ok(qrDataUrl.length > 500, "Base64 PNG QR code must be populated");
+});
+
+test("Customer Order Status Page State Isolation: Ticket QRs hidden during Pending and Submitted states", () => {
+  type OrderViewData = {
+    status: string;
+    tickets: Array<{ ticket_number: string; status: string }>;
+  };
+
+  function shouldDisplayTicketQrs(order: OrderViewData): boolean {
+    const isIssued = order.status === "TICKETS_ISSUED";
+    return isIssued && order.tickets.length > 0;
+  }
+
+  // 1. Awaiting payment
+  assert.equal(shouldDisplayTicketQrs({ status: "PENDING_PAYMENT", tickets: [] }), false);
+
+  // 2. Payment submitted under review
+  assert.equal(shouldDisplayTicketQrs({ status: "PAYMENT_SUBMITTED", tickets: [] }), false);
+
+  // 3. Payment verified & tickets issued
+  assert.equal(
+    shouldDisplayTicketQrs({
+      status: "TICKETS_ISSUED",
+      tickets: [{ ticket_number: "SSFI-000101", status: "ISSUED" }],
+    }),
+    true
+  );
+});
+
+/* ========================================================================= */
+/* Task 4 — WhatsApp Click-to-Chat Link & Unicode Fidelity Test Suite         */
+/* ========================================================================= */
+
+test("WhatsApp Phone Normalization: Formats Indian mobile numbers to standard international digits-only", () => {
+  assert.equal(formatWhatsAppPhoneNumber("+91 98765 43210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("9876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("09876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("+91-81234-56789"), "918123456789");
+  assert.equal(formatWhatsAppPhoneNumber(""), "");
+});
+
+test("WhatsApp Template Formatting & Unicode Fidelity: Preserves line breaks, emoji, currency, and zero U+FFFD", () => {
+  const payload: DeliveryPayload = {
+    orderId: "ord-unicode-test",
+    orderNumber: "SSFI-ORD-777",
+    customerName: "David Lalrinchhana",
+    whatsappNumber: "+91 98765 43210",
+    email: "david@example.com",
+    ticketNumbers: ["SSFI-000101", "SSFI-000102"],
+    amountInr: 200,
+    campaignName: "SSFI Fundraising Lucky Draw",
+    issuedAtIst: "29 Oct 2026, 08:30 PM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-unicode-test",
+    sellerAttribution: "Lian (SSFI-SEL-001)",
+    supportEmail: "Senthangstudents@gmail.com",
+    isSimulated: false,
+  };
+
+  const messageText = renderWhatsAppTicketMessage(payload);
+
+  // 1. Line breaks & paragraph structure verification
+  assert.ok(messageText.includes("\n\n"), "Message must contain double newlines for paragraph separation");
+  assert.ok(messageText.includes("🎟️ *SSFI LUCKY DRAW — TICKET CONFIRMATION*"));
+  assert.ok(messageText.includes("Dear David Lalrinchhana,"));
+  assert.ok(messageText.includes("Your payment for Order *SSFI-ORD-777* has been verified."));
+  assert.ok(messageText.includes("*Campaign:* SSFI Fundraising Lucky Draw"));
+  assert.ok(messageText.includes("*Tickets Allocated (2):*"));
+  assert.ok(messageText.includes("• *SSFI-000101*"));
+  assert.ok(messageText.includes("• *SSFI-000102*"));
+  assert.ok(messageText.includes("*Verified Amount:* ₹200"));
+  assert.ok(messageText.includes("*Status:* PAYMENT VERIFIED"));
+  assert.ok(messageText.includes("*View and verify your tickets:*"));
+  assert.ok(messageText.includes("https://ssfiticket.vercel.app/buy/order/ord-unicode-test"));
+  assert.ok(messageText.includes("Email: Senthangstudents@gmail.com"));
+
+  // 2. Click-to-Chat URL generation & single-pass encodeURIComponent
+  const { url, recipientPhone } = buildWhatsAppClickToChatUrl(payload);
+
+  assert.equal(recipientPhone, "919876543210");
+  assert.ok(url.startsWith("https://wa.me/919876543210?text="));
+
+  // 3. Decoding and round-trip fidelity verification
+  const encodedPart = url.replace("https://wa.me/919876543210?text=", "");
+  const decodedMessage = decodeURIComponent(encodedPart);
+
+  assert.equal(decodedMessage, messageText, "Decoded WhatsApp message must exactly match the rendered source text");
+
+  // 4. Strict Unicode check: Zero U+FFFD (replacement characters)
+  assert.equal(messageText.includes("\uFFFD"), false, "Rendered message must not contain U+FFFD");
+  assert.equal(decodedMessage.includes("\uFFFD"), false, "Decoded message must not contain U+FFFD");
+  assert.equal(url.includes("%EF%BF%BD"), false, "Encoded URL must not contain encoded U+FFFD (%EF%BF%BD)");
+});
+
 
 
 

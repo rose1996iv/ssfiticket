@@ -65,62 +65,67 @@ export default async function PaymentPage({
           Amount due: ₹{order.total_amount_paise / 100} {manualUpiConfig.currency}
         </p>
 
-        {manualUpiConfig.isMock ? (
-          <div className="my-5 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/80 p-4 text-center">
-            <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 text-amber-800">
-              <FlaskConical size={18} />
-            </div>
-            <h3 className="mt-2 text-xs font-bold text-amber-950">
-              Seller Preview Mock Mode Active
-            </h3>
-            <p className="mt-1 text-[11px] text-amber-800 leading-normal max-w-sm mx-auto">
-              Live QR code is disabled in preview mode. Use the simulated test controls below to test payment reference submission.
-            </p>
-          </div>
-        ) : (
-          <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
-            <div className="text-center mb-3">
-              <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
-                Official SSFI UPI QR Code
-              </span>
-              <p className="mt-1 text-xs text-[#705a54]">
-                Scan using Google Pay, PhonePe, Paytm, BHIM or any UPI App
-              </p>
-            </div>
-
-            <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
-              <Image
-                src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
-                width={320}
-                height={520}
-                className="mx-auto h-auto max-w-[240px] sm:max-w-[280px] rounded-lg object-contain shadow-xs"
-                priority
-                unoptimized
-              />
-            </div>
-
-            <div className="mt-3 flex items-center gap-3">
-              <a
-                href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
-              >
-                <span>Open Full QR Image</span>
-                <ExternalLink size={12} />
-              </a>
-              <span className="text-[#eadbcf]">·</span>
-              <a
-                href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                download="SSFI_UPI_QR.jpeg"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
-              >
-                <span>Download QR</span>
-              </a>
+        {/* Preview Inspection Warning Banner */}
+        {manualUpiConfig.isMock && (
+          <div className="my-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 shadow-2xs">
+            <div className="flex items-start gap-2.5">
+              <FlaskConical className="mt-0.5 text-amber-700 shrink-0" size={18} />
+              <div className="leading-relaxed">
+                <p className="font-bold text-amber-950">
+                  SELLER PREVIEW MODE — OFFICIAL QR DISPLAYED FOR INSPECTION
+                </p>
+                <p className="mt-1 text-amber-900">
+                  Scanning this QR will initiate a REAL payment to {manualUpiConfig.displayName} ({manualUpiConfig.upiId}).
+                  Do NOT transfer real money for test orders. Use the simulated test controls below.
+                </p>
+              </div>
             </div>
           </div>
         )}
+
+        {/* Official UPI QR Code Card */}
+        <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
+          <div className="text-center mb-3">
+            <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
+              Official SSFI UPI QR Code
+            </span>
+            <p className="mt-1 text-xs text-[#705a54]">
+              Scan using Google Pay, PhonePe, Paytm, BHIM or any UPI App
+            </p>
+          </div>
+
+          <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
+            <Image
+              src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+              alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
+              width={320}
+              height={520}
+              className="mx-auto h-auto max-w-[240px] sm:max-w-[280px] rounded-lg object-contain shadow-xs"
+              priority
+              unoptimized
+            />
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            <a
+              href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
+            >
+              <span>Open Full QR Image</span>
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-[#eadbcf]">·</span>
+            <a
+              href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+              download="SSFI_UPI_QR.jpeg"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
+            >
+              <span>Download QR</span>
+            </a>
+          </div>
+        </div>
 
         <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs space-y-2">
           <div className="flex justify-between">

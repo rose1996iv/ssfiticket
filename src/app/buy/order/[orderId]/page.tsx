@@ -11,8 +11,11 @@ import {
   FlaskConical,
   ShieldCheck,
   Ticket,
+  XCircle,
 } from "lucide-react";
 import { manualUpiConfig } from "@/lib/config/payment";
+import { resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
+import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/brand/Logo";
 import { PublicUpiPaymentForm } from "@/components/payment/PublicUpiPaymentForm";
@@ -37,7 +40,7 @@ type OrderData = {
     submitted_at: string | null;
     verified_at: string | null;
   }[];
-  tickets: { ticket_number: string; status: string }[];
+  tickets: { ticket_number: string; status: string; issued_at?: string }[];
 };
 
 type PageProps = {
@@ -54,7 +57,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -76,6 +79,9 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const seller = order.sellers;
   const totalInr = order.total_amount_paise / 100;
 
+  // Environment-aware resolution ensuring verification URLs point to the same database
+  const { baseUrl: envBaseUrl } = resolveEnvironmentAppUrl();
+
   const upiIntentUri = `upi://pay?pa=${encodeURIComponent(
     manualUpiConfig.upiId
   )}&pn=${encodeURIComponent(
@@ -88,6 +94,26 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const isIssued =
     order.status === "TICKETS_ISSUED" || (payment && payment.status === "VERIFIED");
   const isRejected = payment && payment.status === "FAILED";
+
+  // Pre-generate unique verification QR data URLs for issued tickets
+  const ticketsWithQr = isIssued
+    ? await Promise.all(
+        order.tickets.map(async (t) => {
+          let qrDataUrl: string | null = null;
+          if (t.status === "ISSUED" || t.status === "ACTIVE") {
+            try {
+              qrDataUrl = await generateTicketQrDataUrl(t.ticket_number, envBaseUrl);
+            } catch {
+              // Non-fatal QR generation fallback
+            }
+          }
+          return {
+            ...t,
+            qrDataUrl,
+          };
+        })
+      )
+    : [];
 
   return (
     <main className="min-h-screen bg-[#fffaf7] pb-16 text-[#35110f]">
@@ -126,7 +152,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
                 Order Status
               </p>
               <h2 className="text-lg font-bold">
-                {isIssued && "Tickets Issued"}
+                {isIssued && "Tickets Issued & Verified"}
                 {isSubmitted && !isIssued && "Awaiting Admin Review"}
                 {isPending && !isRejected && "Awaiting Payment"}
                 {isRejected && "Payment Reference Rejected"}
@@ -164,7 +190,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </div>
             <div>
               <dt className="text-xs text-[#705a54]">Amount Due</dt>
-              <dd className="text-lg font-bold text-[#7c1619]">₹{totalInr}</dd>
+              <dd className="text-lg font-bold text-[#7c1619]">₹{totalInr} INR</dd>
             </div>
             {seller && (
               <div className="col-span-2 border-t border-[#f0e7df] pt-3">
@@ -177,37 +203,87 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           </dl>
         </div>
 
-        {/* Issued Tickets Card (when verified) */}
-        {isIssued && order.tickets.length > 0 && (
+        {/* Issued Tickets Card (when verified) with Unique Per-Ticket QR Codes */}
+        {isIssued && ticketsWithQr.length > 0 && (
           <div className="rounded-2xl border border-green-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-2 font-bold text-green-800">
               <Ticket size={20} />
-              <h2 className="text-lg">Your Official Ticket Numbers</h2>
+              <h2 className="text-lg">Your Official Ticket Entries ({ticketsWithQr.length})</h2>
             </div>
-            <p className="mt-1 text-xs text-[#705a54]">
-              These tickets are securely registered under your name and eligible for the SSFI Lucky Draw.
+            <p className="mt-1 text-xs text-[#705a54] leading-relaxed">
+              These tickets are securely registered in the SSFI database and eligible for the lucky draw.
+              Each ticket includes a unique cryptographic verification QR code for event-day entry.
             </p>
 
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {order.tickets
-                .filter((t) => t.status !== "VOID")
-                .map((t) => (
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {ticketsWithQr.map((t) => {
+                const isVoid = t.status === "VOID";
+                return (
                   <div
                     key={t.ticket_number}
-                    className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50/60 p-3"
+                    className={`flex flex-col items-center justify-between rounded-2xl border p-4 text-center transition ${
+                      isVoid
+                        ? "border-red-200 bg-red-50/50"
+                        : "border-green-200 bg-green-50/40 shadow-xs"
+                    }`}
                   >
-                    <span className="font-mono text-base font-bold text-[#7c1619]">
-                      {t.ticket_number}
-                    </span>
-                    <Link
-                      href={`/verify/${t.ticket_number}`}
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
-                    >
-                      <span>Verify & QR</span>
-                      <ExternalLink size={12} />
-                    </Link>
+                    <div className="w-full">
+                      <div className="flex items-center justify-between gap-1 border-b border-[#f0e7df] pb-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#705a54]">
+                          Official Ticket
+                        </span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            isVoid ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
+                          }`}
+                        >
+                          {isVoid ? "VOIDED / INVALID" : "VALID & ACTIVE"}
+                        </span>
+                      </div>
+
+                      <p
+                        className={`mt-2 font-mono text-xl font-bold tracking-tight ${
+                          isVoid ? "text-red-700 line-through" : "text-[#7c1619]"
+                        }`}
+                      >
+                        {t.ticket_number}
+                      </p>
+                    </div>
+
+                    {/* Unique Ticket Verification QR Code */}
+                    {t.qrDataUrl && !isVoid ? (
+                      <div className="my-3 flex flex-col items-center">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={t.qrDataUrl}
+                          alt={`Official QR Code for ticket ${t.ticket_number}`}
+                          width={130}
+                          height={130}
+                          className="h-32 w-32 rounded-xl border border-green-200 bg-white p-1.5 shadow-2xs"
+                        />
+                        <span className="mt-1 text-[10px] text-green-800 font-medium">
+                          Scan to verify on event day
+                        </span>
+                      </div>
+                    ) : isVoid ? (
+                      <div className="my-4 flex items-center justify-center gap-1 text-xs font-semibold text-red-700">
+                        <XCircle size={14} />
+                        <span>Entry Withdrawn</span>
+                      </div>
+                    ) : null}
+
+                    <div className="w-full border-t border-[#f0e7df] pt-2">
+                      <Link
+                        href={`/verify/${t.ticket_number}`}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-[#7c1619] hover:underline"
+                      >
+                        <span>View Verification Badge</span>
+                        <ExternalLink size={12} />
+                      </Link>
+                    </div>
                   </div>
-                ))}
+                );
+              })}
             </div>
 
             {/* Delivery Confirmation Notice */}
@@ -227,7 +303,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
                 </div>
                 {deliveries.some((d) => d.status === "SIMULATED") && (
                   <p className="mt-1 text-[10px] text-[#705a54] italic">
-                    (Development notice: Message transmission was simulated via local provider)
+                    (Notice: Message transmission simulated in preview/development environment)
                   </p>
                 )}
               </div>
@@ -262,7 +338,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </p>
             <p className="mt-3 text-xs text-[#705a54] leading-relaxed">
               Our fundraising administrators verify incoming bank transfers against the bank statement.
-              Once confirmed, your tickets will automatically appear on this page.
+              Once confirmed, your tickets and verification QR codes will automatically appear on this page.
             </p>
           </div>
         )}
@@ -283,7 +359,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           </div>
         )}
 
-        {/* Payment Instructions & UTR Submission Form (Pending or Rejected) */}
+        {/* Payment Instructions & Official QR Display (Pending or Rejected) */}
         {(isPending || isRejected) && (
           <div className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm">
             <div className="flex items-center gap-2 font-bold text-[#7c1619]">
@@ -294,64 +370,71 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               Pay via any UPI application (Google Pay, PhonePe, Paytm, BHIM, or Mobile Banking).
             </p>
 
-            {manualUpiConfig.isMock ? (
-              <div className="my-5 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/80 p-5 text-center">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-800">
-                  <FlaskConical size={20} />
-                </div>
-                <h3 className="mt-2 text-sm font-bold text-amber-950">
-                  Simulated Mock Payment Environment
-                </h3>
-                <p className="mt-1 text-xs text-amber-800 leading-relaxed max-w-md mx-auto">
-                  Live UPI QR codes and real financial transactions are disabled in this preview/development mode.
-                  Use the simulated test controls below to test order submission, duplicate reference rejection, and admin verification.
-                </p>
-              </div>
-            ) : (
-              <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
-                <div className="text-center mb-3">
-                  <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
-                    Official SSFI UPI QR Code
-                  </span>
-                  <p className="mt-1 text-xs text-[#705a54]">
-                    Scan using Google Pay, PhonePe, Paytm, BHIM or any banking app
-                  </p>
-                </div>
-
-                <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
-                  <Image
-                    src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                    alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
-                    width={320}
-                    height={520}
-                    className="mx-auto h-auto max-w-[260px] sm:max-w-[300px] rounded-lg object-contain shadow-xs"
-                    priority
-                    unoptimized
-                  />
-                </div>
-
-                <div className="mt-3 flex items-center gap-3">
-                  <a
-                    href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
-                  >
-                    <span>Open Full QR Image</span>
-                    <ExternalLink size={12} />
-                  </a>
-                  <span className="text-[#eadbcf]">·</span>
-                  <a
-                    href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                    download="SSFI_UPI_QR.jpeg"
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
-                  >
-                    <span>Download QR</span>
-                  </a>
+            {/* Preview Inspection Warning Banner */}
+            {manualUpiConfig.isMock && (
+              <div className="my-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 shadow-2xs">
+                <div className="flex items-start gap-2.5">
+                  <FlaskConical className="mt-0.5 text-amber-700 shrink-0" size={18} />
+                  <div className="leading-relaxed">
+                    <p className="font-bold text-amber-950">
+                      PREVIEW INSPECTION MODE — OFFICIAL QR DISPLAYED FOR TESTING
+                    </p>
+                    <p className="mt-1 text-amber-900">
+                      The QR code below is the <b>official SSFI payment QR</b>. Scanning it with a UPI app will initiate a <b>REAL transfer to HLAWN THA DAWT ({manualUpiConfig.upiId})</b>.
+                    </p>
+                    <p className="mt-1 font-semibold text-amber-950">
+                      ⚠️ DO NOT transfer real money for preview test orders! Use the Simulated Test Controls below to test payment submission and admin verification safely.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
 
+            {/* Official Scannable UPI QR Code Card */}
+            <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
+              <div className="text-center mb-3">
+                <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
+                  Official SSFI UPI QR Code
+                </span>
+                <p className="mt-1 text-xs text-[#705a54]">
+                  Scan using Google Pay, PhonePe, Paytm, BHIM or any banking app
+                </p>
+              </div>
+
+              <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
+                <Image
+                  src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                  alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
+                  width={320}
+                  height={520}
+                  className="mx-auto h-auto max-w-[260px] sm:max-w-[300px] rounded-lg object-contain shadow-xs"
+                  priority
+                  unoptimized
+                />
+              </div>
+
+              <div className="mt-3 flex items-center gap-3">
+                <a
+                  href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
+                >
+                  <span>Open Full QR Image</span>
+                  <ExternalLink size={12} />
+                </a>
+                <span className="text-[#eadbcf]">·</span>
+                <a
+                  href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                  download="SSFI_UPI_QR.jpeg"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
+                >
+                  <span>Download QR</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Payment Summary Table */}
             <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#705a54]">Order Number</span>
@@ -379,7 +462,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             <div className="mb-6">
               {manualUpiConfig.isMock ? (
                 <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
-                  <span>Preview Mock Mode — Real UPI transfer disabled</span>
+                  <span>1-Click UPI Deep Link Disabled in Preview (Display Inspection Only)</span>
                 </div>
               ) : (
                 <a
@@ -392,12 +475,12 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               )}
               <p className="mt-1 text-center text-[11px] text-[#705a54]">
                 {manualUpiConfig.isMock
-                  ? "Test deployment active — use mock controls below to verify order progression"
+                  ? "Preview inspection mode active — use simulated controls below to test order progression safely"
                   : "Works on mobile devices with UPI apps installed"}
               </p>
             </div>
 
-            {/* UTR Form */}
+            {/* UTR Form with Simulated Test Controls */}
             <PublicUpiPaymentForm orderId={order.id} isMock={manualUpiConfig.isMock} />
           </div>
         )}

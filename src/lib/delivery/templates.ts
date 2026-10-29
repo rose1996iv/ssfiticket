@@ -19,7 +19,6 @@ function escapeHtml(str: string): string {
 export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
   const safeName = payload.customerName.trim();
   const ticketList = payload.ticketNumbers.map((num) => `• *${num}*`).join("\n");
-  const count = payload.ticketNumbers.length;
 
   // Strict verified SSFI contact details
   const supportEmail = payload.supportEmail?.trim() || "Senthangstudents@gmail.com";
@@ -32,33 +31,31 @@ export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
     `🎟️ *SSFI LUCKY DRAW — TICKET CONFIRMATION*`,
     ``,
     `Dear ${safeName},`,
-    `Thank you for your generous contribution to the *Senthang Students Fellowship India (SSFI)*!`,
-    `Your payment for Order *${payload.orderNumber}* has been verified by SSFI administration.`,
     ``,
-    `📋 *Campaign:* ${payload.campaignName}`,
-    `🎫 *Official Tickets Allocated (${count}):*`,
+    `Your payment for Order *${payload.orderNumber}* has been verified.`,
+    ``,
+    `*Campaign:* ${payload.campaignName}`,
+    `*Tickets Allocated (${payload.ticketNumbers.length}):*`,
     ticketList,
+    `*Verified Amount:* ₹${payload.amountInr.toLocaleString("en-IN")}`,
+    `*Status:* PAYMENT VERIFIED`,
+    payload.sellerAttribution ? `*Attributed Seller:* ${payload.sellerAttribution}` : null,
     ``,
-    `💰 *Verified Amount Paid:* ₹${payload.amountInr.toLocaleString("en-IN")}`,
-    `📅 *Issued At:* ${payload.issuedAtIst}`,
-    payload.sellerAttribution ? `🤝 *Attributed Seller:* ${payload.sellerAttribution}` : ``,
-    ``,
-    `🔍 *View & Verify Your Tickets:*`,
+    `*View and verify your tickets:*`,
     `${payload.ticketAccessUrl}`,
     ``,
-    `Keep this link safe to check draw results and show your ticket entry on event day.`,
-    ``,
-    `📞 *SSFI Support & Enquiries:*`,
-    supportPhone ? `WhatsApp/Call: ${supportPhone}` : ``,
+    `*SSFI Support:*`,
+    supportPhone ? `WhatsApp/Call: ${supportPhone}` : null,
     `Email: ${supportEmail}`,
   ];
 
   if (payload.isSimulated) {
     lines.push(``);
-    lines.push(`_[DEV NOTICE: This is a simulated message generated in development mode. No real WhatsApp transmission occurred.]_`);
+    lines.push(`_[INTERNAL TEST: This is a simulated message generated in Preview/Dev test environment. Order link points to test database.]_`);
   }
 
-  return lines.filter((l) => l !== "").join("\n");
+  // Preserve intentional empty lines for clean paragraph spacing in WhatsApp
+  return lines.filter((l): l is string => l !== null && l !== undefined).join("\n");
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { DeliveryPayload } from "./types.ts";
+import { resolveEnvironmentAppUrl } from "../config/appUrl.ts";
 
 /**
  * Escapes HTML characters for safe template rendering.
@@ -13,14 +14,31 @@ function escapeHtml(str: string): string {
 }
 
 /**
- * Extracts origin base URL from customer order link or falls back to production domain.
+ * Resolves origin base URL for ticket verification links with strict environment isolation:
+ * - Production environment: Strictly resolves to https://ssfiticket.vercel.app.
+ * - Preview / Development environment: Strictly uses Preview origin, NEVER Production.
+ * - Prevents simulated preview tickets from ever generating canonical production URLs.
  */
-function extractBaseUrl(urlStr: string): string {
-  try {
-    return new URL(urlStr).origin;
-  } catch {
-    return "https://ssfiticket.vercel.app";
+export function resolveDeliveryBaseUrl(payload: DeliveryPayload): string {
+  if (payload.ticketAccessUrl && payload.ticketAccessUrl.trim() !== "") {
+    try {
+      const parsedOrigin = new URL(payload.ticketAccessUrl).origin;
+      // Safety guard: If ticket payload is marked simulated, strictly forbid production URL
+      if (payload.isSimulated && parsedOrigin.includes("ssfiticket.vercel.app")) {
+        const env = resolveEnvironmentAppUrl();
+        return env.isProduction ? "https://preview.ssfiticket.internal" : env.baseUrl;
+      }
+      return parsedOrigin;
+    } catch {
+      // Fall through to environment resolution
+    }
   }
+
+  const env = resolveEnvironmentAppUrl();
+  if (payload.isSimulated && env.isProduction) {
+    return "https://preview.ssfiticket.internal";
+  }
+  return env.baseUrl;
 }
 
 /**
@@ -31,7 +49,7 @@ function extractBaseUrl(urlStr: string): string {
  */
 export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
   const safeName = payload.customerName.trim();
-  const baseUrl = extractBaseUrl(payload.ticketAccessUrl);
+  const baseUrl = resolveDeliveryBaseUrl(payload);
 
   // Strict verified SSFI contact details
   const supportEmail = payload.supportEmail?.trim() || "Senthangstudents@gmail.com";
@@ -96,7 +114,7 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
   html: string;
   text: string;
 } {
-  const baseUrl = extractBaseUrl(payload.ticketAccessUrl);
+  const baseUrl = resolveDeliveryBaseUrl(payload);
   const safeName = escapeHtml(payload.customerName.trim());
   const safeOrder = escapeHtml(payload.orderNumber);
   const safeCampaign = escapeHtml(payload.campaignName);

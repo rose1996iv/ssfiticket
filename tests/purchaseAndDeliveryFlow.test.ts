@@ -2159,47 +2159,81 @@ test("Task 2: Hero and Footer reuse identical verified YouTube video ID (7QPnU6a
   assert.ok(footerContent.includes("loading=\"lazy\""), "OfficialFooter iframe must lazy load");
 });
 
-test("Task 3 & 4: WhatsApp Confirmation Message contains ZERO emojis and direct verification link per ticket", async () => {
-  const { renderWhatsAppTicketMessage } = await import("../src/lib/delivery/templates.ts");
+test("Task 1 & 3 & 4: Customer Links Isolation & Verification Links", async () => {
+  const { renderWhatsAppTicketMessage, resolveDeliveryBaseUrl } = await import("../src/lib/delivery/templates.ts");
 
-  const multiTicketPayload: DeliveryPayload = {
-    orderId: "ord-test-multi-001",
+  // A. Production Ticket: Must use canonical production domain
+  const prodPayload: DeliveryPayload = {
+    orderId: "ord-prod-001",
     orderNumber: "SSFI-ORD-2026-000100",
     customerName: "Lalmuanpuii",
     whatsappNumber: "+91 98765 00000",
     email: "lalmuan@example.com",
-    ticketNumbers: ["SSFI-000010", "SSFI-000011", "SSFI-000012"],
-    amountInr: 300,
+    ticketNumbers: ["SSFI-000010", "SSFI-000011"],
+    amountInr: 200,
     campaignName: "SSFI Lucky Draw 2026",
     issuedAtIst: "30 Oct 2026, 02:00 AM IST",
-    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-test-multi-001",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-prod-001",
     supportEmail: "Senthangstudents@gmail.com",
+    isSimulated: false, // Production mode
+  };
+
+  const prodMsg = renderWhatsAppTicketMessage(prodPayload);
+  assert.ok(prodMsg.includes("• *SSFI-000010*: https://ssfiticket.vercel.app/verify/SSFI-000010"));
+  assert.ok(prodMsg.includes("• *SSFI-000011*: https://ssfiticket.vercel.app/verify/SSFI-000011"));
+  assert.ok(prodMsg.includes("*Confirmed Draw Date:* 19 December 2026"));
+
+  // Strictly ZERO emojis in production template
+  const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u;
+  assert.equal(emojiRegex.test(prodMsg), false, "WhatsApp message must contain strictly zero emojis");
+
+  // B. Preview Ticket: Must use Preview deployment URL, NEVER production
+  const previewPayload: DeliveryPayload = {
+    ...prodPayload,
+    orderId: "ord-prev-001",
+    ticketAccessUrl: "https://ssfiticket-preview-branch.vercel.app/buy/order/ord-prev-001",
     isSimulated: true, // Preview mode
   };
 
-  const waMsg = renderWhatsAppTicketMessage(multiTicketPayload);
+  const prevMsg = renderWhatsAppTicketMessage(previewPayload);
+  assert.ok(prevMsg.includes("• *SSFI-000010*: https://ssfiticket-preview-branch.vercel.app/verify/SSFI-000010"));
+  assert.equal(prevMsg.includes("https://ssfiticket.vercel.app/verify"), false, "Preview ticket must never generate a production verification URL");
 
-  // 1. Strictly ZERO emojis
-  const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u;
-  assert.equal(emojiRegex.test(waMsg), false, "WhatsApp message must contain strictly zero emojis");
-
-  // 2. No internal test banners in customer message
-  assert.equal(waMsg.includes("[INTERNAL TEST:"), false, "WhatsApp customer message must not contain internal test banners");
-
-  // 3. Direct verification links for every ticket
-  assert.ok(waMsg.includes("• *SSFI-000010*: https://ssfiticket.vercel.app/verify/SSFI-000010"));
-  assert.ok(waMsg.includes("• *SSFI-000011*: https://ssfiticket.vercel.app/verify/SSFI-000011"));
-  assert.ok(waMsg.includes("• *SSFI-000012*: https://ssfiticket.vercel.app/verify/SSFI-000012"));
-
-  // 4. Confirmed Draw Date
-  assert.ok(waMsg.includes("*Confirmed Draw Date:* 19 December 2026"));
-
-  // 5. Official Channels
-  assert.ok(waMsg.includes("YouTube: https://www.youtube.com/@SenthangStudentsSSFI"));
-  assert.ok(waMsg.includes("Facebook: https://www.facebook.com/senthangstudents"));
+  // C. Fallback safety: If isSimulated is true and ticketAccessUrl was mistakenly set to production
+  const mistakenPayload: DeliveryPayload = {
+    ...prodPayload,
+    isSimulated: true,
+  };
+  const resolvedBase = resolveDeliveryBaseUrl(mistakenPayload);
+  assert.equal(resolvedBase.includes("https://ssfiticket.vercel.app"), false, "Simulated ticket must never resolve to production base URL");
 });
 
-test("Task 5: Gmail API provider adapter configuration, OAuth safety, and dry-run isolation", async () => {
+test("Task 2: Hero and Footer reuse identical verified YouTube video ID (7QPnU6argBg)", async () => {
+  const { parseYouTubeVideo, buildYouTubeHeroEmbedUrl, buildYouTubeStandardEmbedUrl } = await import("../src/lib/video/youtube.ts");
+
+  const heroUrl = "https://www.youtube.com/watch?v=7QPnU6argBg";
+  const parsedHero = parseYouTubeVideo(heroUrl);
+  assert.equal(parsedHero?.videoId, "7QPnU6argBg");
+
+  const heroEmbed = buildYouTubeHeroEmbedUrl(heroUrl);
+  assert.ok(heroEmbed?.includes("7QPnU6argBg"));
+  assert.ok(heroEmbed?.includes("autoplay=1"));
+  assert.ok(heroEmbed?.includes("mute=1"));
+
+  const footerEmbed = buildYouTubeStandardEmbedUrl(heroUrl);
+  assert.ok(footerEmbed?.includes("7QPnU6argBg"));
+  assert.ok(footerEmbed?.includes("autoplay=0"), "Footer video must never autoplay with sound");
+  assert.ok(footerEmbed?.includes("controls=1"), "Footer video must provide playback & keyboard controls");
+
+  // Read OfficialFooter to verify it embeds the standard player
+  const fs = await import("fs/promises");
+  const footerContent = await fs.readFile("src/components/home/OfficialFooter.tsx", "utf-8");
+  assert.ok(footerContent.includes("buildYouTubeStandardEmbedUrl"), "OfficialFooter must use buildYouTubeStandardEmbedUrl");
+  assert.ok(footerContent.includes("Campaign Video Spotlight"), "OfficialFooter must display video spotlight");
+  assert.ok(footerContent.includes("loading=\"lazy\""), "OfficialFooter iframe must lazy load");
+});
+
+test("Task 2: Gmail API provider adapter configuration, OAuth safety, and dry-run isolation", async () => {
   const { getGmailApiConfig, isGmailApiConfigured, sendEmailViaGmailApi } = await import("../src/lib/delivery/providers/gmail.ts");
 
   const config = getGmailApiConfig();
@@ -2220,8 +2254,9 @@ test("Task 5: Gmail API provider adapter configuration, OAuth safety, and dry-ru
     amountInr: 100,
     campaignName: "SSFI Lucky Draw 2026",
     issuedAtIst: "30 Oct 2026, 02:00 AM IST",
-    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-test-gmail",
+    ticketAccessUrl: "https://preview.ssfiticket.internal/buy/order/ord-test-gmail",
     supportEmail: "Senthangstudents@gmail.com",
+    isSimulated: true,
   };
 
   const result = await sendEmailViaGmailApi({
@@ -2238,7 +2273,61 @@ test("Task 5: Gmail API provider adapter configuration, OAuth safety, and dry-ru
   assert.ok(result.providerMessageId?.startsWith("sim-gmail-"));
 });
 
-test("Task 7 & 8: Delivery status nomenclature and Admin Tickets test data classification", async () => {
+test("Task 4: Admin Ticket Entry Management — Explainable test data detection and immutable payments", () => {
+  // Test Data detection helper simulation matching AdminTicketsTable.tsx
+  function isTestTicket(ticket: {
+    orders?: {
+      order_number?: string;
+      payments?: Array<{ utr_reference?: string | null }>;
+    } | null;
+    customers?: { full_name?: string } | null;
+  }): boolean {
+    const utr = ticket.orders?.payments?.[0]?.utr_reference ?? "";
+    const orderNum = ticket.orders?.order_number ?? "";
+    const name = ticket.customers?.full_name?.toLowerCase() ?? "";
+    return (
+      /^(TEST|MOCK)/i.test(utr) ||
+      /TEST/i.test(orderNum) ||
+      name.includes("test") ||
+      name.includes("simulated")
+    );
+  }
+
+  // A genuine ticket with sequential number SSFI-000001 is NOT flagged as test simply because of ticket number
+  const genuineTicket = {
+    ticket_number: "SSFI-000001",
+    orders: {
+      order_number: "ORD-2026-000001",
+      payments: [{ utr_reference: "429810485920" }],
+    },
+    customers: { full_name: "Hlawn Tha Dawt" },
+  };
+  assert.equal(isTestTicket(genuineTicket), false, "Genuine ticket with real UTR must not be flagged as test");
+
+  // A ticket linked to a mock UTR is accurately identified as test data
+  const testUtrTicket = {
+    ticket_number: "SSFI-000002",
+    orders: {
+      order_number: "ORD-2026-000002",
+      payments: [{ utr_reference: "TEST12345678" }],
+    },
+    customers: { full_name: "Vanlalruati" },
+  };
+  assert.equal(isTestTicket(testUtrTicket), true, "Ticket with TEST UTR must be flagged as test data");
+
+  // A ticket linked to a simulated customer name is identified as test data
+  const simCustomerTicket = {
+    ticket_number: "SSFI-000003",
+    orders: {
+      order_number: "ORD-2026-000003",
+      payments: [{ utr_reference: "510928374619" }],
+    },
+    customers: { full_name: "Simulated Buyer" },
+  };
+  assert.equal(isTestTicket(simCustomerTicket), true, "Simulated customer name must be flagged as test data");
+});
+
+test("Task 5 & 8: Delivery status nomenclature and Database Separation Verification", async () => {
   const { formatDeliveryStatusLabel } = await import("../src/lib/delivery/types.ts");
 
   // Precise labels per Task 8

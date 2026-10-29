@@ -97,10 +97,10 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
         <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/80 p-3.5 text-xs text-amber-950">
           <p className="flex items-center gap-1.5 font-bold text-amber-900">
             <FlaskConical size={14} />
-            <span>Simulated Payment Test Controls (Dev / Preview)</span>
+            <span>Test Payment Simulation (Preview Environment — Test Data Only)</span>
           </p>
           <p className="mt-1 text-[11px] leading-normal text-amber-800">
-            Select a test scenario below to automatically populate the reference and test seller submission:
+            Use this control to test the application workflow. It does not confirm that real funds have been transferred:
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button
@@ -112,7 +112,7 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ✓ Simulate Valid UTR
+              ✓ Simulate Valid Reference
             </button>
             <button
               type="button"
@@ -123,7 +123,7 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ⚠ Test Duplicate UTR
+              ⚠ Test Duplicate Reference
             </button>
             <button
               type="button"
@@ -134,7 +134,7 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ✕ Simulate Failure
+              ✕ Simulate Failure Scenario
             </button>
           </div>
         </div>

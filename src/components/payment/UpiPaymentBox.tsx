@@ -84,13 +84,13 @@ export function UpiPaymentBox({
             <FlaskConical className="mt-0.5 text-amber-700 shrink-0" size={18} />
             <div className="leading-relaxed">
               <p className="font-bold text-amber-950">
-                PREVIEW TEST MODE — 1-CLICK LIVE UPI INTENT DISABLED
+                Preview Environment — Test Data Only
               </p>
               <p className="mt-1 text-amber-900">
-                You are currently in a test environment. 1-click live UPI transfer has been disabled to prevent accidental payment to the organizer.
+                1-click live UPI transfer has been disabled in this test environment to prevent accidental payments.
               </p>
               <p className="mt-1 font-semibold text-amber-950">
-                Use the simulated test controls below to submit a mock test reference (e.g. <code>TEST12345678</code>) and test ticket issuance safely.
+                Use the Test Payment Simulation controls below to test the application workflow safely. It does not confirm that real funds have been transferred.
               </p>
             </div>
           </div>
@@ -208,8 +208,13 @@ export function UpiPaymentBox({
           <div className="my-4 flex flex-col items-center justify-center">
             <div className="mb-2 text-center">
               <span className="inline-block rounded-full bg-[#7c1619]/10 px-2.5 py-0.5 text-[10px] font-bold text-[#7c1619]">
-                Official Organizer Static QR
+                {isMock ? "Official UPI QR — Real Payment Destination" : "Official Organizer Static QR"}
               </span>
+              {isMock && (
+                <p className="mt-1 text-[11px] font-medium text-amber-900 max-w-xs">
+                  Scanning this QR may initiate a real payment to {payeeName}. Do not scan or transfer funds during mock testing.
+                </p>
+              )}
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-[#eadbcf] bg-white p-2 shadow-sm">

@@ -21,7 +21,7 @@ const STEPS = [
     title: "Choose Your Tickets",
     icon: ShoppingCart,
     description:
-      "Select your desired number of tickets (₹100 per ticket) up to the remaining campaign capacity of 1,000 tickets.",
+      "Select your desired number of tickets up to the remaining campaign capacity.",
   },
   {
     step: 2,
@@ -56,7 +56,7 @@ const STEPS = [
     title: "Receive Your Tickets",
     icon: Ticket,
     description:
-      "Once approved, sequential ticket numbers (SSFI-XXXXXX) with official QR codes are delivered to your WhatsApp and Email (marked SIMULATED in development).",
+      "Once approved by staff, sequential ticket numbers (SSFI-XXXXXX) with official verification QR codes are delivered to your WhatsApp and Email.",
   },
 ];
 

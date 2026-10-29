@@ -3,6 +3,7 @@ import { ArrowRight, Gift, LogIn, QrCode, ShieldCheck, Sparkles, Ticket } from "
 import { Logo } from "@/components/brand/Logo";
 import { HeroBackgroundVideo } from "@/components/home/HeroBackgroundVideo";
 import { PurchaseGuideline } from "@/components/home/PurchaseGuideline";
+import { PaymentInstructionsSection } from "@/components/home/PaymentInstructionsSection";
 import { OfficialSellerDirectory } from "@/components/home/OfficialSellerDirectory";
 import { OfficialContactsSection } from "@/components/home/OfficialContactsSection";
 import { OfficialFooter } from "@/components/home/OfficialFooter";
@@ -32,6 +33,9 @@ export default async function Home() {
     (!campaign?.end_at || now < new Date(campaign.end_at));
 
   const isCampaignActive = campaign?.status === "ACTIVE" && isWithinSchedule;
+  const ticketPriceInr = campaign?.ticket_price_paise
+    ? campaign.ticket_price_paise / 100
+    : 100;
   const publicSellers = await getPublicSellerDirectory();
 
   return (
@@ -99,7 +103,7 @@ export default async function Home() {
         <article className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:col-span-1">
           <Ticket className="mb-4 text-[#a41f23]" size={24} aria-hidden="true" />
           <p className="text-xs font-bold uppercase tracking-wider text-[#80635b]">Ticket Price</p>
-          <p className="mt-2 text-4xl font-bold text-[#7c1619]">₹100</p>
+          <p className="mt-2 text-4xl font-bold text-[#7c1619]">₹{ticketPriceInr}</p>
           <p className="mt-3 text-xs leading-5 text-[#705a54]">
             Scan any active seller’s QR code to purchase your tickets securely online via manual UPI.
           </p>
@@ -129,6 +133,9 @@ export default async function Home() {
         isCampaignActive={isCampaignActive}
         campaignStatusText={campaign?.status || "DRAFT"}
       />
+
+      {/* Payment Instructions & Important Information Section */}
+      <PaymentInstructionsSection ticketPriceInr={ticketPriceInr} />
 
       {/* Official Seller Directory */}
       <OfficialSellerDirectory sellers={publicSellers} />

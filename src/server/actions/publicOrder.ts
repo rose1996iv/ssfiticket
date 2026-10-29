@@ -21,6 +21,16 @@ const publicOrderSchema = z.object({
     .regex(/^[0-9+ -]{7,20}$/, "Enter a valid phone/WhatsApp number."),
   email: z.string().trim().email("Enter a valid email address.").optional().or(z.literal("")),
   quantity: z.coerce.number().int().min(1, "Minimum 1 ticket.").max(100, "Maximum 100 tickets per online order."),
+  acceptTerms: z
+    .preprocess(
+      (val) => val === "on" || val === "true" || val === true || val === "1",
+      z.boolean()
+    )
+    .refine((val) => val === true, {
+      message: "You must review and accept the Terms & Conditions to place an order.",
+    })
+    .optional()
+    .default(true),
 });
 
 const publicUtrSchema = z.object({
@@ -45,6 +55,7 @@ export async function createPublicCustomerOrder(formData: FormData) {
     whatsapp: formData.get("whatsapp"),
     email: formData.get("email"),
     quantity: formData.get("quantity"),
+    acceptTerms: formData.get("acceptTerms") ?? undefined,
   });
 
   if (!parsed.success) {

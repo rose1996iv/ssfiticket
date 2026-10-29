@@ -167,6 +167,9 @@ export function OfficialFooter() {
             <Link href="/verify/SSFI-000001" className="hover:text-white hover:underline">
               Ticket Verification
             </Link>
+            <Link href="/terms" className="hover:text-white hover:underline">
+              Terms &amp; Conditions
+            </Link>
             <Link
               href="/login"
               className="inline-flex items-center gap-1 text-[#f3ce75] hover:text-[#ffd980] hover:underline"

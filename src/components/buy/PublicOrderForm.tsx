@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, ArrowRight, Loader2, Minus, Plus, ShieldCheck, Ticket } from "lucide-react";
 import { createPublicCustomerOrder } from "@/server/actions/publicOrder";
 
@@ -197,6 +198,30 @@ export function PublicOrderForm({
             <p className="text-2xl font-bold text-[#7c1619]">₹{totalAmountInr}</p>
           </div>
         </div>
+      </div>
+
+      {/* Terms & Conditions Agreement Checkbox */}
+      <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs text-[#705a54]">
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            name="acceptTerms"
+            required
+            className="mt-0.5 h-4 w-4 rounded border-[#eadbcf] text-[#7c1619] focus:ring-[#7c1619]"
+          />
+          <span className="leading-relaxed">
+            I have read and agree to the{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-[#7c1619] underline"
+            >
+              Payment Instructions and Terms &amp; Conditions
+            </Link>
+            . I understand that submitting a UTR is pending admin verification before tickets become valid.
+          </span>
+        </label>
       </div>
 
       {/* Submit Button */}

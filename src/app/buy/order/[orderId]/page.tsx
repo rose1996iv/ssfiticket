@@ -1,14 +1,11 @@
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Clock,
   ExternalLink,
-  FlaskConical,
   ShieldCheck,
   Ticket,
   XCircle,
@@ -160,7 +157,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               </p>
               <h2 className="text-lg font-bold">
                 {isIssued && "Tickets Issued & Verified"}
-                {isSubmitted && !isIssued && "Awaiting Admin Review"}
+                {isSubmitted && !isIssued && "Payment Submitted — Under Review"}
                 {isPending && !isRejected && "Awaiting Payment"}
                 {isRejected && "Payment Reference Rejected"}
               </h2>
@@ -420,7 +417,6 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             {/* UTR Form with Simulated Test Controls */}
             <PublicUpiPaymentForm orderId={order.id} isMock={manualUpiConfig.isMock} />
           </div>
-        )}
         )}
 
         {/* Back Link */}

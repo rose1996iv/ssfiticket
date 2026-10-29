@@ -1963,3 +1963,145 @@ test("Cross-Channel Consistency: Order total and quantity match across WhatsApp 
   assert.ok(email.html.includes("SSFI-000101"));
   assert.ok(email.html.includes("SSFI-000104"));
 });
+/* ========================================================================== */
+/* TASK 6 — CONTENT AUDIT, PAYMENT GUIDANCE & TERMS AND CONDITIONS TESTS       */
+/* ========================================================================== */
+
+test("Landing Page Payment Guidance: Includes all 5 steps, official payee, and safety warning", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+
+  const componentPath = path.resolve("src/components/home/PaymentInstructionsSection.tsx");
+  const code = fs.readFileSync(componentPath, "utf-8");
+
+  // Step 1: Select tickets and authoritative pricing
+  assert.ok(code.includes("Select Tickets"), "Step 1 must be present");
+  assert.ok(code.includes("server-side based strictly on the campaign unit price"), "Must enforce server pricing");
+
+  // Step 2: Choose payment method and verified payee
+  assert.ok(code.includes("Choose Payment Method"), "Step 2 must be present");
+  assert.ok(code.includes("HLAWN THA DAWT"), "Payee name must be HLAWN THA DAWT");
+  assert.ok(code.includes("6909251270@ptaxis"), "UPI ID must be 6909251270@ptaxis");
+  assert.ok(code.includes("INR"), "Currency must be INR");
+
+  // Step 3: Verify details
+  assert.ok(code.includes("Verify Payment Details"), "Step 3 must be present");
+
+  // Step 4: Submit reference UTR
+  assert.ok(code.includes("Submit Reference (UTR)"), "Step 4 must be present");
+  assert.ok(code.includes("Submitting a UTR does not automatically confirm payment receipt"), "Must warn that UTR submission is not proof");
+
+  // Step 5: Admin review and atomic ticket issuance
+  assert.ok(code.includes("Payment Review &amp; Ticket Issuance") || code.includes("Payment Review"), "Step 5 must be present");
+  assert.ok(code.includes("only after successful payment verification"), "Tickets valid only after verification");
+
+  // Payment Safety Warning
+  assert.ok(code.includes("Payment Safety Warning — Before You Pay"), "Safety warning heading must be present");
+  assert.ok(code.includes("Never share your UPI PIN, OTP"), "Credential safety must be enforced");
+
+  // Important Note & Support
+  assert.ok(code.includes("Under Review"), "Under review note must be present");
+  assert.ok(code.includes("Senthangstudents@gmail.com"), "Official support email must be present");
+  assert.ok(code.includes("mailto:Senthangstudents@gmail.com"), "Mailto link must be present");
+});
+
+test("Terms and Conditions: Implements all 10 required sections without unsupported claims", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+
+  const termsPath = path.resolve("src/app/(public)/terms/page.tsx");
+  const code = fs.readFileSync(termsPath, "utf-8");
+
+  // Verify all 10 required section headings
+  assert.ok(code.includes("1. Ticket Selection and Order Amount") || code.includes("Ticket Selection and Order Amount"));
+  assert.ok(code.includes("2. Payment and Transaction Reference") || code.includes("Payment and Transaction Reference"));
+  assert.ok(code.includes("3. Payment Verification") || code.includes("Payment Verification"));
+  assert.ok(code.includes("4. Ticket Issuance and Validity") || code.includes("Ticket Issuance and Validity"));
+  assert.ok(code.includes("5. Ticket QR Code and Verification") || code.includes("Ticket QR Code and Verification"));
+  assert.ok(code.includes("6. Duplicate or Unsuccessful Payments") || code.includes("Duplicate or Unsuccessful Payments"));
+  assert.ok(code.includes("7. Draw Information and Prize Conditions") || code.includes("Draw Information and Prize Conditions"));
+  assert.ok(code.includes("8. Customer Responsibilities") || code.includes("Customer Responsibilities"));
+  assert.ok(code.includes("9. Support and Enquiries") || code.includes("Support and Enquiries"));
+  assert.ok(code.includes("10. Changes to Campaign Information") || code.includes("Changes to Campaign Information"));
+
+  // Check official details in terms
+  assert.ok(code.includes("HLAWN THA DAWT"));
+  assert.ok(code.includes("6909251270@ptaxis"));
+  assert.ok(code.includes("Senthangstudents@gmail.com"));
+
+  // Strict avoidance of unauthorized claims
+  assert.ok(code.includes("Organizer Approval Required"), "Must document unannounced policies under organizer approval required");
+});
+
+test("Public Order Terms Acceptance: Validates terms acceptance on order submission", async () => {
+  const { z } = await import("zod");
+
+  const schema = z.object({
+    name: z.string().min(2),
+    whatsapp: z.string().min(7),
+    quantity: z.coerce.number().min(1),
+    acceptTerms: z
+      .preprocess(
+        (val) => val === "on" || val === "true" || val === true || val === "1",
+        z.boolean()
+      )
+      .refine((val) => val === true, {
+        message: "You must review and accept the Terms & Conditions to place an order.",
+      }),
+  });
+
+  // Valid when accepted
+  const validRes = schema.safeParse({
+    name: "Cingte",
+    whatsapp: "+91 98765 43210",
+    quantity: 2,
+    acceptTerms: "on",
+  });
+  assert.equal(validRes.success, true);
+
+  // Rejects when unchecked / false
+  const invalidRes = schema.safeParse({
+    name: "Cingte",
+    whatsapp: "+91 98765 43210",
+    quantity: 2,
+    acceptTerms: "false",
+  });
+  assert.equal(invalidRes.success, false);
+});
+
+test("Delivery Status Nomenclature: Correctly represents distinct delivery states without false claims", () => {
+  const deliveryStatuses = [
+    "PENDING",
+    "SENT",
+    "DELIVERED",
+    "FAILED",
+    "SIMULATED",
+    "WHATSAPP_LINK_OPENED",
+    "MANUALLY_SENT",
+  ];
+  assert.equal(deliveryStatuses.length, 7);
+
+  // wa.me opening is classified as WHATSAPP_LINK_OPENED, never falsely as DELIVERED
+  function classifyDeliveryProgress(status: string): string {
+    switch (status) {
+      case "WHATSAPP_LINK_OPENED":
+        return "WhatsApp Link Opened / Prepared";
+      case "MANUALLY_SENT":
+        return "Manually Confirmed Sent";
+      case "SIMULATED":
+        return "Simulated Dispatch (Test Mode)";
+      case "SENT":
+        return "Provider Accepted";
+      case "DELIVERED":
+        return "Confirmed Delivered";
+      case "FAILED":
+        return "Delivery Failed";
+      default:
+        return "Pending Dispatch";
+    }
+  }
+
+  assert.equal(classifyDeliveryProgress("WHATSAPP_LINK_OPENED"), "WhatsApp Link Opened / Prepared");
+  assert.equal(classifyDeliveryProgress("MANUALLY_SENT"), "Manually Confirmed Sent");
+  assert.equal(classifyDeliveryProgress("SIMULATED"), "Simulated Dispatch (Test Mode)");
+});

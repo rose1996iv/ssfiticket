@@ -188,9 +188,16 @@ export async function submitManualUpi(formData: FormData): Promise<{
     return { success: false, error: firstError };
   }
 
-  // Preview mock mode validation
+  // Preview / Development mock mode validation
   if (manualUpiConfig.isMock) {
-    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(parsed.data.utr.trim());
+    const trimmed = parsed.data.utr.trim();
+    if (trimmed.toUpperCase().includes("FAIL")) {
+      return {
+        success: false,
+        error: "Simulated Mock Payment Failure: Test reference was rejected by test validation rules.",
+      };
+    }
+    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmed);
     if (!isTestRef) {
       return {
         success: false,

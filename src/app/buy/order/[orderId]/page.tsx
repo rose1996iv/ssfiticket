@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
@@ -7,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  FlaskConical,
   ShieldCheck,
   Ticket,
 } from "lucide-react";
@@ -292,14 +294,70 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               Pay via any UPI application (Google Pay, PhonePe, Paytm, BHIM, or Mobile Banking).
             </p>
 
-            {manualUpiConfig.isMock && (
-              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                <span className="font-bold">⚠️ PREVIEW MOCK PAYMENT MODE:</span> Real UPI transactions are disabled on this preview deployment. Do not transfer actual funds. Submit any test UTR reference below (e.g. <code>TEST12345678</code>) to simulate payment submission.
+            {manualUpiConfig.isMock ? (
+              <div className="my-5 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/80 p-5 text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-800">
+                  <FlaskConical size={20} />
+                </div>
+                <h3 className="mt-2 text-sm font-bold text-amber-950">
+                  Simulated Mock Payment Environment
+                </h3>
+                <p className="mt-1 text-xs text-amber-800 leading-relaxed max-w-md mx-auto">
+                  Live UPI QR codes and real financial transactions are disabled in this preview/development mode.
+                  Use the simulated test controls below to test order submission, duplicate reference rejection, and admin verification.
+                </p>
+              </div>
+            ) : (
+              <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
+                <div className="text-center mb-3">
+                  <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
+                    Official SSFI UPI QR Code
+                  </span>
+                  <p className="mt-1 text-xs text-[#705a54]">
+                    Scan using Google Pay, PhonePe, Paytm, BHIM or any banking app
+                  </p>
+                </div>
+
+                <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
+                  <Image
+                    src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                    alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
+                    width={320}
+                    height={520}
+                    className="mx-auto h-auto max-w-[260px] sm:max-w-[300px] rounded-lg object-contain shadow-xs"
+                    priority
+                    unoptimized
+                  />
+                </div>
+
+                <div className="mt-3 flex items-center gap-3">
+                  <a
+                    href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
+                  >
+                    <span>Open Full QR Image</span>
+                    <ExternalLink size={12} />
+                  </a>
+                  <span className="text-[#eadbcf]">·</span>
+                  <a
+                    href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                    download="SSFI_UPI_QR.jpeg"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
+                  >
+                    <span>Download QR</span>
+                  </a>
+                </div>
               </div>
             )}
 
             <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-sm">
               <div className="flex items-center justify-between">
+                <span className="text-xs text-[#705a54]">Order Number</span>
+                <span className="font-mono font-bold text-[#35110f]">{order.order_number}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
                 <span className="text-xs text-[#705a54]">Payee Name</span>
                 <span className="font-bold text-[#35110f]">{manualUpiConfig.displayName}</span>
               </div>
@@ -309,7 +367,11 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               </div>
               <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
                 <span className="text-xs text-[#705a54]">Amount Due</span>
-                <span className="text-base font-bold text-[#7c1619]">₹{totalInr}</span>
+                <span className="text-base font-bold text-[#7c1619]">₹{totalInr} {manualUpiConfig.currency}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
+                <span className="text-xs text-[#705a54]">Support &amp; Inquiries</span>
+                <span className="text-xs font-medium text-[#35110f]">{manualUpiConfig.supportEmail}</span>
               </div>
             </div>
 
@@ -330,7 +392,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               )}
               <p className="mt-1 text-center text-[11px] text-[#705a54]">
                 {manualUpiConfig.isMock
-                  ? "Test deployment active — submit any mock UTR below to verify order progression"
+                  ? "Test deployment active — use mock controls below to verify order progression"
                   : "Works on mobile devices with UPI apps installed"}
               </p>
             </div>

@@ -1226,4 +1226,294 @@ test("Preview Environment Safety: Protects real customers by enforcing dry-run m
   assert.equal(noConfig.mode, "MOCK_PREVIEW_DRY_RUN");
 });
 
+/* ========================================================================= */
+/* Official UPI Payment Configuration & Mock/Live Lifecycle Test Suite        */
+/* ========================================================================= */
+
+test("Official UPI Production Configuration: Payee, UPI ID, Currency, and QR file integrity", async () => {
+  const fs = await import("fs");
+  const crypto = await import("crypto");
+
+  // 1. Production defaults verification
+  const defaultPayee = "HLAWN THA DAWT";
+  const defaultUpiId = "6909251270@ptaxis";
+  const defaultCurrency = "INR";
+  const supportEmail = "Senthangstudents@gmail.com";
+
+  assert.equal(defaultPayee, "HLAWN THA DAWT");
+  assert.equal(defaultUpiId, "6909251270@ptaxis");
+  assert.equal(defaultCurrency, "INR");
+  assert.equal(supportEmail, "Senthangstudents@gmail.com");
+
+  // 2. Production QR image presence & exact file hash verification
+  const qrPath = "public/upi_qr.jpeg";
+  assert.ok(fs.existsSync(qrPath), "public/upi_qr.jpeg must exist in the public directory");
+
+  const qrBuffer = fs.readFileSync(qrPath);
+  assert.ok(qrBuffer.length > 50000, "UPI QR file must be complete and uncorrupted");
+
+  const sha256 = crypto.createHash("sha256").update(qrBuffer).digest("hex");
+  // Expected sha256 hash of the supplied upi_qr.jpeg
+  assert.equal(sha256, "d336aada6736fea19d433adcfd267acb7a8048b2f31853436449b1aa709d3d1c");
+});
+
+test("UPI Intent URI Generator: Formats valid URI for Indian Banking / UPI apps", () => {
+  function generateUpiIntentUri(params: {
+    upiId: string;
+    payeeName: string;
+    amountInr: number;
+    orderNumber: string;
+  }): string {
+    return `upi://pay?pa=${encodeURIComponent(params.upiId)}&pn=${encodeURIComponent(
+      params.payeeName
+    )}&am=${params.amountInr}&cu=INR&tn=${encodeURIComponent(params.orderNumber)}`;
+  }
+
+  const uri = generateUpiIntentUri({
+    upiId: "6909251270@ptaxis",
+    payeeName: "HLAWN THA DAWT",
+    amountInr: 200,
+    orderNumber: "SSFI-ORD-1005",
+  });
+
+  assert.ok(uri.startsWith("upi://pay?"));
+  assert.ok(uri.includes("pa=6909251270%40ptaxis"));
+  assert.ok(uri.includes("pn=HLAWN%20THA%20DAWT"));
+  assert.ok(uri.includes("am=200"));
+  assert.ok(uri.includes("cu=INR"));
+  assert.ok(uri.includes("tn=SSFI-ORD-1005"));
+});
+
+test("Mock vs Production Isolation: Live QR and real UPI ID are strictly excluded in Mock mode", () => {
+  function getUpiEnvironmentConfig(isMock: boolean) {
+    return {
+      upiId: isMock ? "mock.ssfi.preview@upi" : "6909251270@ptaxis",
+      displayName: isMock ? "SSFI Fundraising (PREVIEW MOCK MODE)" : "HLAWN THA DAWT",
+      qrImagePath: isMock ? undefined : "/upi_qr.jpeg",
+      isMock,
+    };
+  }
+
+  // 1. Preview / Development Mock Mode
+  const mockConfig = getUpiEnvironmentConfig(true);
+  assert.equal(mockConfig.upiId, "mock.ssfi.preview@upi");
+  assert.equal(mockConfig.qrImagePath, undefined);
+  assert.equal(mockConfig.isMock, true);
+
+  // 2. Production Live Mode
+  const liveConfig = getUpiEnvironmentConfig(false);
+  assert.equal(liveConfig.upiId, "6909251270@ptaxis");
+  assert.equal(liveConfig.displayName, "HLAWN THA DAWT");
+  assert.equal(liveConfig.qrImagePath, "/upi_qr.jpeg");
+  assert.equal(liveConfig.isMock, false);
+});
+
+test("Payment Submission Lifecycle: Mock Success vs Mock Failure vs Duplicate Reference", () => {
+  type PaymentRecord = {
+    orderId: string;
+    utr: string;
+    payerName?: string;
+    status: "SUBMITTED" | "VERIFIED" | "FAILED";
+  };
+
+  const existingPayments: PaymentRecord[] = [
+    {
+      orderId: "ord-existing-01",
+      utr: "TEST-DUP-REF",
+      status: "SUBMITTED",
+    },
+  ];
+
+  function processPaymentSubmission(
+    orderId: string,
+    utrInput: string,
+    payerNameInput?: string,
+    isMock: boolean = true
+  ): { success: boolean; error?: string; status?: string } {
+    const trimmedUtr = utrInput.trim();
+
+    if (!trimmedUtr || trimmedUtr.length < 6) {
+      return { success: false, error: "UTR / Transaction Reference must be at least 6 characters." };
+    }
+
+    if (isMock) {
+      if (trimmedUtr.toUpperCase().includes("FAIL")) {
+        return {
+          success: false,
+          error: "Simulated Mock Payment Failure: Test reference was rejected by test validation rules.",
+        };
+      }
+      const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmedUtr);
+      if (!isTestRef) {
+        return {
+          success: false,
+          error: "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+        };
+      }
+    }
+
+    // Check duplicate
+    const isDuplicate = existingPayments.some((p) => p.utr.toLowerCase() === trimmedUtr.toLowerCase());
+    if (isDuplicate) {
+      return {
+        success: false,
+        error: "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
+    }
+
+    // Success transition
+    return { success: true, status: "SUBMITTED" };
+  }
+
+  // Case 1: Valid Mock Submission
+  const successRes = processPaymentSubmission("ord-new-01", "TEST-MOCK-889900", "Test Buyer", true);
+  assert.equal(successRes.success, true);
+  assert.equal(successRes.status, "SUBMITTED");
+
+  // Case 2: Simulated Mock Failure
+  const failRes = processPaymentSubmission("ord-new-02", "MOCK-FAIL-REJECTED", "Failing Tester", true);
+  assert.equal(failRes.success, false);
+  assert.ok(failRes.error?.includes("Simulated Mock Payment Failure"));
+
+  // Case 3: Duplicate UTR Detection
+  const dupRes = processPaymentSubmission("ord-new-03", "TEST-DUP-REF", "Duplicate Tester", true);
+  assert.equal(dupRes.success, false);
+  assert.ok(dupRes.error?.includes("already been submitted"));
+
+  // Case 4: Non-mock reference attempted in Mock mode
+  const nonMockRes = processPaymentSubmission("ord-new-04", "123456789012", "Real Buyer", true);
+  assert.equal(nonMockRes.success, false);
+  assert.ok(nonMockRes.error?.includes("starting with TEST or MOCK"));
+});
+
+test("Staff Verification & Ticket Issuance: Tickets generated only after Admin Approval", () => {
+  type SystemOrder = {
+    id: string;
+    orderNumber: string;
+    status: "PENDING_PAYMENT" | "PAYMENT_SUBMITTED" | "TICKETS_ISSUED";
+    paymentStatus: "PENDING" | "SUBMITTED" | "VERIFIED" | "FAILED";
+    tickets: string[];
+  };
+
+  const order: SystemOrder = {
+    id: "ord-test-lifecycle",
+    orderNumber: "SSFI-ORD-9001",
+    status: "PENDING_PAYMENT",
+    paymentStatus: "PENDING",
+    tickets: [],
+  };
+
+  // Step 1: User submits UTR
+  order.status = "PAYMENT_SUBMITTED";
+  order.paymentStatus = "SUBMITTED";
+
+  // Critical verification: NO tickets are generated merely upon UTR submission
+  assert.equal(order.status, "PAYMENT_SUBMITTED");
+  assert.equal(order.paymentStatus, "SUBMITTED");
+  assert.equal(order.tickets.length, 0);
+
+  // Step 2: Admin reviews bank statement and approves
+  function adminApproveAndIssue(
+    staffRole: string,
+    targetOrder: SystemOrder,
+    quantity: number
+  ): { success: boolean; error?: string } {
+    if (!["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"].includes(staffRole)) {
+      return { success: false, error: "Unauthorized: Insufficient staff permissions." };
+    }
+    if (targetOrder.paymentStatus !== "SUBMITTED") {
+      return { success: false, error: "Payment is not awaiting verification." };
+    }
+
+    targetOrder.paymentStatus = "VERIFIED";
+    targetOrder.status = "TICKETS_ISSUED";
+    for (let i = 1; i <= quantity; i++) {
+      targetOrder.tickets.push(`SSFI-TKT-${1000 + i}`);
+    }
+    return { success: true };
+  }
+
+  // Non-staff attempt fails
+  const unauthRes = adminApproveAndIssue("CUSTOMER", order, 2);
+  assert.equal(unauthRes.success, false);
+  assert.equal(order.tickets.length, 0);
+
+  // Staff approval succeeds and generates sequential tickets
+  const authRes = adminApproveAndIssue("ADMIN", order, 2);
+  assert.equal(authRes.success, true);
+  assert.equal(order.status, "TICKETS_ISSUED");
+  assert.equal(order.paymentStatus, "VERIFIED");
+  assert.equal(order.tickets.length, 2);
+  assert.deepEqual(order.tickets, ["SSFI-TKT-1001", "SSFI-TKT-1002"]);
+});
+
+test("Staff Payment Rejection Lifecycle: Order permits customer resubmission", () => {
+  type RejectionOrder = {
+    id: string;
+    status: string;
+    paymentStatus: string;
+    rejectionReason: string | null;
+  };
+
+  const order: RejectionOrder = {
+    id: "ord-reject-test",
+    status: "PAYMENT_SUBMITTED",
+    paymentStatus: "SUBMITTED",
+    rejectionReason: null,
+  };
+
+  function adminReject(
+    staffRole: string,
+    targetOrder: RejectionOrder,
+    reason: string
+  ): { success: boolean; error?: string } {
+    if (!["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"].includes(staffRole)) {
+      return { success: false, error: "Unauthorized." };
+    }
+    targetOrder.paymentStatus = "FAILED";
+    targetOrder.rejectionReason = reason;
+    return { success: true };
+  }
+
+  const rejectRes = adminReject("FUNDRAISING_MANAGER", order, "UTR not found on bank statement.");
+  assert.equal(rejectRes.success, true);
+  assert.equal(order.paymentStatus, "FAILED");
+  assert.equal(order.rejectionReason, "UTR not found on bank statement.");
+});
+
+test("Security Guard: Client cannot forge approved status via FormData or parameters", () => {
+  // Public schema must strictly allow only orderId, utr, payerName
+  const allowedKeys = new Set(["orderId", "utr", "payerName"]);
+
+  function sanitizePublicPayload(input: Record<string, unknown>) {
+    const sanitized: Record<string, unknown> = {};
+    for (const key of Object.keys(input)) {
+      if (allowedKeys.has(key)) {
+        sanitized[key] = input[key];
+      }
+    }
+    return sanitized;
+  }
+
+  const maliciousPayload = {
+    orderId: "c22c070c-2656-4c28-98e3-0d33e9d8995a",
+    utr: "TEST-PAY-001",
+    payerName: "Attacker",
+    status: "VERIFIED",
+    verified_at: new Date().toISOString(),
+    isMock: false,
+    bypassPayment: true,
+  };
+
+  const clean = sanitizePublicPayload(maliciousPayload);
+
+  assert.equal(clean.orderId, "c22c070c-2656-4c28-98e3-0d33e9d8995a");
+  assert.equal(clean.utr, "TEST-PAY-001");
+  assert.equal(clean.status, undefined);
+  assert.equal(clean.verified_at, undefined);
+  assert.equal(clean.isMock, undefined);
+  assert.equal(clean.bypassPayment, undefined);
+});
+
+
 

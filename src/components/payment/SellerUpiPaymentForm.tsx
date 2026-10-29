@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowRight, FlaskConical, Loader2 } from "lucide-react";
 import { submitManualUpi } from "@/server/actions/operations";
 
 type Props = {
@@ -91,6 +91,54 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
   return (
     <form onSubmit={handleSubmit} className="mt-6 space-y-4">
       <input type="hidden" name="orderId" value={orderId} />
+
+      {/* Simulated Payment Test Controls (Dev / Preview) */}
+      {isMock && (
+        <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/80 p-3.5 text-xs text-amber-950">
+          <p className="flex items-center gap-1.5 font-bold text-amber-900">
+            <FlaskConical size={14} />
+            <span>Simulated Payment Test Controls (Dev / Preview)</span>
+          </p>
+          <p className="mt-1 text-[11px] leading-normal text-amber-800">
+            Select a test scenario below to automatically populate the reference and test seller submission:
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setUtr(`TEST-SELLER-${Date.now().toString().slice(-6)}`);
+                setPayerName("Simulated Customer");
+                if (errorMessage) setErrorMessage(null);
+              }}
+              className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
+            >
+              ✓ Simulate Valid UTR
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUtr("TEST-DUP-REF");
+                setPayerName("Duplicate Tester");
+                if (errorMessage) setErrorMessage(null);
+              }}
+              className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
+            >
+              ⚠ Test Duplicate UTR
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUtr("MOCK-FAIL-REJECTED");
+                setPayerName("Failing Test");
+                if (errorMessage) setErrorMessage(null);
+              }}
+              className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
+            >
+              ✕ Simulate Failure
+            </button>
+          </div>
+        </div>
+      )}
 
       {errorMessage && (
         <div

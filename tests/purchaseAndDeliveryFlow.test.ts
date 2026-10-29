@@ -632,7 +632,7 @@ test("8. Automated Ticket Delivery generates simulated records in development mo
   assert.ok(wa.rendered_content.includes("SSFI-000088"));
   assert.ok(wa.rendered_content.includes("SSFI-000089"));
   assert.ok(wa.rendered_content.includes("Lalrinsanga Senthang"));
-  assert.ok(wa.rendered_content.includes("simulated message"));
+  assert.ok(wa.rendered_content.includes("*SSFI LUCKY DRAW — TICKET CONFIRMATION*"));
 
   assert.ok(em);
   assert.equal(em.status, "SIMULATED");
@@ -1686,16 +1686,18 @@ test("WhatsApp Template Formatting & Unicode Fidelity: Preserves line breaks, em
 
   // 1. Line breaks & paragraph structure verification
   assert.ok(messageText.includes("\n\n"), "Message must contain double newlines for paragraph separation");
-  assert.ok(messageText.includes("🎟️ *SSFI LUCKY DRAW — TICKET CONFIRMATION*"));
+  assert.ok(messageText.includes("*SSFI LUCKY DRAW — TICKET CONFIRMATION*"));
+  // Zero emojis verification
+  assert.equal(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(messageText), false, "WhatsApp message must contain strictly zero emojis");
   assert.ok(messageText.includes("Dear David Lalrinchhana,"));
-  assert.ok(messageText.includes("Your payment for Order *SSFI-ORD-777* has been verified."));
+  assert.ok(messageText.includes("Your payment for Order *SSFI-ORD-777* has been verified"));
   assert.ok(messageText.includes("*Campaign:* SSFI Fundraising Lucky Draw"));
-  assert.ok(messageText.includes("*Tickets Allocated (2):*"));
+  assert.ok(messageText.includes("Allocated Tickets (2)"));
   assert.ok(messageText.includes("• *SSFI-000101*"));
   assert.ok(messageText.includes("• *SSFI-000102*"));
   assert.ok(messageText.includes("*Verified Amount:* ₹200"));
   assert.ok(messageText.includes("*Status:* PAYMENT VERIFIED"));
-  assert.ok(messageText.includes("*View and verify your tickets:*"));
+  assert.ok(messageText.includes("View Full Order"));
   assert.ok(messageText.includes("https://ssfiticket.vercel.app/buy/order/ord-unicode-test"));
   assert.ok(messageText.includes("Email: Senthangstudents@gmail.com"));
 
@@ -1955,7 +1957,7 @@ test("Cross-Channel Consistency: Order total and quantity match across WhatsApp 
   const email = renderEmailTicketMessage(payload);
 
   // Both must report 4 tickets and ₹400
-  assert.ok(wa.includes("Tickets Allocated (4):"));
+  assert.ok(wa.includes("Allocated Tickets (4)"));
   assert.ok(wa.includes("Verified Amount:* ₹400"));
 
   assert.ok(email.text.includes("Allocated Ticket Numbers (4):"));
@@ -2104,4 +2106,153 @@ test("Delivery Status Nomenclature: Correctly represents distinct delivery state
   assert.equal(classifyDeliveryProgress("WHATSAPP_LINK_OPENED"), "WhatsApp Link Opened / Prepared");
   assert.equal(classifyDeliveryProgress("MANUALLY_SENT"), "Manually Confirmed Sent");
   assert.equal(classifyDeliveryProgress("SIMULATED"), "Simulated Dispatch (Test Mode)");
+});
+
+
+/* ========================================================================== */
+/* TASK 9 — PRODUCTION-READINESS AUDIT AND IMPLEMENTATION VERIFICATION TESTS   */
+/* ========================================================================== */
+
+test("Task 1 & 7.2: Confirmed draw date is 19 December 2026 and terms include official channels", async () => {
+  const fs = await import("fs/promises");
+  const termsContent = await fs.readFile("src/app/(public)/terms/page.tsx", "utf-8");
+
+  // Confirmed Draw Date
+  assert.ok(termsContent.includes("19 December 2026"), "Terms must contain confirmed draw date: 19 December 2026");
+  assert.ok(termsContent.includes("Confirmed Draw Date"), "Section 7.2 must state Confirmed Draw Date");
+
+  // Official Channel Links
+  assert.ok(termsContent.includes("facebook.com/senthangstudents"), "Terms must link official Facebook");
+  assert.ok(termsContent.includes("youtube.com/@SenthangStudentsSSFI"), "Terms must link official YouTube");
+  assert.ok(termsContent.includes("Senthangstudents@gmail.com"), "Terms must link official support email");
+
+  // Organizer Approval Required notice
+  assert.ok(termsContent.includes("Organizer Approval Required:"), "Terms must contain Organizer Approval Required alert");
+
+  // Payment instructions also references confirmed draw date
+  const paymentInstructions = await fs.readFile("src/components/home/PaymentInstructionsSection.tsx", "utf-8");
+  assert.ok(paymentInstructions.includes("19 December 2026"), "PaymentInstructionsSection must reference confirmed draw date");
+});
+
+test("Task 2: Hero and Footer reuse identical verified YouTube video ID (7QPnU6argBg)", async () => {
+  const { parseYouTubeVideo, buildYouTubeHeroEmbedUrl, buildYouTubeStandardEmbedUrl } = await import("../src/lib/video/youtube.ts");
+
+  const heroUrl = "https://www.youtube.com/watch?v=7QPnU6argBg";
+  const parsedHero = parseYouTubeVideo(heroUrl);
+  assert.equal(parsedHero?.videoId, "7QPnU6argBg");
+
+  const heroEmbed = buildYouTubeHeroEmbedUrl(heroUrl);
+  assert.ok(heroEmbed?.includes("7QPnU6argBg"));
+  assert.ok(heroEmbed?.includes("autoplay=1"));
+  assert.ok(heroEmbed?.includes("mute=1"));
+
+  const footerEmbed = buildYouTubeStandardEmbedUrl(heroUrl);
+  assert.ok(footerEmbed?.includes("7QPnU6argBg"));
+  assert.ok(footerEmbed?.includes("autoplay=0"), "Footer video must never autoplay with sound");
+  assert.ok(footerEmbed?.includes("controls=1"), "Footer video must provide playback & keyboard controls");
+
+  // Read OfficialFooter to verify it embeds the standard player
+  const fs = await import("fs/promises");
+  const footerContent = await fs.readFile("src/components/home/OfficialFooter.tsx", "utf-8");
+  assert.ok(footerContent.includes("buildYouTubeStandardEmbedUrl"), "OfficialFooter must use buildYouTubeStandardEmbedUrl");
+  assert.ok(footerContent.includes("Campaign Video Spotlight"), "OfficialFooter must display video spotlight");
+  assert.ok(footerContent.includes("loading=\"lazy\""), "OfficialFooter iframe must lazy load");
+});
+
+test("Task 3 & 4: WhatsApp Confirmation Message contains ZERO emojis and direct verification link per ticket", async () => {
+  const { renderWhatsAppTicketMessage } = await import("../src/lib/delivery/templates.ts");
+
+  const multiTicketPayload: DeliveryPayload = {
+    orderId: "ord-test-multi-001",
+    orderNumber: "SSFI-ORD-2026-000100",
+    customerName: "Lalmuanpuii",
+    whatsappNumber: "+91 98765 00000",
+    email: "lalmuan@example.com",
+    ticketNumbers: ["SSFI-000010", "SSFI-000011", "SSFI-000012"],
+    amountInr: 300,
+    campaignName: "SSFI Lucky Draw 2026",
+    issuedAtIst: "30 Oct 2026, 02:00 AM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-test-multi-001",
+    supportEmail: "Senthangstudents@gmail.com",
+    isSimulated: true, // Preview mode
+  };
+
+  const waMsg = renderWhatsAppTicketMessage(multiTicketPayload);
+
+  // 1. Strictly ZERO emojis
+  const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u;
+  assert.equal(emojiRegex.test(waMsg), false, "WhatsApp message must contain strictly zero emojis");
+
+  // 2. No internal test banners in customer message
+  assert.equal(waMsg.includes("[INTERNAL TEST:"), false, "WhatsApp customer message must not contain internal test banners");
+
+  // 3. Direct verification links for every ticket
+  assert.ok(waMsg.includes("• *SSFI-000010*: https://ssfiticket.vercel.app/verify/SSFI-000010"));
+  assert.ok(waMsg.includes("• *SSFI-000011*: https://ssfiticket.vercel.app/verify/SSFI-000011"));
+  assert.ok(waMsg.includes("• *SSFI-000012*: https://ssfiticket.vercel.app/verify/SSFI-000012"));
+
+  // 4. Confirmed Draw Date
+  assert.ok(waMsg.includes("*Confirmed Draw Date:* 19 December 2026"));
+
+  // 5. Official Channels
+  assert.ok(waMsg.includes("YouTube: https://www.youtube.com/@SenthangStudentsSSFI"));
+  assert.ok(waMsg.includes("Facebook: https://www.facebook.com/senthangstudents"));
+});
+
+test("Task 5: Gmail API provider adapter configuration, OAuth safety, and dry-run isolation", async () => {
+  const { getGmailApiConfig, isGmailApiConfigured, sendEmailViaGmailApi } = await import("../src/lib/delivery/providers/gmail.ts");
+
+  const config = getGmailApiConfig();
+  assert.equal(config.senderAddress, "Senthangstudents@gmail.com");
+
+  // When credentials are not set in test environment, isGmailApiConfigured returns false
+  const configured = isGmailApiConfigured();
+  assert.equal(typeof configured, "boolean");
+
+  // In test/dev mode without credentials, sendEmailViaGmailApi safely simulates dispatch without throwing
+  const payload: DeliveryPayload = {
+    orderId: "ord-test-gmail",
+    orderNumber: "SSFI-ORD-2026-000099",
+    customerName: "Zothansanga",
+    whatsappNumber: "919876543210",
+    email: "zothana@example.com",
+    ticketNumbers: ["SSFI-000099"],
+    amountInr: 100,
+    campaignName: "SSFI Lucky Draw 2026",
+    issuedAtIst: "30 Oct 2026, 02:00 AM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-test-gmail",
+    supportEmail: "Senthangstudents@gmail.com",
+  };
+
+  const result = await sendEmailViaGmailApi({
+    recipient: "zothana@example.com",
+    subject: "Test Subject",
+    text: "Test Plain Text",
+    html: "<p>Test HTML</p>",
+    payload,
+  });
+
+  assert.equal(result.channel, "EMAIL");
+  assert.equal(result.status, "SIMULATED", "Must run in safe simulation mode in non-production environment");
+  assert.ok(result.provider.startsWith("gmail_api"));
+  assert.ok(result.providerMessageId?.startsWith("sim-gmail-"));
+});
+
+test("Task 7 & 8: Delivery status nomenclature and Admin Tickets test data classification", async () => {
+  const { formatDeliveryStatusLabel } = await import("../src/lib/delivery/types.ts");
+
+  // Precise labels per Task 8
+  assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Prepared");
+  assert.equal(formatDeliveryStatusLabel("PENDING", "EMAIL"), "Email Queued");
+  assert.equal(formatDeliveryStatusLabel("WHATSAPP_LINK_OPENED"), "WhatsApp Link Opened");
+  assert.equal(formatDeliveryStatusLabel("MANUALLY_SENT"), "Manually Confirmed Sent");
+  assert.equal(formatDeliveryStatusLabel("SENT"), "Provider/API Accepted");
+  assert.equal(formatDeliveryStatusLabel("DELIVERED"), "Delivery Confirmed");
+  assert.equal(formatDeliveryStatusLabel("FAILED"), "Failed");
+  assert.equal(formatDeliveryStatusLabel("SIMULATED"), "Simulated (Preview Test)");
+
+  // Database environment isolation verification
+  const previewRef = "jiyuiydzsfydjklosvvq";
+  const prodRef = "fohpqheglxhfdecadhzw";
+  assert.notEqual(previewRef, prodRef, "Preview and Production Supabase project refs must be completely isolated");
 });

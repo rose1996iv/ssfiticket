@@ -100,3 +100,32 @@ export function buildYouTubeHeroEmbedUrl(rawUrl?: string | null): string | null 
 
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 }
+
+/**
+ * Builds the official privacy-enhanced YouTube embed URL for standard
+ * interactive playback (e.g. footer spotlight video).
+ *
+ * Parameters:
+ * - autoplay=0: Never autoplays with sound.
+ * - controls=1: Full player and keyboard controls enabled.
+ * - playsinline=1: Plays inline on mobile browsers.
+ * - rel=0: Limits related videos.
+ * - modestbranding=1: Clean YouTube UI.
+ */
+export function buildYouTubeStandardEmbedUrl(rawUrl?: string | null): string | null {
+  const target = rawUrl || process.env.NEXT_PUBLIC_HERO_YOUTUBE_URL || "7QPnU6argBg";
+  const result = parseYouTubeVideo(target);
+  if (!result) return null;
+
+  const { videoId } = result;
+  const params = new URLSearchParams({
+    autoplay: "0",
+    controls: "1",
+    playsinline: "1",
+    rel: "0",
+    modestbranding: "1",
+    enablejsapi: "1",
+  });
+
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+}

@@ -43,3 +43,40 @@ export interface DeliveryProvider {
   send(payload: DeliveryPayload): Promise<DeliveryResult>;
 }
 
+/**
+ * Formats precise, consistent delivery status labels across all UI views.
+ *
+ * Recognized labels per SSFI specifications:
+ * - "Prepared" (WhatsApp prepared / pending)
+ * - "WhatsApp Link Opened" (wa.me link clicked by staff)
+ * - "Manually Confirmed Sent" (staff marked WhatsApp message as sent)
+ * - "Email Queued" (Email pending transmission)
+ * - "Provider/API Accepted" (HTTP 200/API response accepted by Gmail/Resend)
+ * - "Delivery Confirmed" (webhook confirmation of delivery)
+ * - "Failed" (API error or rejection)
+ * - "Simulated (Preview Test)" (local preview dry-run)
+ */
+export function formatDeliveryStatusLabel(
+  status: DeliveryStatus | string,
+  channel?: DeliveryChannel
+): string {
+  switch (status) {
+    case "PENDING":
+      return channel === "EMAIL" ? "Email Queued" : "Prepared";
+    case "WHATSAPP_LINK_OPENED":
+      return "WhatsApp Link Opened";
+    case "MANUALLY_SENT":
+      return "Manually Confirmed Sent";
+    case "SENT":
+      return "Provider/API Accepted";
+    case "DELIVERED":
+      return "Delivery Confirmed";
+    case "FAILED":
+      return "Failed";
+    case "SIMULATED":
+      return "Simulated (Preview Test)";
+    default:
+      return String(status);
+  }
+}
+

@@ -15,27 +15,7 @@ import { AdminTicketDetail } from "@/components/admin/TicketActionModal";
 
 export const instant = false;
 
-type TicketRow = {
-  id: string;
-  ticket_number: string;
-  status: string;
-  issued_at: string;
-  orders: {
-    id: string;
-    order_number: string;
-    status: string;
-  } | null;
-  customers: {
-    id: string;
-    full_name: string;
-    phone: string;
-  } | null;
-  sellers: {
-    id: string;
-    display_name: string;
-    seller_code: string;
-  } | null;
-};
+type TicketRow = AdminTicketDetail;
 
 export default async function AdminTicketsPage() {
   await connection();
@@ -43,10 +23,10 @@ export default async function AdminTicketsPage() {
   const { data, error } = await db
     .from("tickets")
     .select(
-      "id, ticket_number, status, issued_at, voided_at, void_reason, admin_notes, original_ticket_id, reissued_ticket_id, orders(id, order_number, status), customers(id, full_name, phone), sellers(id, display_name, seller_code)"
+      "id, ticket_number, status, issued_at, voided_at, void_reason, admin_notes, original_ticket_id, reissued_ticket_id, orders(id, order_number, status, payments(id, status, utr_reference)), customers(id, full_name, phone), sellers(id, display_name, seller_code)"
     )
     .order("issued_at", { ascending: false })
-    .limit(100);
+    .limit(200);
 
   if (error) {
     console.error("[Admin Tickets Query Error]", {

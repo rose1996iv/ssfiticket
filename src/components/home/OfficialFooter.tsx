@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Mail, LogIn } from "lucide-react";
+import { Mail, LogIn, Play } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
+import { buildYouTubeStandardEmbedUrl } from "@/lib/video/youtube";
 
 function InstagramIcon({ size = 18, className = "" }: { size?: number; className?: string }) {
   return (
@@ -56,6 +57,7 @@ function YouTubeIcon({ size = 18, className = "" }: { size?: number; className?:
 
 export function OfficialFooter() {
   const currentYear = new Date().getFullYear();
+  const footerVideoEmbedUrl = buildYouTubeStandardEmbedUrl(process.env.NEXT_PUBLIC_HERO_YOUTUBE_URL);
 
   return (
     <footer className="border-t border-[#3d0b0d] bg-[#230607] text-[#f8e9df]">
@@ -99,6 +101,32 @@ export function OfficialFooter() {
               </span>
             </div>
           </div>
+
+          {/* Campaign Video Spotlight */}
+          {footerVideoEmbedUrl && (
+            <div className="mt-10 flex flex-col items-center">
+              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#f3ce75]">
+                <Play size={12} fill="currentColor" />
+                <span>Campaign Video Spotlight</span>
+              </div>
+              <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/15 bg-black/40 shadow-2xl">
+                <div className="relative aspect-video w-full">
+                  <iframe
+                    src={footerVideoEmbedUrl}
+                    title="SSFI Lucky Draw Campaign Official Video"
+                    loading="lazy"
+                    className="absolute inset-0 h-full w-full border-0"
+                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    referrerPolicy="strict-origin-when-cross-origin"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-center text-xs text-[#d8c2b5]">
+                Watch the official SSFI Lucky Draw celebration preview video
+              </p>
+            </div>
+          )}
 
           {/* Verified Official Social Channels Grid */}
           <div className="mt-10 grid gap-4 sm:grid-cols-3">

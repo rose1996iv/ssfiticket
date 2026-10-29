@@ -218,13 +218,54 @@ export default async function TermsAndConditionsPage() {
                 <li>4th Prize: Ukulele Celebration</li>
                 <li>5th Prize: Mini Soundbox Celebration</li>
               </ul>
-              <p>
-                7.2. <b>Draw Schedule and Methodology:</b> The official lucky draw ceremony date, venue, and selection process
-                are determined by the SSFI executive committee and communicated exclusively via official SSFI channels.
-              </p>
-              <div className="my-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
-                <b>Organizer Approval Required:</b> Any unannounced draw date, venue details, or specific ticket transferability rules
-                must be officially announced by the SSFI Executive Committee before taking effect.
+              <div className="space-y-2">
+                <p>
+                  7.2. <b>Confirmed Draw Date &amp; Methodology:</b> The official lucky draw ceremony is confirmed to take place on{" "}
+                  <b className="text-[#7c1619]">19 December 2026</b>. Winning tickets will be selected through a fair, transparent,
+                  and public drawing supervised by the SSFI Executive Committee.
+                </p>
+                <p>
+                  7.3. <b>Ceremony Schedule, Venue &amp; Live Stream:</b> While the draw date of 19 December 2026 is confirmed, the specific ceremony time,
+                  physical venue, and live broadcast schedule will be formally announced exclusively via our official communication channels:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-xs">
+                  <li>
+                    <b>Official Facebook:</b>{" "}
+                    <a
+                      href="https://www.facebook.com/senthangstudents"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#7c1619] underline font-semibold"
+                    >
+                      facebook.com/senthangstudents
+                    </a>
+                  </li>
+                  <li>
+                    <b>Official YouTube:</b>{" "}
+                    <a
+                      href="https://www.youtube.com/@SenthangStudentsSSFI"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#7c1619] underline font-semibold"
+                    >
+                      youtube.com/@SenthangStudentsSSFI
+                    </a>
+                  </li>
+                  <li>
+                    <b>Official Email:</b>{" "}
+                    <a
+                      href="mailto:Senthangstudents@gmail.com"
+                      className="text-[#7c1619] underline font-semibold"
+                    >
+                      Senthangstudents@gmail.com
+                    </a>
+                  </li>
+                </ul>
+                <div className="my-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+                  <b>Organizer Approval Required:</b> Any modification to the confirmed draw date (19 December 2026), unannounced ceremony time,
+                  venue details, or ticket eligibility guidelines must be officially approved and promulgated by the SSFI Executive Committee
+                  through these official channels before taking effect.
+                </div>
               </div>
             </div>
           </section>

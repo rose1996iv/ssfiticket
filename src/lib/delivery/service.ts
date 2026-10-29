@@ -5,11 +5,13 @@ import {
   DeliveryChannel,
   DeliveryPayload,
   DeliveryResult,
+  DeliveryStatus,
 } from "./types";
 import {
   renderWhatsAppTicketMessage,
   renderEmailTicketMessage,
 } from "./templates";
+import { isGmailApiConfigured, sendEmailViaGmailApi } from "./providers/gmail";
 
 /**
  * Dispatches ticket delivery across official SSFI channels (WhatsApp and Email).
@@ -75,7 +77,8 @@ export async function dispatchOrderTicketDeliveries(
     process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
   const isDev = process.env.NODE_ENV !== "production" || isVercelPreview;
   const hasLiveWhatsApp = Boolean(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
-  const hasLiveEmail = Boolean(process.env.RESEND_API_KEY);
+  const hasGmailApi = isGmailApiConfigured();
+  const hasLiveEmail = Boolean(process.env.RESEND_API_KEY || hasGmailApi);
 
   const payload: DeliveryPayload = {
     orderId: order.id,
@@ -107,18 +110,20 @@ export async function dispatchOrderTicketDeliveries(
   const results: DeliveryResult[] = [];
 
   for (const channel of channelsToDeliver) {
-    // If this is NOT an explicit resend, skip if already sent successfully
+    // If this is NOT an explicit resend, skip if already sent successfully (or simulated)
     if (!options?.resend) {
       const existing = existingDeliveries?.find(
-        (d) => d.channel === channel && d.status === "SENT"
+        (d) =>
+          d.channel === channel &&
+          (d.status === "SENT" || d.status === "DELIVERED" || d.status === "SIMULATED")
       );
       if (existing) {
         console.log(
-          `[Delivery Service] Skipping ${channel} for order ${order.order_number}: already delivered (sent at ${existing.sent_at}, ID: ${existing.provider_message_id}).`
+          `[Delivery Service] Skipping ${channel} for order ${order.order_number}: already delivered or simulated (sent at ${existing.sent_at}, ID: ${existing.provider_message_id}).`
         );
         results.push({
           channel: existing.channel as DeliveryChannel,
-          status: "SENT",
+          status: existing.status as DeliveryStatus,
           provider: "existing",
           recipient: channel === "EMAIL" ? (payload.email || "customer") : payload.whatsappNumber,
           providerMessageId: existing.provider_message_id,
@@ -337,7 +342,18 @@ async function executeEmailDelivery(
     };
   }
 
-  // 1. Dry run / Preview / Development environment safety guard
+  // 1. Official Gmail API adapter (uses Google OAuth2 with Senthangstudents@gmail.com)
+  if (isGmailApiConfigured()) {
+    return await sendEmailViaGmailApi({
+      recipient,
+      subject,
+      text,
+      html,
+      payload,
+    });
+  }
+
+  // 2. Dry run / Preview / Development environment safety guard (Resend / Mock fallback)
   const isVercelPreview =
     process.env.VERCEL_ENV === "preview" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";

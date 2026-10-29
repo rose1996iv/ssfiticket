@@ -34,6 +34,11 @@ export type AdminTicketDetail = {
     id: string;
     order_number: string;
     status: string;
+    payments?: Array<{
+      id: string;
+      status: string;
+      utr_reference?: string | null;
+    }> | null;
   } | null;
   customers: {
     id: string;

@@ -13,12 +13,25 @@ function escapeHtml(str: string): string {
 }
 
 /**
+ * Extracts origin base URL from customer order link or falls back to production domain.
+ */
+function extractBaseUrl(urlStr: string): string {
+  try {
+    return new URL(urlStr).origin;
+  } catch {
+    return "https://ssfiticket.vercel.app";
+  }
+}
+
+/**
  * Centrally managed WhatsApp Ticket Confirmation Template.
- * Formats clean, official message with emojis, verification link, and verified support info.
+ * Formats a clean, professional, official plain-text message.
+ * Strictly ZERO emojis, clean bold syntax (*text*), blank lines for paragraph separation,
+ * direct verification links for every allocated ticket, and confirmed draw date (19 December 2026).
  */
 export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
   const safeName = payload.customerName.trim();
-  const ticketList = payload.ticketNumbers.map((num) => `• *${num}*`).join("\n");
+  const baseUrl = extractBaseUrl(payload.ticketAccessUrl);
 
   // Strict verified SSFI contact details
   const supportEmail = payload.supportEmail?.trim() || "Senthangstudents@gmail.com";
@@ -27,32 +40,47 @@ export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
       ? payload.supportPhone.trim()
       : null;
 
+  const isMultiTicket = payload.ticketNumbers.length > 1;
+
+  const ticketSections: string[] = isMultiTicket
+    ? [
+        `*Allocated Tickets (${payload.ticketNumbers.length}) & Direct Verification Links:*`,
+        ...payload.ticketNumbers.map(
+          (num) => `• *${num}*: ${baseUrl}/verify/${encodeURIComponent(num)}`
+        ),
+      ]
+    : [
+        `*Ticket Number:* ${payload.ticketNumbers[0]}`,
+        `*Direct Verification Link:*`,
+        `${baseUrl}/verify/${encodeURIComponent(payload.ticketNumbers[0] || "")}`,
+      ];
+
   const lines = [
-    `🎟️ *SSFI LUCKY DRAW — TICKET CONFIRMATION*`,
+    `*SSFI LUCKY DRAW — TICKET CONFIRMATION*`,
     ``,
     `Dear ${safeName},`,
     ``,
-    `Your payment for Order *${payload.orderNumber}* has been verified.`,
+    `Thank you for your generous contribution. Your payment for Order *${payload.orderNumber}* has been verified, and your lucky draw tickets are officially issued.`,
     ``,
     `*Campaign:* ${payload.campaignName}`,
-    `*Tickets Allocated (${payload.ticketNumbers.length}):*`,
-    ticketList,
+    `*Confirmed Draw Date:* 19 December 2026`,
     `*Verified Amount:* ₹${payload.amountInr.toLocaleString("en-IN")}`,
-    `*Status:* PAYMENT VERIFIED`,
+    `*Status:* PAYMENT VERIFIED & TICKETS ISSUED`,
     payload.sellerAttribution ? `*Attributed Seller:* ${payload.sellerAttribution}` : null,
     ``,
-    `*View and verify your tickets:*`,
+    ...ticketSections,
+    ``,
+    `*View Full Order & Scannable QR:*`,
     `${payload.ticketAccessUrl}`,
     ``,
-    `*SSFI Support:*`,
-    supportPhone ? `WhatsApp/Call: ${supportPhone}` : null,
-    `Email: ${supportEmail}`,
+    `*Official SSFI Channels:*`,
+    `YouTube: https://www.youtube.com/@SenthangStudentsSSFI`,
+    `Facebook: https://www.facebook.com/senthangstudents`,
+    `Support Email: ${supportEmail}`,
+    supportPhone ? `Support Phone: ${supportPhone}` : null,
+    ``,
+    `Please retain this message and your ticket numbers. We wish you the very best in the draw!`,
   ];
-
-  if (payload.isSimulated) {
-    lines.push(``);
-    lines.push(`_[INTERNAL TEST: This is a simulated message generated in Preview/Dev test environment. Order link points to test database.]_`);
-  }
 
   // Preserve intentional empty lines for clean paragraph spacing in WhatsApp
   return lines.filter((l): l is string => l !== null && l !== undefined).join("\n");
@@ -61,12 +89,14 @@ export function renderWhatsAppTicketMessage(payload: DeliveryPayload): string {
 /**
  * Centrally managed Email Ticket Confirmation Template.
  * Returns both rich branded HTML and plain-text alternatives.
+ * Strictly zero emojis, direct verification links per ticket, and confirmed draw date (19 December 2026).
  */
 export function renderEmailTicketMessage(payload: DeliveryPayload): {
   subject: string;
   html: string;
   text: string;
 } {
+  const baseUrl = extractBaseUrl(payload.ticketAccessUrl);
   const safeName = escapeHtml(payload.customerName.trim());
   const safeOrder = escapeHtml(payload.orderNumber);
   const safeCampaign = escapeHtml(payload.campaignName);
@@ -83,8 +113,11 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
 
   const subject = `[SSFI Lucky Draw] Official Ticket Confirmation — Order ${payload.orderNumber}`;
 
-  // Plain-text counterpart
-  const ticketTextList = payload.ticketNumbers.map((num) => `  * ${num}`).join("\n");
+  // Plain-text counterpart with direct links
+  const ticketTextList = payload.ticketNumbers
+    .map((num) => `  * ${num}: ${baseUrl}/verify/${encodeURIComponent(num)}`)
+    .join("\n");
+
   const text = [
     `SSFI LUCKY DRAW — TICKET CONFIRMATION`,
     `=====================================`,
@@ -93,6 +126,7 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
     `Your contribution for Order ${payload.orderNumber} has been verified, and your lucky draw tickets are officially issued.`,
     ``,
     `Campaign: ${payload.campaignName}`,
+    `Confirmed Draw Date: 19 December 2026`,
     `Amount Paid: ₹${payload.amountInr.toLocaleString("en-IN")}`,
     `Issued At: ${payload.issuedAtIst}`,
     payload.sellerAttribution ? `Attributed Seller: ${payload.sellerAttribution}\n` : ``,
@@ -102,21 +136,27 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
     `View and verify your tickets online:`,
     `${payload.ticketAccessUrl}`,
     ``,
-    `For any queries, contact SSFI Support at ${supportEmail}${rawSupportPhone ? ` or ${rawSupportPhone}` : ""}.`,
-    payload.isSimulated ? `\n[DEV NOTICE: Simulated message in development mode.]` : ``,
+    `Official SSFI Channels:`,
+    `YouTube: https://www.youtube.com/@SenthangStudentsSSFI`,
+    `Facebook: https://www.facebook.com/senthangstudents`,
+    `Email: ${supportEmail}${rawSupportPhone ? ` | Phone: ${rawSupportPhone}` : ""}`,
   ].filter((l) => l !== "").join("\n");
 
-  // Rich HTML template
+  // Rich HTML template with direct links per ticket
   const ticketHtmlItems = payload.ticketNumbers
-    .map(
-      (num) => `
-        <div style="background-color: #fffaf7; border: 1px solid #e8d6c5; border-radius: 8px; padding: 12px; text-align: center; margin: 4px;">
-          <span style="font-family: monospace; font-size: 18px; font-weight: bold; color: #7c1619;">${escapeHtml(
-            num
-          )}</span>
+    .map((num) => {
+      const directVerifyUrl = `${baseUrl}/verify/${encodeURIComponent(num)}`;
+      return `
+        <div style="background-color: #fffaf7; border: 1px solid #e8d6c5; border-radius: 10px; padding: 14px; text-align: center; margin: 8px 0;">
+          <span style="font-family: monospace; font-size: 19px; font-weight: bold; color: #7c1619;">${escapeHtml(num)}</span>
+          <div style="margin-top: 6px;">
+            <a href="${directVerifyUrl}" target="_blank" style="font-size: 12px; color: #7c1619; text-decoration: underline; font-weight: 600;">
+              Verify Ticket Online (${escapeHtml(num)}) &rarr;
+            </a>
+          </div>
         </div>
-      `
-    )
+      `;
+    })
     .join("");
 
   const simulationBanner = payload.isSimulated
@@ -163,6 +203,10 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
             <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${safeCampaign}</td>
           </tr>
           <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Confirmed Draw Date:</td>
+            <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">19 December 2026</td>
+          </tr>
+          <tr>
             <td style="color: #705a54; padding-bottom: 8px;">Verified Amount:</td>
             <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">₹${payload.amountInr.toLocaleString(
               "en-IN"
@@ -184,7 +228,7 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
 
         <!-- Tickets Grid -->
         <p style="margin: 0 0 8px; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #705a54;">
-          Your Lucky Draw Tickets (${payload.ticketNumbers.length})
+          Your Lucky Draw Tickets &amp; Verification Links (${payload.ticketNumbers.length})
         </p>
         <div style="margin-bottom: 24px;">
           ${ticketHtmlItems}
@@ -202,7 +246,7 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
         </table>
 
         <p style="margin: 20px 0 0; font-size: 12px; line-height: 1.6; color: #705a54; text-align: center;">
-          Keep your ticket numbers safe. Winning numbers will be announced at the grand lucky draw event.
+          Keep your ticket numbers safe. Winning numbers will be announced at the grand lucky draw ceremony on <strong>19 December 2026</strong>.
         </p>
       </td>
     </tr>
@@ -211,9 +255,13 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
     <tr>
       <td style="background-color: #fffaf7; border-top: 1px solid #eadbcf; padding: 20px 24px; text-align: center; font-size: 12px; color: #705a54;">
         <p style="margin: 0 0 4px;"><strong>Senthang Students Fellowship India (SSFI)</strong></p>
-        <p style="margin: 0;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
+        <p style="margin: 0 0 6px;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
           safeSupportPhone ? ` | ${safeSupportPhone}` : ""
         }</p>
+        <p style="margin: 0; font-size: 11px;">
+          <a href="https://www.youtube.com/@SenthangStudentsSSFI" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600;">Official YouTube</a> &bull;
+          <a href="https://www.facebook.com/senthangstudents" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600; margin-left: 6px;">Official Facebook</a>
+        </p>
       </td>
     </tr>
   </table>

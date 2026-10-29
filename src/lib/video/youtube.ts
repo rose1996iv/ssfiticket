@@ -89,6 +89,7 @@ export function buildYouTubeHeroEmbedUrl(rawUrl?: string | null): string | null 
     modestbranding: "1",
     iv_load_policy: "3",
     fs: "0",
+    enablejsapi: "1",
   });
 
   if (!isLive) {

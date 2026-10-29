@@ -14,6 +14,7 @@ type HeroBackgroundVideoProps = {
  * - Preserves SSFI burgundy and gold branding through an ambient color overlay.
  * - Automatically falls back to a deep burgundy gradient when no URL is set or if loading fails.
  * - Natively honors reduced-motion preferences (`motion-reduce:hidden`).
+ * - Includes strict-origin-when-cross-origin referrerPolicy and standard autoplay permissions.
  */
 export function HeroBackgroundVideo({ videoUrl }: HeroBackgroundVideoProps) {
   const targetUrl = videoUrl ?? process.env.NEXT_PUBLIC_HERO_YOUTUBE_URL;
@@ -29,23 +30,24 @@ export function HeroBackgroundVideo({ videoUrl }: HeroBackgroundVideoProps) {
 
       {/* 2. Embedded Video Layer (Rendered only when valid YouTube URL is configured) */}
       {embedUrl && (
-        <div className="absolute inset-0 overflow-hidden opacity-35 mix-blend-luminosity motion-reduce:hidden">
+        <div className="absolute inset-0 overflow-hidden opacity-45 mix-blend-luminosity motion-reduce:hidden">
           <iframe
             src={embedUrl}
             title="SSFI Promotional Video"
             tabIndex={-1}
             aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-1/2 aspect-video min-h-full min-w-full -translate-x-1/2 -translate-y-1/2 border-0 [height:56.25vw] [width:177.78vh] filter saturate-75"
-            allow="autoplay; encrypted-media"
+            className="pointer-events-none absolute top-1/2 left-1/2 aspect-video min-h-full min-w-full -translate-x-1/2 -translate-y-1/2 border-0 [height:56.25vw] [width:177.78vh] filter saturate-85"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            referrerPolicy="strict-origin-when-cross-origin"
           />
         </div>
       )}
 
       {/* 3. Deep Burgundy Brand Overlay (Guarantees WCAG text contrast & brand fidelity) */}
-      <div className="absolute inset-0 bg-gradient-to-r from-[#7c1619]/95 via-[#7c1619]/80 to-[#7c1619]/90" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#7c1619]/85 via-[#7c1619]/70 to-[#7c1619]/80" />
 
       {/* 4. Subtle Radial Vignette for depth */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-transparent via-[#7c1619]/40 to-[#420a0b]/80" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-transparent via-[#7c1619]/30 to-[#420a0b]/70" />
     </div>
   );
 }

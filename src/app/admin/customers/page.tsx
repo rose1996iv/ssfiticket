@@ -3,24 +3,46 @@ import { connection } from "next/server";
 import { AlertTriangle, RefreshCw, Users } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
+import { CustomerDetailModal, CustomerDetailData } from "@/components/admin/CustomerDetailModal";
 
 export const instant = false;
-
-type CustomerRow = {
-  id: string;
-  full_name: string;
-  phone: string;
-  whatsapp_number: string | null;
-  email: string | null;
-  created_at: string;
-};
 
 export default async function AdminCustomersPage() {
   await connection();
   const db = createSupabaseAdminClient();
   const { data, error } = await db
     .from("customers")
-    .select("id, full_name, phone, whatsapp_number, email, created_at")
+    .select(`
+      id,
+      full_name,
+      phone,
+      whatsapp_number,
+      email,
+      created_at,
+      orders (
+        id,
+        order_number,
+        quantity,
+        total_amount_paise,
+        status,
+        created_at,
+        sellers (
+          display_name,
+          seller_code
+        ),
+        payments (
+          id,
+          status,
+          amount_paise,
+          utr_reference
+        )
+      ),
+      tickets (
+        id,
+        ticket_number,
+        status
+      )
+    `)
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -68,7 +90,13 @@ export default async function AdminCustomersPage() {
     );
   }
 
-  const customers = (data ?? []) as CustomerRow[];
+  const customers = ((data ?? []) as unknown as CustomerDetailData[]).map((c) => ({
+    ...c,
+    orders: c.orders || [],
+    tickets: c.tickets || [],
+  }));
+
+  const totalTicketsAllocated = customers.reduce((sum, c) => sum + c.tickets.length, 0);
 
   return (
     <div className="space-y-6">
@@ -78,12 +106,12 @@ export default async function AdminCustomersPage() {
             Customer Directory
           </h1>
           <p className="mt-1 text-xs text-[#705a54]">
-            Registered buyers participating in the SSFI Lucky Draw.
+            Registered buyers participating in the SSFI Lucky Draw with full order histories.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs font-semibold text-[#705a54]">
-            {customers.length} registered customers
+            {customers.length} registered customers ({totalTicketsAllocated} tickets)
           </span>
           <ExportDropdown resource="customers" resourceName="Customers" />
         </div>
@@ -94,10 +122,12 @@ export default async function AdminCustomersPage() {
           <thead>
             <tr className="border-b bg-[#fffaf7] text-xs font-semibold uppercase tracking-wider text-[#705a54]">
               <th className="p-4">Customer Name</th>
-              <th className="p-4">Phone Number</th>
-              <th className="p-4">WhatsApp</th>
-              <th className="p-4">Email Address</th>
+              <th className="p-4">Contact</th>
+              <th className="p-4 text-center">Orders</th>
+              <th className="p-4 text-center">Tickets</th>
+              <th className="p-4 text-right">Verified Spend</th>
               <th className="p-4">Joined Date</th>
+              <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#f0e7df]">
@@ -108,28 +138,50 @@ export default async function AdminCustomersPage() {
                 year: "numeric",
               });
 
+              const verifiedSpendPaise = c.orders
+                .flatMap((o) => o.payments || [])
+                .filter((p) => p.status === "VERIFIED")
+                .reduce((sum, p) => sum + p.amount_paise, 0);
+
               return (
                 <tr key={c.id} className="transition-colors hover:bg-[#fffaf7]/60">
-                  <td className="p-4 font-semibold text-[#35110f]">{c.full_name}</td>
-                  <td className="p-4 font-mono text-xs">{c.phone}</td>
-                  <td className="p-4 font-mono text-xs text-green-700">
-                    {c.whatsapp_number ?? "—"}
+                  <td className="p-4">
+                    <span className="font-semibold text-[#35110f]">{c.full_name}</span>
+                    <div className="font-mono text-[11px] text-[#705a54]">ID: {c.id.slice(0, 8)}...</div>
                   </td>
-                  <td className="p-4 text-xs text-[#705a54]">{c.email ?? "—"}</td>
+                  <td className="p-4 text-xs">
+                    <div className="font-mono font-medium text-[#35110f]">{c.phone}</div>
+                    {c.whatsapp_number && c.whatsapp_number !== c.phone && (
+                      <div className="font-mono text-[11px] text-emerald-700">WA: {c.whatsapp_number}</div>
+                    )}
+                    {c.email && <div className="text-[11px] text-[#705a54]">{c.email}</div>}
+                  </td>
+                  <td className="p-4 text-center font-mono font-semibold text-[#35110f]">
+                    {c.orders.length}
+                  </td>
+                  <td className="p-4 text-center font-mono font-semibold text-[#7c1619]">
+                    {c.tickets.length}
+                  </td>
+                  <td className="p-4 text-right font-mono font-semibold text-emerald-700">
+                    ₹{verifiedSpendPaise / 100}
+                  </td>
                   <td className="p-4 text-xs text-[#705a54]">{joined}</td>
+                  <td className="p-4 text-right">
+                    <CustomerDetailModal customer={c} />
+                  </td>
                 </tr>
               );
             })}
 
             {customers.length === 0 && (
               <tr>
-                <td className="p-12 text-center" colSpan={5}>
+                <td className="p-12 text-center" colSpan={7}>
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#fffaf7] text-[#7c1619]">
                     <Users size={28} />
                   </div>
                   <h3 className="mt-4 text-base font-bold text-[#35110f]">No Customers Found</h3>
                   <p className="mt-1 text-xs text-[#705a54]">
-                    Customer details are captured when public ticket orders are submitted.
+                    Customer records will appear here as soon as public orders are placed.
                   </p>
                 </td>
               </tr>

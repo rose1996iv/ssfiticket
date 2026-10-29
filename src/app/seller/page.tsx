@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { connection } from "next/server";
 import { SellerReferralCard } from "@/components/seller/SellerReferralCard";
+import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 
 export const instant = false;
 
@@ -17,6 +18,21 @@ export default async function SellerPage() {
     .select("id,display_name,seller_code")
     .eq("profile_id", user.id)
     .single();
+
+  const { data: campaign } = await db
+    .from("campaigns")
+    .select("status, start_at, end_at")
+    .eq("public_id", "ssfi-fundraising-lucky-draw")
+    .maybeSingle();
+
+  const { count: unreadMessagesCount = 0 } = seller
+    ? await db
+        .from("seller_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_seller_id", seller.id)
+        .is("read_at", null)
+        .is("archived_at", null)
+    : { count: 0 };
 
   const { data: rawOrders = [] } = seller
     ? await db
@@ -37,12 +53,23 @@ export default async function SellerPage() {
         {seller?.display_name} · <span className="font-mono font-semibold">{seller?.seller_code}</span>
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-4">
+      {/* Campaign Schedule & Countdown */}
+      <div className="mt-6">
+        <CampaignCountdown
+          status={campaign?.status ?? "DRAFT"}
+          startAt={campaign?.start_at ?? null}
+          endAt={campaign?.end_at ?? null}
+          variant="seller"
+        />
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-5">
         {[
           ["Tickets issued", sold],
           ["Collection", `₹${collection / 100}`],
           ["Pending payments", orders.filter((order) => order.status === "PAYMENT_SUBMITTED").length],
           ["Issued orders", issued.length],
+          ["Unread notices", unreadMessagesCount ?? 0],
         ].map(([label, value]) => (
           <div key={String(label)} className="rounded-xl bg-white p-5 shadow-sm">
             <p className="text-sm text-[#705a54]">{label}</p>
@@ -57,12 +84,20 @@ export default async function SellerPage() {
         </div>
       )}
 
-      <div className="mt-6 flex gap-3">
+      <div className="mt-6 flex flex-wrap gap-3">
         <Link className="rounded bg-[#7c1619] px-4 py-3 font-bold text-white transition hover:bg-[#631214]" href="/seller/orders/new">
           New manual sale
         </Link>
         <Link className="rounded border border-[#eadbcf] bg-white px-4 py-3 font-semibold text-[#35110f] transition hover:bg-[#fffaf7]" href="/seller/orders">
           My orders
+        </Link>
+        <Link className="rounded border border-[#eadbcf] bg-white px-4 py-3 font-semibold text-[#35110f] transition hover:bg-[#fffaf7] flex items-center gap-2" href="/seller/messages">
+          <span>Seller Inbox</span>
+          {(unreadMessagesCount ?? 0) > 0 && (
+            <span className="rounded-full bg-[#7c1619] text-white px-2 py-0.5 text-xs font-bold font-mono">
+              {unreadMessagesCount}
+            </span>
+          )}
         </Link>
       </div>
     </>

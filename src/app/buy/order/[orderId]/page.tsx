@@ -24,7 +24,7 @@ type OrderData = {
   total_amount_paise: number;
   status: string;
   created_at: string;
-  customers: { full_name: string; whatsapp_number: string }[];
+  customers: { full_name: string; whatsapp_number: string; email?: string | null }[];
   sellers: { display_name: string; seller_code: string } | null;
   payments: {
     id: string;
@@ -34,7 +34,7 @@ type OrderData = {
     submitted_at: string | null;
     verified_at: string | null;
   }[];
-  tickets: { ticket_number: string }[];
+  tickets: { ticket_number: string; status: string }[];
 };
 
 type PageProps = {
@@ -51,7 +51,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, whatsapp_number), sellers(display_name, seller_code), payments(id, status, utr_reference, rejection_reason, submitted_at, verified_at), tickets(ticket_number)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status)"
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -59,6 +59,13 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   if (error || !data) {
     notFound();
   }
+
+  const { data: rawDeliveries = [] } = await db
+    .from("ticket_deliveries")
+    .select("channel, status, sent_at")
+    .eq("order_id", orderId);
+
+  const deliveries = rawDeliveries as Array<{ channel: string; status: string; sent_at: string | null }>;
 
   const order = data as unknown as OrderData;
   const payment = order.payments[0];
@@ -179,24 +186,49 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </p>
 
             <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {order.tickets.map((t) => (
-                <div
-                  key={t.ticket_number}
-                  className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50/60 p-3"
-                >
-                  <span className="font-mono text-base font-bold text-[#7c1619]">
-                    {t.ticket_number}
-                  </span>
-                  <Link
-                    href={`/verify/${t.ticket_number}`}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
+              {order.tickets
+                .filter((t) => t.status !== "VOID")
+                .map((t) => (
+                  <div
+                    key={t.ticket_number}
+                    className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50/60 p-3"
                   >
-                    <span>Verify</span>
-                    <ExternalLink size={12} />
-                  </Link>
-                </div>
-              ))}
+                    <span className="font-mono text-base font-bold text-[#7c1619]">
+                      {t.ticket_number}
+                    </span>
+                    <Link
+                      href={`/verify/${t.ticket_number}`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
+                    >
+                      <span>Verify & QR</span>
+                      <ExternalLink size={12} />
+                    </Link>
+                  </div>
+                ))}
             </div>
+
+            {/* Delivery Confirmation Notice */}
+            {deliveries.length > 0 && (
+              <div className="mt-5 rounded-xl border border-emerald-100 bg-[#fffaf7] p-3 text-xs text-[#594541]">
+                <p className="font-semibold text-[#7c1619]">Official Delivery Status:</p>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  {deliveries.map((d) => (
+                    <span key={d.channel} className="inline-flex items-center gap-1 text-[11px]">
+                      <CheckCircle2 size={12} className="text-emerald-700" />
+                      <span>
+                        {d.channel === "WHATSAPP" ? "WhatsApp: " : "Email: "}
+                        <b className="uppercase">{d.status}</b>
+                      </span>
+                    </span>
+                  ))}
+                </div>
+                {deliveries.some((d) => d.status === "SIMULATED") && (
+                  <p className="mt-1 text-[10px] text-[#705a54] italic">
+                    (Development notice: Message transmission was simulated via local provider)
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -247,6 +279,12 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               Pay via any UPI application (Google Pay, PhonePe, Paytm, BHIM, or Mobile Banking).
             </p>
 
+            {manualUpiConfig.isMock && (
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <span className="font-bold">⚠️ PREVIEW MOCK PAYMENT MODE:</span> Real UPI transactions are disabled on this preview deployment. Do not transfer actual funds. Submit any test UTR reference below (e.g. <code>TEST12345678</code>) to simulate payment submission.
+              </div>
+            )}
+
             <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#705a54]">Payee Name</span>
@@ -264,15 +302,23 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
 
             {/* UPI Deep Link Button */}
             <div className="mb-6">
-              <a
-                href={upiIntentUri}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#d6a23b] p-3 text-sm font-bold text-[#35110f] shadow-xs transition hover:bg-[#c29130]"
-              >
-                <span>Pay ₹{totalInr} via UPI App</span>
-                <ArrowRight size={16} />
-              </a>
+              {manualUpiConfig.isMock ? (
+                <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+                  <span>Preview Mock Mode — Real UPI transfer disabled</span>
+                </div>
+              ) : (
+                <a
+                  href={upiIntentUri}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#d6a23b] p-3 text-sm font-bold text-[#35110f] shadow-xs transition hover:bg-[#c29130]"
+                >
+                  <span>Pay ₹{totalInr} via UPI App</span>
+                  <ArrowRight size={16} />
+                </a>
+              )}
               <p className="mt-1 text-center text-[11px] text-[#705a54]">
-                Works on mobile devices with UPI apps installed
+                {manualUpiConfig.isMock
+                  ? "Test deployment active — submit any mock UTR below to verify order progression"
+                  : "Works on mobile devices with UPI apps installed"}
               </p>
             </div>
 

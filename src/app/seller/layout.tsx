@@ -1,13 +1,33 @@
 import Link from "next/link";
 import { connection } from "next/server";
+import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logout } from "@/server/actions/auth";
 import { Logo } from "@/components/brand/Logo";
-import { LogOut, PlusCircle, ShoppingBag } from "lucide-react";
+import { LogOut, Mail, PlusCircle, ShoppingBag } from "lucide-react";
 
 export default async function SellerLayout({ children }: { children: React.ReactNode }) {
   await connection();
   const user = await requireRole("SELLER");
+  const db = createSupabaseAdminClient();
+  const { data: seller } = await db
+    .from("sellers")
+    .select("id, is_active")
+    .eq("profile_id", user.id)
+    .maybeSingle();
+
+  if (!seller || !seller.is_active) {
+    redirect("/unauthorized?reason=seller_inactive");
+  }
+
+  // Count unread active messages for the authenticated seller
+  const { count: unreadCount = 0 } = await db
+    .from("seller_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("recipient_seller_id", seller.id)
+    .is("read_at", null)
+    .is("archived_at", null);
 
   return (
     <div className="min-h-screen bg-[#fffaf7]">
@@ -24,6 +44,18 @@ export default async function SellerLayout({ children }: { children: React.React
 
           <div className="flex items-center gap-3 sm:gap-4">
             <nav className="flex items-center gap-2 sm:gap-3 text-xs font-semibold">
+              <Link
+                href="/seller/messages"
+                className="relative flex items-center gap-1.5 rounded-lg border border-[#eadbcf] bg-[#fffaf7] px-3 py-2 text-[#35110f] transition hover:bg-[#f8e9df]"
+              >
+                <Mail size={14} className="text-[#7c1619]" />
+                <span className="hidden sm:inline">Messages</span>
+                {unreadCount && unreadCount > 0 ? (
+                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#7c1619] px-1 text-[10px] font-bold text-white">
+                    {unreadCount}
+                  </span>
+                ) : null}
+              </Link>
               <Link
                 href="/seller/orders"
                 className="flex items-center gap-1.5 rounded-lg border border-[#eadbcf] bg-[#fffaf7] px-3 py-2 text-[#35110f] transition hover:bg-[#f8e9df]"

@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse, connection } from "next/server";
-import { getCurrentUser, hasCurrentUserRole, AppRole } from "@/lib/auth/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   ExportFormat,
@@ -25,8 +25,6 @@ import {
   DashboardMetricRow,
 } from "@/lib/export";
 
-const ALLOWED_ROLES: AppRole[] = ["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"];
-
 const EXPORT_MAX_LIMITS = {
   payments: 5000,
   orders: 5000,
@@ -36,24 +34,20 @@ const EXPORT_MAX_LIMITS = {
 } as const;
 
 export async function GET(request: NextRequest) {
-  await connection();
   // 1. Strict Server-Side Authentication & Role Verification
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  let isAuthorized = false;
-  for (const role of ALLOWED_ROLES) {
-    if (await hasCurrentUserRole(role)) {
-      isAuthorized = true;
-      break;
-    }
-  }
+  const db = createSupabaseAdminClient();
+  const { data: isStaff, error: staffRpcErr } = await db.rpc("is_staff", {
+    p_user_id: user.id,
+  });
 
-  if (!isAuthorized) {
+  if (staffRpcErr || !isStaff) {
     return NextResponse.json(
-      { error: "Forbidden: You do not have permission to export administrative data" },
+      { error: "Forbidden: Administrative role required to export data." },
       { status: 403 }
     );
   }
@@ -87,8 +81,6 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-
-  const db = createSupabaseAdminClient();
 
   try {
     type AnyDataset =

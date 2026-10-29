@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
+import { formatIstDateTime } from "@/lib/date/timezone";
 
 const publicOrderSchema = z.object({
   sellerCode: z
@@ -76,9 +77,16 @@ export async function createPublicCustomerOrder(formData: FormData) {
   }
 
   // 2. Strict Server-Side Campaign State Verification
+  // Execute scheduled transition check to auto-activate DRAFT or auto-close overdue ACTIVE campaigns
+  try {
+    await admin.rpc("process_scheduled_campaign_transitions");
+  } catch (rpcErr) {
+    console.warn("[Public Order Diagnostic] Pre-flight schedule transition warning:", rpcErr);
+  }
+
   const { data: campaign, error: campaignErr } = await admin
     .from("campaigns")
-    .select("id, status, total_ticket_limit, sold_ticket_count")
+    .select("id, status, total_ticket_limit, sold_ticket_count, start_at, end_at")
     .eq("public_id", "ssfi-fundraising-lucky-draw")
     .maybeSingle();
 
@@ -103,10 +111,24 @@ export async function createPublicCustomerOrder(formData: FormData) {
     if (campaign.status === "DRAFT") {
       throw new Error("Ticket sales have not officially opened yet. This campaign is currently in preview.");
     }
-    if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED") {
+    if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED" || campaign.status === "CANCELLED") {
       throw new Error("Ticket sales for this lucky draw have ended.");
     }
     throw new Error(`Ticket sales are currently not active (campaign status: ${campaign.status}).`);
+  }
+
+  // Schedule Window Check for ACTIVE campaigns
+  const now = new Date();
+  if (campaign.start_at && now < new Date(campaign.start_at)) {
+    const opensAt = formatIstDateTime(campaign.start_at);
+    console.warn(`[Public Order Diagnostic] Order rejected: Sales have not opened yet (opens on ${opensAt}).`);
+    throw new Error(`Ticket sales have not opened yet. Sales are scheduled to open on ${opensAt}.`);
+  }
+
+  if (campaign.end_at && now >= new Date(campaign.end_at)) {
+    const closedAt = formatIstDateTime(campaign.end_at);
+    console.warn(`[Public Order Diagnostic] Order rejected: Sales ended on ${closedAt}.`);
+    throw new Error(`Ticket sales for this lucky draw have ended (closed on ${closedAt}).`);
   }
 
   const remaining = Math.max(0, campaign.total_ticket_limit - campaign.sold_ticket_count);
@@ -133,6 +155,12 @@ export async function createPublicCustomerOrder(formData: FormData) {
     const errorMsg = orderErr?.message ?? "Failed to create order.";
     if (errorMsg.includes("capacity")) {
       throw new Error("Sorry, the requested quantity exceeds remaining campaign ticket capacity.");
+    }
+    if (errorMsg.includes("have not opened yet")) {
+      throw new Error("Ticket sales have not opened yet for this campaign.");
+    }
+    if (errorMsg.includes("have ended")) {
+      throw new Error("Ticket sales for this lucky draw have ended.");
     }
     if (errorMsg.includes("active campaign not found")) {
       throw new Error("Ticket sales are currently not active for this campaign.");

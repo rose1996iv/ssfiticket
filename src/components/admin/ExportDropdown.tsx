@@ -11,6 +11,8 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
+  X,
 } from "lucide-react";
 import { ExportFormat, ExportResource } from "@/lib/export/types";
 
@@ -73,9 +75,12 @@ export function ExportDropdown({
 }: ExportDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadingFormat, setLoadingFormat] = useState<ExportFormat | null>(null);
-  const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(
-    null
-  );
+  const [lastFailedFormat, setLastFailedFormat] = useState<ExportFormat | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+    canRetry?: boolean;
+  } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -89,17 +94,24 @@ export function ExportDropdown({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Clear feedback message after 4 seconds
+  // Clear feedback message after 8 seconds if not error with retry
   useEffect(() => {
-    if (!feedback) return;
-    const timer = setTimeout(() => setFeedback(null), 4000);
+    if (!feedback || feedback.type === "error") return;
+    const timer = setTimeout(() => setFeedback(null), 5000);
     return () => clearTimeout(timer);
   }, [feedback]);
 
   async function handleExport(format: ExportFormat) {
+    if (loadingFormat !== null) return; // Prevent duplicate requests
     setLoadingFormat(format);
     setFeedback(null);
+    setLastFailedFormat(null);
     setIsOpen(false);
+
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => {
+      controller.abort();
+    }, 45000); // 45 second safety timeout
 
     try {
       const params = new URLSearchParams({
@@ -111,11 +123,22 @@ export function ExportDropdown({
         params.append("status", status);
       }
 
-      const response = await fetch(`/api/admin/export?${params.toString()}`);
+      const response = await fetch(`/api/admin/export?${params.toString()}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutTimer);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Export failed with status ${response.status}`);
+        if (response.status === 401) {
+          throw new Error("Session expired. Please refresh the page and sign in again.");
+        }
+        if (response.status === 403) {
+          throw new Error("Access denied: Administrative privileges required to export data.");
+        }
+        throw new Error(
+          errorData.error || errorData.details || `Export failed with HTTP status ${response.status}`
+        );
       }
 
       // Extract filename from Content-Disposition header if available
@@ -143,11 +166,28 @@ export function ExportDropdown({
         message: `Successfully downloaded ${filename}`,
       });
     } catch (err: unknown) {
+      clearTimeout(timeoutTimer);
       console.error("[Export Client Error]", err);
-      const message = err instanceof Error ? err.message : "Failed to download export file";
+      setLastFailedFormat(format);
+
+      let message = "Failed to download export file.";
+      let canRetry = true;
+
+      if (err instanceof DOMException && err.name === "AbortError") {
+        message = "Export request timed out after 45 seconds. Please retry or filter by a specific status.";
+      } else if (err instanceof TypeError && err.message.toLowerCase().includes("failed to fetch")) {
+        message = "Network error: Unable to reach the export endpoint. Please check connection and click Retry.";
+      } else if (err instanceof Error) {
+        message = err.message;
+        if (err.message.includes("Session expired") || err.message.includes("Access denied")) {
+          canRetry = false;
+        }
+      }
+
       setFeedback({
         type: "error",
         message,
+        canRetry,
       });
     } finally {
       setLoadingFormat(null);
@@ -183,18 +223,43 @@ export function ExportDropdown({
       {feedback && (
         <div
           role="status"
-          className={`absolute right-0 top-full z-50 mt-2 flex w-72 items-center gap-2 rounded-xl border p-3 text-xs shadow-lg transition-all ${
+          className={`absolute right-0 top-full z-50 mt-2 flex w-80 flex-col gap-2 rounded-xl border p-3.5 text-xs shadow-xl transition-all ${
             feedback.type === "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-950"
               : "border-red-200 bg-red-50 text-red-950"
           }`}
         >
-          {feedback.type === "success" ? (
-            <CheckCircle2 size={16} className="shrink-0 text-emerald-600" />
-          ) : (
-            <AlertCircle size={16} className="shrink-0 text-red-600" />
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              {feedback.type === "success" ? (
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />
+              ) : (
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-600" />
+              )}
+              <p className="font-medium leading-relaxed">{feedback.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeedback(null)}
+              className="rounded p-0.5 text-gray-500 hover:bg-black/5 hover:text-gray-700"
+              aria-label="Dismiss message"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {feedback.type === "error" && feedback.canRetry && lastFailedFormat && (
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => handleExport(lastFailedFormat)}
+                className="inline-flex items-center gap-1 rounded-lg bg-red-700 px-2.5 py-1 text-[11px] font-bold text-white shadow-2xs hover:bg-red-800"
+              >
+                <RefreshCw size={12} />
+                <span>Retry {lastFailedFormat.toUpperCase()}</span>
+              </button>
+            </div>
           )}
-          <p className="flex-1 font-medium">{feedback.message}</p>
         </div>
       )}
 

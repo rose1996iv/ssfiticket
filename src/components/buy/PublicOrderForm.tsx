@@ -11,6 +11,7 @@ type Props = {
   remainingCapacity: number;
   isCampaignActive?: boolean;
   campaignStatus?: string;
+  scheduleReason?: string;
 };
 
 export function PublicOrderForm({
@@ -20,6 +21,7 @@ export function PublicOrderForm({
   remainingCapacity,
   isCampaignActive = true,
   campaignStatus = "ACTIVE",
+  scheduleReason,
 }: Props) {
   const [quantity, setQuantity] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -42,7 +44,10 @@ export function PublicOrderForm({
     setErrorMsg(null);
 
     if (!isCampaignActive) {
-      setErrorMsg(`Ticket sales are currently not active (campaign status: ${campaignStatus}). Orders cannot be submitted at this time.`);
+      setErrorMsg(
+        scheduleReason ??
+          `Ticket sales are currently not active (campaign status: ${campaignStatus}). Orders cannot be submitted at this time.`
+      );
       return;
     }
 

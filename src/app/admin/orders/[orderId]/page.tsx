@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { ArrowLeft, ExternalLink, Ticket } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { OrderDeliveryCard, DeliveryItem } from "@/components/admin/OrderDeliveryCard";
 
 export const instant = false;
 
@@ -22,7 +23,12 @@ type OrderDetail = {
     payer_name: string | null;
     rejection_reason: string | null;
   }[];
-  tickets: { ticket_number: string; status: string }[];
+  tickets: {
+    id: string;
+    ticket_number: string;
+    status: string;
+    void_reason?: string | null;
+  }[];
 };
 
 export default async function AdminOrderDetailPage({
@@ -37,15 +43,21 @@ export default async function AdminOrderDetailPage({
   const { data } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason), tickets(ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason), tickets(id, ticket_number, status, void_reason)"
     )
     .eq("id", orderId)
     .maybeSingle();
+
+  const { data: rawDeliveries = [] } = await db
+    .from("ticket_deliveries")
+    .select("id, channel, recipient, status, provider, attempt_count, last_attempt_at, sent_at, error_message, rendered_content, subject, metadata")
+    .eq("order_id", orderId);
 
   const order = data as unknown as OrderDetail | null;
   if (!order) notFound();
 
   const payment = order.payments[0];
+  const deliveries = rawDeliveries as unknown as DeliveryItem[];
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -144,26 +156,42 @@ export default async function AdminOrderDetailPage({
         <div className="mt-8 border-t border-[#f0e7df] pt-6">
           <div className="flex items-center gap-2 text-[#7c1619]">
             <Ticket size={20} />
-            <h2 className="text-base font-bold">Assigned Tickets</h2>
+            <h2 className="text-base font-bold">Assigned Tickets ({order.tickets.length})</h2>
           </div>
 
           {order.tickets.length > 0 ? (
-            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              {order.tickets.map((t) => (
-                <div
-                  key={t.ticket_number}
-                  className="rounded-xl border border-green-200 bg-green-50/60 p-3 text-center"
-                >
-                  <p className="font-mono text-sm font-bold text-[#7c1619]">{t.ticket_number}</p>
-                  <Link
-                    href={`/verify/${t.ticket_number}`}
-                    target="_blank"
-                    className="mt-1 inline-block text-[11px] text-[#705a54] hover:underline"
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {order.tickets.map((t) => {
+                const isVoid = t.status === "VOID";
+                return (
+                  <div
+                    key={t.ticket_number}
+                    className={`rounded-xl border p-3 text-center transition ${
+                      isVoid
+                        ? "border-red-200 bg-red-50/60"
+                        : "border-green-200 bg-green-50/60"
+                    }`}
                   >
-                    Verify
-                  </Link>
-                </div>
-              ))}
+                    <p className={`font-mono text-sm font-bold ${isVoid ? "text-red-700 line-through" : "text-[#7c1619]"}`}>
+                      {t.ticket_number}
+                    </p>
+                    <div className="mt-1 flex items-center justify-center gap-1 text-[10px]">
+                      {isVoid ? (
+                        <span className="font-semibold text-red-800">VOIDED</span>
+                      ) : (
+                        <span className="font-semibold text-green-800">ACTIVE</span>
+                      )}
+                    </div>
+                    <Link
+                      href={`/verify/${t.ticket_number}`}
+                      target="_blank"
+                      className="mt-1 inline-block text-[11px] text-[#705a54] hover:underline"
+                    >
+                      Audit
+                    </Link>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p className="mt-2 text-xs text-[#705a54]">
@@ -172,6 +200,14 @@ export default async function AdminOrderDetailPage({
           )}
         </div>
       </div>
+
+      {/* Automated Ticket Delivery Card */}
+      <OrderDeliveryCard
+        orderId={order.id}
+        orderNumber={order.order_number}
+        deliveries={deliveries}
+        canManage={true}
+      />
     </div>
   );
 }

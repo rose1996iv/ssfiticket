@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
 import { formatIstDateTime } from "@/lib/date/timezone";
+import { manualUpiConfig } from "@/lib/config/payment";
 
 const publicOrderSchema = z.object({
   sellerCode: z
@@ -193,6 +194,16 @@ export async function submitPublicUpiPayment(formData: FormData) {
     throw new Error(firstError);
   }
 
+  // Preserve Preview mock mode: Require explicitly identified test references in mock mode
+  if (manualUpiConfig.isMock) {
+    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(parsed.data.utr.trim());
+    if (!isTestRef) {
+      throw new Error(
+        "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678)."
+      );
+    }
+  }
+
   const admin = createSupabaseAdminClient();
 
   // Check order exists
@@ -206,21 +217,36 @@ export async function submitPublicUpiPayment(formData: FormData) {
     throw new Error("Order not found.");
   }
 
-  if (order.status !== "PENDING_PAYMENT" && order.status !== "PAYMENT_SUBMITTED") {
+  if (order.status !== "PENDING_PAYMENT") {
+    if (order.status === "PAYMENT_SUBMITTED") {
+      throw new Error("A payment reference has already been submitted for this order and is currently under review.");
+    }
     throw new Error("This order is not eligible for payment submission.");
   }
 
   // Submit manual UPI via RPC
   const { error: rpcErr } = await admin.rpc("submit_manual_upi", {
     p_order_id: parsed.data.orderId,
-    p_utr: parsed.data.utr,
-    p_payer_name: parsed.data.payerName || "",
+    p_utr: parsed.data.utr.trim(),
+    p_payer_name: parsed.data.payerName?.trim() || "",
   });
 
   if (rpcErr) {
+    console.error("[Public Order Diagnostic] RPC submit_manual_upi failed:", {
+      code: rpcErr.code,
+      message: rpcErr.message,
+      hint: rpcErr.hint,
+      orderId: parsed.data.orderId,
+    });
+
     const message = rpcErr.message;
     if (message.includes("UTR is already attached")) {
       throw new Error("This UTR / Transaction Reference has already been submitted for another order.");
+    }
+    if (rpcErr.code === "22P02" || message.includes("enum payment_status")) {
+      throw new Error(
+        "Payment reference submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied."
+      );
     }
     throw new Error("Payment reference submission failed. Please try again.");
   }

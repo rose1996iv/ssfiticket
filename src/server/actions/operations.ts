@@ -211,6 +211,11 @@ export async function submitManualUpi(formData: FormData) {
     if (error.message.includes("UTR is already attached")) {
       throw new Error("This UTR / Transaction Reference has already been submitted for another payment.");
     }
+    if (error.code === "22P02" || error.message.includes("enum payment_status")) {
+      throw new Error(
+        "Payment submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied."
+      );
+    }
     throw new Error("This payment cannot be submitted in its current state.");
   }
 

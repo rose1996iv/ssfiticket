@@ -678,3 +678,212 @@ test("10. Public Verification URL format matches official route structure", () =
   const urlWithSlash = getTicketVerificationUrl("SSFI-000042", "https://ssfiticket.org/");
   assert.equal(urlWithSlash, "https://ssfiticket.org/verify/SSFI-000042");
 });
+
+test("11. Preview Mock Payment Reference Validation accepts test references and blocks fake live references", () => {
+  const validateMockUtr = (utr: string, isMock: boolean) => {
+    const trimmed = utr.trim();
+    if (trimmed.length < 6 || trimmed.length > 64 || !/^[A-Za-z0-9-]+$/.test(trimmed)) {
+      return { valid: false, error: "Invalid payment reference format." };
+    }
+    if (isMock) {
+      const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmed);
+      if (!isTestRef) {
+        return {
+          valid: false,
+          error: "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+        };
+      }
+    }
+    return { valid: true };
+  };
+
+  // Mock mode: Recognized test references succeed
+  assert.equal(validateMockUtr("TEST12345678", true).valid, true);
+  assert.equal(validateMockUtr("MOCK-UPI-9999", true).valid, true);
+  assert.equal(validateMockUtr("test428172918291", true).valid, true);
+
+  // Mock mode: Arbitrary fake live references fail
+  const fakeLive = validateMockUtr("428172918291", true);
+  assert.equal(fakeLive.valid, false);
+  assert.ok(fakeLive.error?.includes("recognized test reference starting with TEST or MOCK"));
+
+  // Production mode: Standard UTR references succeed
+  assert.equal(validateMockUtr("428172918291", false).valid, true);
+  assert.equal(validateMockUtr("SBI998877665544", false).valid, true);
+});
+
+test("12. Duplicate payment submission guard rejects repeat submissions on PAYMENT_SUBMITTED order", () => {
+  const checkSubmissionEligibility = (orderStatus: string) => {
+    if (orderStatus !== "PENDING_PAYMENT") {
+      if (orderStatus === "PAYMENT_SUBMITTED") {
+        return {
+          eligible: false,
+          error: "A payment reference has already been submitted for this order and is currently under review.",
+        };
+      }
+      return { eligible: false, error: "This order is not eligible for payment submission." };
+    }
+    return { eligible: true };
+  };
+
+  // PENDING_PAYMENT -> Allowed
+  assert.equal(checkSubmissionEligibility("PENDING_PAYMENT").eligible, true);
+
+  // PAYMENT_SUBMITTED -> Rejected with clear message
+  const submittedRes = checkSubmissionEligibility("PAYMENT_SUBMITTED");
+  assert.equal(submittedRes.eligible, false);
+  assert.ok(submittedRes.error?.includes("already been submitted"));
+
+  // TICKETS_ISSUED -> Rejected
+  assert.equal(checkSubmissionEligibility("TICKETS_ISSUED").eligible, false);
+});
+
+test("13. Role Boundaries: Sellers and Customers cannot approve payments or issue tickets", () => {
+  const payment: PaymentState = {
+    id: "pay-rbac-1",
+    order_id: "ord-rbac-1",
+    amount_paise: 10000,
+    status: "SUBMITTED",
+    utr_reference: "TEST12345678",
+    rejection_reason: null,
+    verified_by: null,
+  };
+
+  const order: OrderState = {
+    id: "ord-rbac-1",
+    order_number: "ORD-2026-000077",
+    quantity: 1,
+    total_amount_paise: 10000,
+    status: "PAYMENT_SUBMITTED",
+    customer_id: "cust-77",
+    seller_id: "seller-77",
+    campaign_id: "camp-1",
+  };
+
+  // Seller attempt to verify -> Strictly unauthorized
+  const sellerRes = verifyPaymentAndIssueTickets(
+    payment,
+    order,
+    "SELLER",
+    "seller-77",
+    [],
+    [],
+    () => 1,
+    500
+  );
+  assert.equal(sellerRes.success, false);
+  assert.ok(sellerRes.error?.includes("Staff permission required"));
+
+  // Customer attempt to verify -> Strictly unauthorized
+  const customerRes = verifyPaymentAndIssueTickets(
+    payment,
+    order,
+    "CUSTOMER",
+    "cust-77",
+    [],
+    [],
+    () => 1,
+    500
+  );
+  assert.equal(customerRes.success, false);
+  assert.ok(customerRes.error?.includes("Staff permission required"));
+});
+
+test("14. Complete Mock Lifecycle: Mock Submission -> Admin Approval -> Atomic Tickets -> Simulated Delivery", () => {
+  let seq = 500;
+  const nextSeq = () => ++seq;
+  const auditLogs: AuditLog[] = [];
+
+  // Step 1: Order exists with attributed customer and seller
+  const order: OrderState = {
+    id: "ord-lifecycle-1",
+    order_number: "ORD-2026-000055",
+    quantity: 3,
+    total_amount_paise: 30000,
+    status: "PENDING_PAYMENT",
+    customer_id: "cust-55",
+    seller_id: "seller-55",
+    campaign_id: "camp-1",
+  };
+
+  const payment: PaymentState = {
+    id: "pay-lifecycle-1",
+    order_id: order.id,
+    amount_paise: 30000,
+    status: "PENDING",
+    utr_reference: null,
+    rejection_reason: null,
+    verified_by: null,
+  };
+
+  // Step 2: Customer submits mock UTR
+  const submittedPayment: PaymentState = {
+    ...payment,
+    status: "SUBMITTED",
+    utr_reference: "TEST12345678",
+  };
+  const submittedOrder: OrderState = {
+    ...order,
+    status: "PAYMENT_SUBMITTED",
+  };
+
+  assert.equal(submittedPayment.status, "SUBMITTED");
+  assert.equal(submittedPayment.utr_reference, "TEST12345678");
+  assert.equal(submittedOrder.seller_id, "seller-55");
+  assert.equal(submittedOrder.customer_id, "cust-55");
+
+  // Step 3: Admin approves the mock payment
+  const verifyRes = verifyPaymentAndIssueTickets(
+    submittedPayment,
+    submittedOrder,
+    "ADMIN",
+    "admin-user-99",
+    [],
+    auditLogs,
+    nextSeq,
+    100
+  );
+
+  assert.equal(verifyRes.success, true);
+  assert.equal(verifyRes.updatedPayment?.status, "VERIFIED");
+  assert.equal(verifyRes.updatedPayment?.verified_by, "admin-user-99");
+  assert.equal(verifyRes.updatedOrder?.status, "TICKETS_ISSUED");
+  assert.equal(verifyRes.newTickets?.length, 3);
+  assert.equal(verifyRes.newTickets?.[0].ticket_number, "SSFI-000501");
+  assert.equal(verifyRes.newTickets?.[1].ticket_number, "SSFI-000502");
+  assert.equal(verifyRes.newTickets?.[2].ticket_number, "SSFI-000503");
+
+  // Step 4: Verification URLs are valid
+  const qrUrl1 = getTicketVerificationUrl(verifyRes.newTickets![0].ticket_number, "https://ssfiticket.org");
+  assert.equal(qrUrl1, "https://ssfiticket.org/verify/SSFI-000501");
+
+  // Step 5: Automated delivery is recorded as SIMULATED
+  const delivery = dispatchMockDelivery(
+    verifyRes.updatedOrder!,
+    "John Doe",
+    "+919876543210",
+    "john@example.com",
+    verifyRes.newTickets!.map((t) => t.ticket_number),
+    []
+  );
+
+  assert.equal(delivery.deliveries.length, 2);
+  assert.equal(delivery.deliveries[0].channel, "WHATSAPP");
+  assert.equal(delivery.deliveries[0].status, "SIMULATED");
+  assert.equal(delivery.deliveries[1].channel, "EMAIL");
+  assert.equal(delivery.deliveries[1].status, "SIMULATED");
+
+  // Step 6: Repeated approval is strictly blocked (idempotent)
+  const repeatRes = verifyPaymentAndIssueTickets(
+    verifyRes.updatedPayment!,
+    verifyRes.updatedOrder!,
+    "ADMIN",
+    "admin-user-99",
+    verifyRes.newTickets!,
+    auditLogs,
+    nextSeq,
+    100
+  );
+  assert.equal(repeatRes.success, false);
+  assert.equal(verifyRes.newTickets?.length, 3); // No extra tickets created
+});

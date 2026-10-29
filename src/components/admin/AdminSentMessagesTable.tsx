@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
   Clock,
@@ -9,13 +10,23 @@ import {
   History,
   Loader2,
   Mail,
+  MessageSquare,
   Reply,
   Send,
+  Shield,
   User,
   X,
 } from "lucide-react";
 import { formatIstDateTime } from "@/lib/date/timezone";
-import { replyAdminToSellerMessage } from "@/server/actions/messages";
+import {
+  findRootMessageId,
+  getConversationThread,
+  getThreadReplyCount,
+} from "@/lib/messaging/threading";
+import {
+  replyAdminToSellerMessage,
+  markAdminMessageAsRead,
+} from "@/server/actions/messages";
 
 export type SentMessageItem = {
   id: string;
@@ -36,8 +47,11 @@ type Props = {
 };
 
 export function AdminSentMessagesTable({ messages }: Props) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "INCOMING" | "OUTGOING" | "UNREAD" | "READ">("ALL");
+  const [statusFilter, setStatusFilter] = useState<
+    "ALL" | "INCOMING" | "OUTGOING" | "UNREAD" | "READ"
+  >("ALL");
   const [selectedMessage, setSelectedMessage] = useState<SentMessageItem | null>(null);
 
   // Reply form state
@@ -64,12 +78,24 @@ export function AdminSentMessagesTable({ messages }: Props) {
 
   const incomingCount = messages.filter((m) => m.sender_role === "SELLER").length;
 
-  const handleOpenModal = (msg: SentMessageItem) => {
+  const handleOpenModal = async (msg: SentMessageItem) => {
     setSelectedMessage(msg);
     setIsReplying(false);
     setReplyBody("");
     setReplyError(null);
     setReplySuccess(null);
+
+    // If opening an unread seller inquiry, mark as read by staff
+    if (msg.sender_role === "SELLER" && !msg.read_at) {
+      const formData = new FormData();
+      formData.set("messageId", msg.id);
+      try {
+        await markAdminMessageAsRead(formData);
+        router.refresh();
+      } catch (err) {
+        console.error("Failed to mark inquiry read by admin:", err);
+      }
+    }
   };
 
   const handleSendReply = async (e: React.FormEvent) => {
@@ -83,13 +109,16 @@ export function AdminSentMessagesTable({ messages }: Props) {
     setReplyError(null);
     setReplySuccess(null);
 
+    // Find the thread root message ID so all replies in this thread are unified
+    const threadRootId = findRootMessageId(selectedMessage, messages);
+
     const formData = new FormData();
     const replySubject = selectedMessage.subject.startsWith("Re: ")
       ? selectedMessage.subject
       : `Re: ${selectedMessage.subject}`;
 
     formData.set("recipientSellerId", selectedMessage.recipient_seller_id);
-    formData.set("parentMessageId", selectedMessage.id);
+    formData.set("parentMessageId", threadRootId);
     formData.set("subject", replySubject);
     formData.set("body", replyBody.trim());
 
@@ -100,6 +129,7 @@ export function AdminSentMessagesTable({ messages }: Props) {
       } else {
         setReplySuccess(res.message || "Reply delivered to seller successfully!");
         setReplyBody("");
+        router.refresh();
         setTimeout(() => {
           setIsReplying(false);
           setReplySuccess(null);
@@ -112,15 +142,22 @@ export function AdminSentMessagesTable({ messages }: Props) {
     }
   };
 
+  // Reconstruct conversation thread if a message is selected
+  const activeThread = selectedMessage
+    ? getConversationThread(selectedMessage, messages)
+    : [];
+
   return (
     <div className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-xs sm:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-[#f0e7df] pb-4">
         <div className="flex items-center gap-2">
           <History className="text-[#7c1619]" size={20} />
           <div>
-            <h2 className="text-base font-bold text-[#35110f]">Seller Communications & Inquiries</h2>
+            <h2 className="text-base font-bold text-[#35110f]">
+              Seller Communications & Inquiries
+            </h2>
             <p className="text-xs text-[#705a54]">
-              Track announcements, incoming seller inquiries, and delivery receipts ({filtered.length} of {messages.length})
+              Track announcements, incoming seller inquiries, and conversation threads ({filtered.length} of {messages.length})
             </p>
           </div>
         </div>
@@ -177,15 +214,16 @@ export function AdminSentMessagesTable({ messages }: Props) {
             <thead>
               <tr className="border-b border-[#f0e7df] text-[#705a54]">
                 <th className="pb-3 font-semibold">Direction / Seller</th>
-                <th className="pb-3 font-semibold">Subject</th>
+                <th className="pb-3 font-semibold">Subject & Thread</th>
                 <th className="pb-3 font-semibold">Dispatched (IST)</th>
-                <th className="pb-3 font-semibold">Read Receipt</th>
+                <th className="pb-3 font-semibold">Status / Receipt</th>
                 <th className="pb-3 font-semibold text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#f0e7df]">
               {filtered.map((msg) => {
                 const isSellerInquiry = msg.sender_role === "SELLER";
+                const replyCount = getThreadReplyCount(msg, messages);
 
                 return (
                   <tr key={msg.id} className="hover:bg-[#fffaf7] transition">
@@ -208,9 +246,17 @@ export function AdminSentMessagesTable({ messages }: Props) {
                       </div>
                     </td>
                     <td className="py-3">
-                      <p className="font-semibold text-[#35110f] max-w-xs truncate" title={msg.subject}>
-                        {msg.subject}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-semibold text-[#35110f] max-w-xs truncate" title={msg.subject}>
+                          {msg.subject}
+                        </p>
+                        {replyCount > 0 && (
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-purple-50 border border-purple-200 px-2 py-0.2 font-mono text-[10px] font-bold text-purple-700">
+                            <MessageSquare size={9} />
+                            <span>{replyCount + 1} thread</span>
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-[#705a54] max-w-xs truncate">{msg.body}</p>
                     </td>
                     <td className="py-3 font-mono text-[#705a54]">
@@ -236,7 +282,7 @@ export function AdminSentMessagesTable({ messages }: Props) {
                         className="inline-flex items-center gap-1 rounded-lg border border-[#eadbcf] bg-white px-2.5 py-1 text-xs font-semibold text-[#7c1619] shadow-2xs hover:bg-[#fffaf7]"
                       >
                         <Eye size={12} />
-                        <span>View</span>
+                        <span>View Thread</span>
                       </button>
                     </td>
                   </tr>
@@ -247,18 +293,22 @@ export function AdminSentMessagesTable({ messages }: Props) {
         </div>
       )}
 
-      {/* Message Detail & Reply Modal */}
+      {/* Message Detail & Conversation Thread Modal */}
       {selectedMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-2xs">
-          <div className="w-full max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between border-b border-[#f0e7df] pb-4">
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-[#eadbcf] bg-white shadow-xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-[#f0e7df] p-6 pb-4 shrink-0">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#705a54]">
-                  {selectedMessage.sender_role === "SELLER"
-                    ? "Incoming Seller Inquiry"
-                    : "Staff Outgoing Notice"}
-                </span>
-                <h3 className="text-base font-bold text-[#35110f] mt-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-[#fceeee] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#a41f23]">
+                    {selectedMessage.sellers?.seller_code} · {selectedMessage.sellers?.display_name}
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#705a54]">
+                    Conversation Thread ({activeThread.length} message{activeThread.length > 1 ? "s" : ""})
+                  </span>
+                </div>
+                <h3 className="text-base font-bold text-[#35110f] mt-1">
                   {selectedMessage.subject}
                 </h3>
               </div>
@@ -271,105 +321,138 @@ export function AdminSentMessagesTable({ messages }: Props) {
               </button>
             </div>
 
-            <div className="my-4 grid gap-3 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-3 text-xs sm:grid-cols-2">
-              <div>
-                <span className="text-[10px] font-semibold uppercase text-[#705a54]">Seller</span>
-                <p className="font-bold text-[#7c1619]">
-                  {selectedMessage.sellers?.display_name} ({selectedMessage.sellers?.seller_code})
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] font-semibold uppercase text-[#705a54]">Dispatched (IST)</span>
-                <p className="font-mono text-[#35110f]">
-                  {formatIstDateTime(selectedMessage.created_at)}
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] font-semibold uppercase text-[#705a54]">Sender</span>
-                <p className="text-[#35110f] font-semibold">
-                  {selectedMessage.sender_role === "SELLER"
-                    ? "Seller Inquiry"
-                    : selectedMessage.profiles?.full_name || selectedMessage.profiles?.email || "Staff"}
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] font-semibold uppercase text-[#705a54]">Read Status</span>
-                <p className="font-semibold text-[#35110f]">
-                  {selectedMessage.read_at
-                    ? `Read on ${formatIstDateTime(selectedMessage.read_at)}`
-                    : "Unread"}
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">
-                Message Content
+            {/* Modal Conversation Thread Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#705a54] block">
+                Conversation History
               </span>
-              <div className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-[#eadbcf] bg-white p-4 text-xs text-[#35110f] leading-relaxed">
-                {selectedMessage.body}
-              </div>
+
+              {activeThread.map((threadMsg, idx) => {
+                const isSeller = threadMsg.sender_role === "SELLER";
+
+                return (
+                  <div
+                    key={threadMsg.id}
+                    className={`rounded-xl border p-4 text-xs transition ${
+                      isSeller
+                        ? "border-emerald-200 bg-emerald-50/40 ml-4 sm:ml-8"
+                        : "border-[#eadbcf] bg-[#fffaf7] mr-4 sm:mr-8"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 pb-2 mb-2">
+                      <div className="flex items-center gap-1.5">
+                        {isSeller ? (
+                          <>
+                            <User size={14} className="text-emerald-700 shrink-0" />
+                            <span className="font-bold text-emerald-900">
+                              {threadMsg.sellers?.display_name || "Seller"} ({threadMsg.sellers?.seller_code || "SELLER"})
+                            </span>
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.2 font-mono text-[9px] font-bold text-emerald-800">
+                              {idx === 0 ? "Original Inquiry" : "Seller Reply"}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield size={14} className="text-[#7c1619] shrink-0" />
+                            <span className="font-bold text-[#7c1619]">
+                              {threadMsg.profiles?.full_name || "SSFI Staff"}
+                            </span>
+                            <span className="rounded-full bg-blue-100 px-2 py-0.2 font-mono text-[9px] font-bold text-blue-800">
+                              {idx === 0 ? "Staff Announcement" : "Staff Response"}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-[#705a54]">
+                          {formatIstDateTime(threadMsg.created_at)}
+                        </span>
+                        {threadMsg.read_at ? (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700">
+                            <CheckCircle2 size={10} />
+                            <span>Read</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                            <Clock size={10} />
+                            <span>Unread</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="whitespace-pre-wrap leading-relaxed text-[#35110f]">
+                      {threadMsg.body}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Inline Staff Reply Form */}
+              {isReplying ? (
+                <form
+                  onSubmit={handleSendReply}
+                  className="rounded-xl border border-[#eadbcf] bg-white p-4 shadow-2xs space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#7c1619] flex items-center gap-1.5">
+                      <Reply size={14} />
+                      <span>Reply to {selectedMessage.sellers?.display_name}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsReplying(false)}
+                      className="text-[11px] text-gray-500 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+
+                  <textarea
+                    required
+                    rows={3}
+                    value={replyBody}
+                    onChange={(e) => setReplyBody(e.target.value)}
+                    placeholder="Type official response to seller..."
+                    className="w-full rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-3 text-xs text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
+                  />
+
+                  {replyError && (
+                    <p className="text-xs font-semibold text-red-700">{replyError}</p>
+                  )}
+                  {replySuccess && (
+                    <p className="text-xs font-semibold text-green-700">{replySuccess}</p>
+                  )}
+
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingReply || !replyBody.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#7c1619] px-4 py-2 text-xs font-bold text-white hover:bg-[#631214] disabled:opacity-50"
+                    >
+                      {isSubmittingReply ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Send size={13} />
+                      )}
+                      <span>Send Official Reply</span>
+                    </button>
+                  </div>
+                </form>
+              ) : null}
             </div>
 
-            {/* Inline Staff Reply Form */}
-            {isReplying ? (
-              <form onSubmit={handleSendReply} className="mt-4 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#7c1619] flex items-center gap-1.5">
-                    <Reply size={14} />
-                    <span>Reply to {selectedMessage.sellers?.display_name}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsReplying(false)}
-                    className="text-[11px] text-gray-500 hover:text-gray-800"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <textarea
-                  required
-                  rows={3}
-                  value={replyBody}
-                  onChange={(e) => setReplyBody(e.target.value)}
-                  placeholder="Type official response to seller..."
-                  className="w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-xs text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-                />
-
-                {replyError && (
-                  <p className="text-xs font-semibold text-red-700">{replyError}</p>
-                )}
-                {replySuccess && (
-                  <p className="text-xs font-semibold text-green-700">{replySuccess}</p>
-                )}
-
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="submit"
-                    disabled={isSubmittingReply || !replyBody.trim()}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#7c1619] px-4 py-2 text-xs font-bold text-white hover:bg-[#631214] disabled:opacity-50"
-                  >
-                    {isSubmittingReply ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <Send size={13} />
-                    )}
-                    <span>Send Reply</span>
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
-            <div className="mt-6 flex items-center justify-between border-t border-[#f0e7df] pt-4">
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between border-t border-[#f0e7df] p-4 bg-[#fffaf7] shrink-0">
               {!isReplying && selectedMessage.recipient_seller_id ? (
                 <button
                   type="button"
                   onClick={() => setIsReplying(true)}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[#7c1619] hover:underline"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#eadbcf] bg-white px-4 py-2 text-xs font-bold text-[#7c1619] hover:bg-[#fceeee]"
                 >
                   <Reply size={14} />
-                  <span>Reply to Seller</span>
+                  <span>Reply to Thread</span>
                 </button>
               ) : (
                 <div />
@@ -378,7 +461,7 @@ export function AdminSentMessagesTable({ messages }: Props) {
               <button
                 type="button"
                 onClick={() => setSelectedMessage(null)}
-                className="rounded-xl bg-[#7c1619] px-4 py-2 text-xs font-bold text-white hover:bg-[#631214]"
+                className="rounded-xl bg-[#7c1619] px-5 py-2 text-xs font-bold text-white hover:bg-[#631214]"
               >
                 Close
               </button>

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Archive,
   CheckCircle2,
+  Clock,
   Inbox,
   Loader2,
   Mail,
@@ -17,6 +19,11 @@ import {
   X,
 } from "lucide-react";
 import { formatIstDateTime } from "@/lib/date/timezone";
+import {
+  findRootMessageId,
+  getConversationThread,
+  getThreadReplyCount,
+} from "@/lib/messaging/threading";
 import {
   markSellerMessageAsRead,
   archiveSellerMessage,
@@ -40,6 +47,7 @@ type Props = {
 };
 
 export function SellerInboxView({ messages }: Props) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"INBOX" | "ARCHIVED">("INBOX");
   const [selectedMessage, setSelectedMessage] = useState<SellerInboxMessage | null>(null);
 
@@ -60,7 +68,9 @@ export function SellerInboxView({ messages }: Props) {
 
   const inboxMessages = messages.filter((m) => !m.archived_at);
   const archivedMessages = messages.filter((m) => Boolean(m.archived_at));
-  const unreadCount = inboxMessages.filter((m) => !m.read_at && m.sender_role !== "SELLER").length;
+  const unreadCount = inboxMessages.filter(
+    (m) => !m.read_at && m.sender_role !== "SELLER"
+  ).length;
 
   const currentList = activeTab === "INBOX" ? inboxMessages : archivedMessages;
 
@@ -71,12 +81,13 @@ export function SellerInboxView({ messages }: Props) {
     setReplyError(null);
     setReplySuccess(null);
 
-    // If message is unread and sent by admin, automatically mark as read
+    // If message is unread and sent by admin staff, automatically mark as read
     if (!msg.read_at && msg.sender_role !== "SELLER") {
       const formData = new FormData();
       formData.set("messageId", msg.id);
       try {
         await markSellerMessageAsRead(formData);
+        router.refresh();
       } catch (err) {
         console.error("Failed to mark message read:", err);
       }
@@ -88,6 +99,7 @@ export function SellerInboxView({ messages }: Props) {
     formData.set("messageId", msgId);
     try {
       await archiveSellerMessage(formData);
+      router.refresh();
       if (selectedMessage?.id === msgId) {
         setSelectedMessage(null);
       }
@@ -114,6 +126,7 @@ export function SellerInboxView({ messages }: Props) {
         setComposeSuccess(res.message || "Your message has been delivered to SSFI Admin.");
         setComposeSubject("");
         setComposeBody("");
+        router.refresh();
         setTimeout(() => {
           setIsComposeOpen(false);
           setComposeSuccess(null);
@@ -134,6 +147,9 @@ export function SellerInboxView({ messages }: Props) {
     setReplyError(null);
     setReplySuccess(null);
 
+    // Resolve thread root message ID so all replies belong to the unified thread
+    const threadRootId = findRootMessageId(selectedMessage, messages);
+
     const formData = new FormData();
     const replySubject = selectedMessage.subject.startsWith("Re: ")
       ? selectedMessage.subject
@@ -141,7 +157,7 @@ export function SellerInboxView({ messages }: Props) {
 
     formData.set("subject", replySubject);
     formData.set("body", replyBody.trim());
-    formData.set("parentMessageId", selectedMessage.id);
+    formData.set("parentMessageId", threadRootId);
 
     try {
       const res = await sendSellerToAdminMessage(formData);
@@ -150,6 +166,7 @@ export function SellerInboxView({ messages }: Props) {
       } else {
         setReplySuccess(res.message || "Reply delivered to SSFI Admin!");
         setReplyBody("");
+        router.refresh();
         setTimeout(() => {
           setIsReplying(false);
           setReplySuccess(null);
@@ -162,6 +179,11 @@ export function SellerInboxView({ messages }: Props) {
     }
   }
 
+  // Active conversation thread containing all chronological messages
+  const activeThread = selectedMessage
+    ? getConversationThread(selectedMessage, messages)
+    : [];
+
   return (
     <div className="space-y-6">
       {/* Header Tabs & Actions */}
@@ -169,9 +191,11 @@ export function SellerInboxView({ messages }: Props) {
         <div className="flex items-center gap-2">
           <Inbox className="text-[#7c1619]" size={24} />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-[#35110f]">Seller Inbox & Messages</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-[#35110f]">
+              Seller Inbox & Messages
+            </h1>
             <p className="text-xs text-[#705a54]">
-              Direct communication between your authorized seller account and SSFI administrative staff.
+              Direct bidirectional communication between your authorized seller account and SSFI administrative staff.
             </p>
           </div>
         </div>
@@ -244,6 +268,7 @@ export function SellerInboxView({ messages }: Props) {
             {currentList.map((msg) => {
               const isSentBySeller = msg.sender_role === "SELLER";
               const isUnread = !msg.read_at && !isSentBySeller;
+              const replyCount = getThreadReplyCount(msg, messages);
 
               return (
                 <div
@@ -280,11 +305,17 @@ export function SellerInboxView({ messages }: Props) {
                           </span>
                         ) : isUnread ? (
                           <span className="shrink-0 rounded-full bg-[#fceeee] px-2 py-0.5 font-mono text-[10px] font-bold text-[#a41f23]">
-                            New
+                            New Notice
                           </span>
                         ) : (
                           <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 font-mono text-[10px] text-gray-600">
                             Staff Notice
+                          </span>
+                        )}
+                        {replyCount > 0 && (
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-purple-50 border border-purple-200 px-2 py-0.2 font-mono text-[10px] font-bold text-purple-700">
+                            <MessageSquare size={9} />
+                            <span>{replyCount + 1} thread</span>
                           </span>
                         )}
                       </div>
@@ -302,7 +333,7 @@ export function SellerInboxView({ messages }: Props) {
                       type="button"
                       className="rounded-lg border border-[#eadbcf] bg-white px-2.5 py-1 text-xs font-semibold text-[#7c1619] hover:bg-[#fffaf7]"
                     >
-                      View
+                      View Thread
                     </button>
                   </div>
                 </div>
@@ -312,22 +343,17 @@ export function SellerInboxView({ messages }: Props) {
         )}
       </div>
 
-      {/* Message Reader Modal */}
+      {/* Message Reader & Conversation Thread Modal */}
       {selectedMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-2xs">
-          <div className="w-full max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between border-b border-[#f0e7df] pb-4">
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-[#eadbcf] bg-white shadow-xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-[#f0e7df] p-6 pb-4 shrink-0">
               <div className="flex items-center gap-2">
-                {selectedMessage.sender_role === "SELLER" ? (
-                  <User size={20} className="text-emerald-700 shrink-0" />
-                ) : (
-                  <Shield size={20} className="text-[#7c1619] shrink-0" />
-                )}
+                <MessageSquare className="text-[#7c1619] shrink-0" size={20} />
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-[#705a54]">
-                    {selectedMessage.sender_role === "SELLER"
-                      ? "Your Sent Inquiry"
-                      : "Official Staff Message"}
+                    Conversation Thread ({activeThread.length} message{activeThread.length > 1 ? "s" : ""})
                   </span>
                   <h3 className="text-base font-bold text-[#35110f] mt-0.5">
                     {selectedMessage.subject}
@@ -343,85 +369,130 @@ export function SellerInboxView({ messages }: Props) {
               </button>
             </div>
 
-            <div className="my-4 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-3 text-xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-semibold uppercase text-[#705a54]">Sender</span>
-                  <p className="font-bold text-[#7c1619]">
-                    {selectedMessage.sender_role === "SELLER"
-                      ? "You (Authorized Seller)"
-                      : selectedMessage.profiles?.full_name || "SSFI Administration"}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-semibold uppercase text-[#705a54]">Sent</span>
-                  <p className="font-mono text-[11px] text-[#35110f]">
-                    {formatIstDateTime(selectedMessage.created_at)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">
-                Message Content
+            {/* Conversation Thread History */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#705a54] block">
+                Conversation History
               </span>
-              <div className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs text-[#35110f] leading-relaxed">
-                {selectedMessage.body}
-              </div>
+
+              {activeThread.map((threadMsg, idx) => {
+                const isSeller = threadMsg.sender_role === "SELLER";
+
+                return (
+                  <div
+                    key={threadMsg.id}
+                    className={`rounded-xl border p-4 text-xs transition ${
+                      isSeller
+                        ? "border-emerald-200 bg-emerald-50/40 ml-4 sm:ml-8"
+                        : "border-[#eadbcf] bg-[#fffaf7] mr-4 sm:mr-8"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 pb-2 mb-2">
+                      <div className="flex items-center gap-1.5">
+                        {isSeller ? (
+                          <>
+                            <User size={14} className="text-emerald-700 shrink-0" />
+                            <span className="font-bold text-emerald-900">
+                              You (Authorized Seller)
+                            </span>
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.2 font-mono text-[9px] font-bold text-emerald-800">
+                              {idx === 0 ? "Original Inquiry" : "Your Reply"}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield size={14} className="text-[#7c1619] shrink-0" />
+                            <span className="font-bold text-[#7c1619]">
+                              {threadMsg.profiles?.full_name || "SSFI Administration"}
+                            </span>
+                            <span className="rounded-full bg-blue-100 px-2 py-0.2 font-mono text-[9px] font-bold text-blue-800">
+                              {idx === 0 ? "Staff Notice" : "Staff Response"}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-[#705a54]">
+                          {formatIstDateTime(threadMsg.created_at)}
+                        </span>
+                        {threadMsg.read_at ? (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700">
+                            <CheckCircle2 size={10} />
+                            <span>Read</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                            <Clock size={10} />
+                            <span>Unread</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="whitespace-pre-wrap leading-relaxed text-[#35110f]">
+                      {threadMsg.body}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Inline Reply Form */}
+              {isReplying ? (
+                <form
+                  onSubmit={handleSendReply}
+                  className="rounded-xl border border-[#eadbcf] bg-white p-4 shadow-2xs space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#7c1619] flex items-center gap-1.5">
+                      <Reply size={14} />
+                      <span>Reply to SSFI Administration</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsReplying(false)}
+                      className="text-[11px] text-gray-500 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+
+                  <textarea
+                    required
+                    rows={3}
+                    value={replyBody}
+                    onChange={(e) => setReplyBody(e.target.value)}
+                    placeholder="Type your reply or question for SSFI administration..."
+                    className="w-full rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-3 text-xs text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
+                  />
+
+                  {replyError && (
+                    <p className="text-xs font-semibold text-red-700">{replyError}</p>
+                  )}
+                  {replySuccess && (
+                    <p className="text-xs font-semibold text-green-700">{replySuccess}</p>
+                  )}
+
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSendingReply || !replyBody.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#7c1619] px-4 py-2 text-xs font-bold text-white hover:bg-[#631214] disabled:opacity-50"
+                    >
+                      {isSendingReply ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Send size={13} />
+                      )}
+                      <span>Send Reply</span>
+                    </button>
+                  </div>
+                </form>
+              ) : null}
             </div>
 
-            {/* Inline Reply Form */}
-            {isReplying ? (
-              <form onSubmit={handleSendReply} className="mt-4 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#7c1619] flex items-center gap-1.5">
-                    <Reply size={14} />
-                    <span>Reply to Administration</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsReplying(false)}
-                    className="text-[11px] text-gray-500 hover:text-gray-800"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <textarea
-                  required
-                  rows={3}
-                  value={replyBody}
-                  onChange={(e) => setReplyBody(e.target.value)}
-                  placeholder="Type your reply or question for SSFI administration..."
-                  className="w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-xs text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-                />
-
-                {replyError && (
-                  <p className="text-xs font-semibold text-red-700">{replyError}</p>
-                )}
-                {replySuccess && (
-                  <p className="text-xs font-semibold text-green-700">{replySuccess}</p>
-                )}
-
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="submit"
-                    disabled={isSendingReply || !replyBody.trim()}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#7c1619] px-4 py-2 text-xs font-bold text-white hover:bg-[#631214] disabled:opacity-50"
-                  >
-                    {isSendingReply ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <Send size={13} />
-                    )}
-                    <span>Send Reply</span>
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
-            <div className="mt-6 flex items-center justify-between border-t border-[#f0e7df] pt-4">
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between border-t border-[#f0e7df] p-4 bg-[#fffaf7] shrink-0">
               <div className="flex items-center gap-3">
                 {!selectedMessage.archived_at && (
                   <button
@@ -438,7 +509,7 @@ export function SellerInboxView({ messages }: Props) {
                   <button
                     type="button"
                     onClick={() => setIsReplying(true)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-[#7c1619] hover:underline"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#eadbcf] bg-white px-4 py-2 text-xs font-bold text-[#7c1619] hover:bg-[#fceeee]"
                   >
                     <Reply size={14} />
                     <span>Reply to Admin</span>

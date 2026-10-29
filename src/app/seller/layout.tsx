@@ -21,11 +21,12 @@ export default async function SellerLayout({ children }: { children: React.React
     redirect("/unauthorized?reason=seller_inactive");
   }
 
-  // Count unread active messages for the authenticated seller
+  // Count unread active messages sent by staff for the authenticated seller
   const { count: unreadCount = 0 } = await db
     .from("seller_messages")
     .select("id", { count: "exact", head: true })
     .eq("recipient_seller_id", seller.id)
+    .neq("sender_role", "SELLER")
     .is("read_at", null)
     .is("archived_at", null);
 

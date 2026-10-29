@@ -66,10 +66,24 @@ end $$;
 -- 7. Bidirectional Seller Messaging Columns & Policies
 alter table public.seller_messages
   add column if not exists sender_role text not null default 'ADMIN' check (sender_role in ('ADMIN', 'SELLER')),
-  add column if not exists parent_message_id uuid references public.seller_messages(id) on delete cascade;
+  add column if not exists parent_message_id uuid references public.seller_messages(id) on delete set null;
 
 create index if not exists idx_seller_messages_parent on public.seller_messages(parent_message_id);
 create index if not exists idx_seller_messages_role on public.seller_messages(sender_role);
+
+-- Ensure foreign key constraint uses ON DELETE SET NULL to prevent cascade loss of replies
+do $$ begin
+  if exists (
+    select 1 from information_schema.table_constraints
+    where constraint_name = 'seller_messages_parent_message_id_fkey'
+      and table_name = 'seller_messages'
+  ) then
+    alter table public.seller_messages drop constraint seller_messages_parent_message_id_fkey;
+    alter table public.seller_messages
+      add constraint seller_messages_parent_message_id_fkey
+      foreign key (parent_message_id) references public.seller_messages(id) on delete set null;
+  end if;
+end $$;
 
 do $$ begin
   if not exists (

@@ -30,6 +30,7 @@ export default async function SellerPage() {
         .from("seller_messages")
         .select("id", { count: "exact", head: true })
         .eq("recipient_seller_id", seller.id)
+        .neq("sender_role", "SELLER")
         .is("read_at", null)
         .is("archived_at", null)
     : { count: 0 };

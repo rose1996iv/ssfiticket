@@ -95,6 +95,8 @@ export async function sendAdminSellerMessage(formData: FormData) {
   const recordsToInsert = activeSellers.map((seller) => ({
     recipient_seller_id: seller.id,
     sender_profile_id: user.id,
+    sender_role: "ADMIN",
+    parent_message_id: null,
     subject: parsed.data.subject,
     body: parsed.data.body,
   }));
@@ -144,7 +146,7 @@ export async function sendAdminSellerMessage(formData: FormData) {
 
 /**
  * Marks a received private message as read by the authenticated seller.
- * Strictly verifies seller ownership via verified server session.
+ * Strictly verifies seller ownership and ensures only staff-sent messages are marked read by seller.
  */
 export async function markSellerMessageAsRead(formData: FormData) {
   const user = await requireRole("SELLER");
@@ -174,12 +176,13 @@ export async function markSellerMessageAsRead(formData: FormData) {
     throw new Error("Your seller account is currently inactive.");
   }
 
-  // Atomically update read_at only if message belongs to this seller
+  // Atomically update read_at only if message belongs to this seller and was sent by staff
   const { error: updateErr } = await admin
     .from("seller_messages")
     .update({ read_at: new Date().toISOString() })
     .eq("id", parsed.data.messageId)
     .eq("recipient_seller_id", seller.id)
+    .neq("sender_role", "SELLER")
     .is("read_at", null);
 
   if (updateErr) {
@@ -196,6 +199,44 @@ export async function markSellerMessageAsRead(formData: FormData) {
   return { success: true };
 }
 
+/**
+ * Marks an incoming seller inquiry as read by administrative staff.
+ * Authorized for SUPER_ADMIN, ADMIN, FUNDRAISING_MANAGER.
+ */
+export async function markAdminMessageAsRead(formData: FormData) {
+  await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+
+  const parsed = messageActionSchema.safeParse({
+    messageId: formData.get("messageId"),
+  });
+
+  if (!parsed.success) {
+    throw new Error("Invalid message identifier.");
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  // Atomically update read_at for incoming seller inquiry
+  const { error: updateErr } = await admin
+    .from("seller_messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("id", parsed.data.messageId)
+    .eq("sender_role", "SELLER")
+    .is("read_at", null);
+
+  if (updateErr) {
+    console.error("[Messaging Diagnostic] Failed to mark inquiry read by admin:", {
+      code: updateErr.code,
+      message: updateErr.message,
+    });
+    throw new Error("Unable to update inquiry status.");
+  }
+
+  revalidatePath("/admin/messages");
+
+  return { success: true };
+}
+
 const sellerToAdminSchema = z.object({
   subject: z
     .string()
@@ -207,7 +248,7 @@ const sellerToAdminSchema = z.object({
     .trim()
     .min(5, "Message body must be at least 5 characters.")
     .max(5000, "Message body cannot exceed 5,000 characters."),
-  parentMessageId: z.string().uuid().optional().nullable(),
+  parentMessageId: z.string().uuid("Invalid parent message format.").optional().nullable(),
 });
 
 /**
@@ -216,10 +257,19 @@ const sellerToAdminSchema = z.object({
 export async function sendSellerToAdminMessage(formData: FormData) {
   const user = await requireRole("SELLER");
 
+  const rawParent = formData.get("parentMessageId");
+  const sanitizedParent =
+    typeof rawParent === "string" &&
+    rawParent.trim() &&
+    rawParent !== "null" &&
+    rawParent !== "undefined"
+      ? rawParent.trim()
+      : null;
+
   const parsed = sellerToAdminSchema.safeParse({
     subject: formData.get("subject"),
     body: formData.get("body"),
-    parentMessageId: formData.get("parentMessageId") || null,
+    parentMessageId: sanitizedParent,
   });
 
   if (!parsed.success) {
@@ -260,10 +310,10 @@ export async function sendSellerToAdminMessage(formData: FormData) {
     .select("id")
     .single();
 
-  if (insertErr) {
+  if (insertErr || !inserted) {
     console.error("[Messaging Diagnostic] Seller message to Admin failed:", {
-      code: insertErr.code,
-      message: insertErr.message,
+      code: insertErr?.code,
+      message: insertErr?.message,
     });
     return { success: false, error: "Failed to send message. Please try again." };
   }
@@ -292,6 +342,7 @@ export async function sendSellerToAdminMessage(formData: FormData) {
   return {
     success: true,
     message: "Your message has been delivered to the SSFI Admin team.",
+    messageId: inserted.id,
   };
 }
 
@@ -304,8 +355,8 @@ export async function replyAdminToSellerMessage(formData: FormData) {
   const replySchema = z.object({
     recipientSellerId: z.string().uuid("Invalid seller ID format."),
     parentMessageId: z.string().uuid("Invalid parent message ID."),
-    subject: z.string().trim().min(2).max(200),
-    body: z.string().trim().min(5).max(5000),
+    subject: z.string().trim().min(2, "Subject must be at least 2 characters.").max(200),
+    body: z.string().trim().min(5, "Reply body must be at least 5 characters.").max(5000),
   });
 
   const parsed = replySchema.safeParse({
@@ -324,6 +375,21 @@ export async function replyAdminToSellerMessage(formData: FormData) {
 
   const admin = createSupabaseAdminClient();
 
+  // Verify recipient seller exists and is active
+  const { data: recipientSeller, error: sellerCheckErr } = await admin
+    .from("sellers")
+    .select("id, is_active, seller_code")
+    .eq("id", parsed.data.recipientSellerId)
+    .maybeSingle();
+
+  if (sellerCheckErr || !recipientSeller) {
+    return { success: false, error: "Recipient seller could not be verified." };
+  }
+
+  if (!recipientSeller.is_active) {
+    return { success: false, error: "Cannot reply: recipient seller is currently inactive." };
+  }
+
   const { data: inserted, error: insertErr } = await admin
     .from("seller_messages")
     .insert({
@@ -337,10 +403,10 @@ export async function replyAdminToSellerMessage(formData: FormData) {
     .select("id")
     .single();
 
-  if (insertErr) {
+  if (insertErr || !inserted) {
     console.error("[Messaging Diagnostic] Admin reply insert failed:", {
-      code: insertErr.code,
-      message: insertErr.message,
+      code: insertErr?.code,
+      message: insertErr?.message,
     });
     return { success: false, error: "Failed to send reply. Please try again." };
   }
@@ -354,6 +420,7 @@ export async function replyAdminToSellerMessage(formData: FormData) {
       metadata: {
         parent_message_id: parsed.data.parentMessageId,
         recipient_seller_id: parsed.data.recipientSellerId,
+        recipient_seller_code: recipientSeller.seller_code,
       },
     });
   } catch (auditErr) {
@@ -367,6 +434,7 @@ export async function replyAdminToSellerMessage(formData: FormData) {
   return {
     success: true,
     message: "Reply sent successfully.",
+    messageId: inserted.id,
   };
 }
 
@@ -411,4 +479,3 @@ export async function archiveSellerMessage(formData: FormData) {
 
   return { success: true };
 }
-

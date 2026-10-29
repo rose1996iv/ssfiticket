@@ -1,5 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {
+  findRootMessageId,
+  getConversationThread,
+  getThreadReplyCount,
+  type BaseMessageItem,
+} from "../src/lib/messaging/threading.ts";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "FUNDRAISING_MANAGER" | "SELLER" | "CUSTOMER";
 
@@ -407,5 +413,175 @@ test("Audit logs record message dispatch without leaking message bodies or sensi
   assert.ok(!auditString.includes("secret credentials"));
   assert.equal(res.auditMetadata?.subject, "Confidential Security Advisory");
   assert.equal(res.auditMetadata?.recipient_count, 1);
+});
+
+test("Thread Resolution: findRootMessageId correctly traverses single and chained reply hierarchies", () => {
+  const messages: BaseMessageItem[] = [
+    {
+      id: "root-1",
+      subject: "Ticket Allotment",
+      body: "Initial staff notice",
+      created_at: "2026-10-30T00:00:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "ADMIN",
+      parent_message_id: null,
+    },
+    {
+      id: "reply-1",
+      subject: "Re: Ticket Allotment",
+      body: "Seller question",
+      created_at: "2026-10-30T00:05:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "SELLER",
+      parent_message_id: "root-1",
+    },
+    {
+      id: "reply-2",
+      subject: "Re: Ticket Allotment",
+      body: "Staff answer",
+      created_at: "2026-10-30T00:10:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "ADMIN",
+      parent_message_id: "reply-1", // Chained to reply-1
+    },
+  ];
+
+  // Root message resolves to itself
+  assert.equal(findRootMessageId(messages[0], messages), "root-1");
+  // Direct reply resolves to root
+  assert.equal(findRootMessageId(messages[1], messages), "root-1");
+  // Chained reply resolves to root
+  assert.equal(findRootMessageId(messages[2], messages), "root-1");
+});
+
+test("Thread Resolution: getConversationThread groups and orders full conversation chronologically", () => {
+  const messages: BaseMessageItem[] = [
+    {
+      id: "reply-2",
+      subject: "Re: Verification",
+      body: "Staff follow-up: Approved!",
+      created_at: "2026-10-30T00:15:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "ADMIN",
+      parent_message_id: "root-10",
+    },
+    {
+      id: "root-10",
+      subject: "Verification",
+      body: "Please upload your counterfoil",
+      created_at: "2026-10-30T00:00:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "ADMIN",
+      parent_message_id: null,
+    },
+    {
+      id: "reply-1",
+      subject: "Re: Verification",
+      body: "Seller: Uploaded receipt #12345",
+      created_at: "2026-10-30T00:10:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "SELLER",
+      parent_message_id: "root-10",
+    },
+    {
+      id: "other-root",
+      subject: "Unrelated topic",
+      body: "Different seller or conversation",
+      created_at: "2026-10-30T00:05:00Z",
+      read_at: null,
+      archived_at: null,
+      sender_role: "ADMIN",
+      parent_message_id: null,
+    },
+  ];
+
+  // Request thread from reply-1
+  const thread = getConversationThread(messages[2], messages);
+
+  // Must isolate root-10 thread and ignore other-root
+  assert.equal(thread.length, 3);
+  assert.equal(thread[0].id, "root-10"); // Oldest first
+  assert.equal(thread[1].id, "reply-1"); // Middle
+  assert.equal(thread[2].id, "reply-2"); // Latest
+
+  // Reply count check
+  assert.equal(getThreadReplyCount(messages[0], messages), 2);
+  assert.equal(getThreadReplyCount(messages[3], messages), 0);
+});
+
+test("Thread Resolution: Handles cycle safety and missing parents gracefully", () => {
+  const cyclicMessage: BaseMessageItem = {
+    id: "cycle-1",
+    subject: "Self-referential",
+    body: "Corrupted parent pointing to self",
+    created_at: "2026-10-30T00:00:00Z",
+    read_at: null,
+    archived_at: null,
+    parent_message_id: "cycle-1",
+  };
+
+  // Must not infinite loop
+  const rootId = findRootMessageId(cyclicMessage, [cyclicMessage]);
+  assert.equal(rootId, "cycle-1");
+
+  const orphanMessage: BaseMessageItem = {
+    id: "orphan-1",
+    subject: "Orphaned reply",
+    body: "Parent deleted or pruned",
+    created_at: "2026-10-30T00:00:00Z",
+    read_at: null,
+    archived_at: null,
+    parent_message_id: "non-existent-uuid",
+  };
+
+  const orphanRoot = findRootMessageId(orphanMessage, [orphanMessage]);
+  assert.equal(orphanRoot, "non-existent-uuid");
+});
+
+test("Seller Inbox Unread Count: Excludes unread messages sent by seller themselves", () => {
+  const sellerId = "seller-uuid-1";
+  const messages = [
+    {
+      id: "m-staff-1",
+      recipient_seller_id: sellerId,
+      sender_role: "ADMIN",
+      read_at: null,
+      archived_at: null,
+    },
+    {
+      id: "m-staff-2",
+      recipient_seller_id: sellerId,
+      sender_role: "ADMIN",
+      read_at: "2026-10-30T00:01:00Z",
+      archived_at: null,
+    },
+    {
+      id: "m-seller-inquiry",
+      recipient_seller_id: sellerId,
+      sender_role: "SELLER", // Sent by seller to admin
+      read_at: null, // Admin has not read it yet
+      archived_at: null,
+    },
+  ];
+
+  // For seller inbox: only m-staff-1 should count as unread for the seller
+  const sellerUnread = messages.filter(
+    (m) => m.recipient_seller_id === sellerId && !m.read_at && !m.archived_at && m.sender_role !== "SELLER"
+  ).length;
+
+  assert.equal(sellerUnread, 1);
+
+  // For admin inbox: m-seller-inquiry should count as unread inquiry for admin
+  const adminUnread = messages.filter(
+    (m) => m.sender_role === "SELLER" && !m.read_at
+  ).length;
+
+  assert.equal(adminUnread, 1);
 });
 

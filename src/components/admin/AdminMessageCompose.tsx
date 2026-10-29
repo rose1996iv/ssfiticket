@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export function AdminMessageCompose({ sellers }: Props) {
+  const router = useRouter();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -77,6 +79,7 @@ export function AdminMessageCompose({ sellers }: Props) {
       setBody("");
       setSelectedIds([]);
       setIsConfirmOpen(false);
+      router.refresh();
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);

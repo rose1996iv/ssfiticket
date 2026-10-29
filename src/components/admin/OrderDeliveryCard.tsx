@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { adminResendDeliveryAction } from "@/server/actions/tickets";
 import { DeliveryChannel, DeliveryStatus, formatDeliveryStatusLabel } from "@/lib/delivery/types";
+import { AdminGmailPreviewTestCard } from "./AdminGmailPreviewTestCard";
 
 export type DeliveryItem = {
   id: string;
@@ -48,6 +49,7 @@ export function OrderDeliveryCard({
 
   // Preview modal state
   const [previewItem, setPreviewItem] = useState<DeliveryItem | null>(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   async function handleResend(channel?: DeliveryChannel) {
     setIsResending(channel || "ALL");
@@ -286,6 +288,24 @@ export function OrderDeliveryCard({
             )}
           </div>
         </div>
+      </div>
+
+      {/* Gmail API Diagnostic Test Drawer for Preview / Testing */}
+      <div className="mt-4 border-t border-[#f0e7df] pt-3">
+        <button
+          type="button"
+          onClick={() => setShowDiagnostic((v) => !v)}
+          className="flex items-center gap-1.5 text-xs font-semibold text-[#705a54] hover:text-[#7c1619] transition"
+        >
+          <Mail size={13} className="text-[#7c1619]" />
+          <span>{showDiagnostic ? "Hide Diagnostic Test Panel" : "Test Gmail API Provider Directly (Preview)"}</span>
+        </button>
+
+        {showDiagnostic && (
+          <div className="mt-3">
+            <AdminGmailPreviewTestCard />
+          </div>
+        )}
       </div>
 
       {/* Message Preview Modal */}

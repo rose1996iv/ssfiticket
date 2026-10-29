@@ -140,7 +140,9 @@ export async function dispatchOrderTicketDeliveries(
     if (channel === "WHATSAPP") {
       result = await executeWhatsAppDelivery(payload, hasLiveWhatsApp, isDev);
     } else {
-      result = await executeEmailDelivery(payload, hasLiveEmail, isDev);
+      result = await executeEmailDelivery(payload, hasLiveEmail, isDev, {
+        isStaffAuthorized: Boolean(options?.actorUserId),
+      });
     }
 
     // Upsert into ticket_deliveries
@@ -324,7 +326,8 @@ async function executeWhatsAppDelivery(
 async function executeEmailDelivery(
   payload: DeliveryPayload,
   hasLiveConfig: boolean,
-  isDev: boolean
+  isDev: boolean,
+  options?: { isStaffAuthorized?: boolean }
 ): Promise<DeliveryResult> {
   const { subject, html, text } = renderEmailTicketMessage(payload);
   const recipient = payload.email?.trim() || null;
@@ -350,6 +353,7 @@ async function executeEmailDelivery(
       text,
       html,
       payload,
+      isStaffAuthorized: options?.isStaffAuthorized ?? false,
     });
   }
 

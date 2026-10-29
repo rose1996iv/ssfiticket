@@ -2345,3 +2345,130 @@ test("Task 5 & 8: Delivery status nomenclature and Database Separation Verificat
   const prodRef = "fohpqheglxhfdecadhzw";
   assert.notEqual(previewRef, prodRef, "Preview and Production Supabase project refs must be completely isolated");
 });
+
+
+test("Task: Gmail Preview Real Send Gate and Recipient Allowlist Enforces Fail-Closed Safety", async () => {
+  const {
+    checkGmailPreviewGate,
+  } = await import("../src/lib/delivery/providers/gmail.ts");
+
+  const originalEnv = { ...process.env };
+
+  try {
+    // 1. Outside Vercel Preview (e.g. localhost or production), gate is closed
+    delete process.env.VERCEL_ENV;
+    delete process.env.NEXT_PUBLIC_VERCEL_ENV;
+    const outsidePreview = checkGmailPreviewGate("test@example.com", true);
+    assert.equal(outsidePreview.isPermitted, false);
+    assert.ok(outsidePreview.reason.includes("Vercel Preview"));
+
+    // 2. In Vercel Preview, but GMAIL_PREVIEW_REAL_SEND_ENABLED is not 'true'
+    process.env.VERCEL_ENV = "preview";
+    process.env.GMAIL_PREVIEW_REAL_SEND_ENABLED = "false";
+    const disabledGate = checkGmailPreviewGate("test@example.com", true);
+    assert.equal(disabledGate.isPermitted, false);
+    assert.ok(disabledGate.reason.includes("simulation mode"));
+
+    // 3. In Vercel Preview with real send enabled, but missing credentials
+    process.env.GMAIL_PREVIEW_REAL_SEND_ENABLED = "true";
+    delete process.env.GMAIL_API_CLIENT_ID;
+    delete process.env.GMAIL_API_CLIENT_SECRET;
+    delete process.env.GMAIL_API_REFRESH_TOKEN;
+    const missingCreds = checkGmailPreviewGate("test@example.com", true);
+    assert.equal(missingCreds.isPermitted, false);
+    assert.ok(missingCreds.reason.includes("credentials"));
+
+    // 4. In Vercel Preview with credentials, but GMAIL_PREVIEW_ALLOWED_RECIPIENT is missing
+    process.env.GMAIL_API_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
+    process.env.GMAIL_API_CLIENT_SECRET = "test-client-secret";
+    process.env.GMAIL_API_REFRESH_TOKEN = "test-refresh-token";
+    delete process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT;
+    const missingRecipient = checkGmailPreviewGate("test@example.com", true);
+    assert.equal(missingRecipient.isPermitted, false);
+    assert.ok(missingRecipient.reason.includes("No allowed test recipient configured"));
+
+    // 5. Configured for a specific test address, but recipient does not match
+    process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT = "authorized-tester@ssfi.org";
+    const nonMatching = checkGmailPreviewGate("realcustomer@gmail.com", true);
+    assert.equal(nonMatching.isPermitted, false);
+    assert.ok(nonMatching.reason.includes("Real customer emails are strictly blocked in Preview"));
+
+    // 6. Matching recipient, but staff authorization is false
+    const unauthorizedStaff = checkGmailPreviewGate("authorized-tester@ssfi.org", false);
+    assert.equal(unauthorizedStaff.isPermitted, false);
+    assert.ok(unauthorizedStaff.reason.includes("authorization"));
+
+    // 7. All 5 conditions satisfied (case-insensitive email matching)
+    const fullyAuthorized = checkGmailPreviewGate("  Authorized-Tester@ssfi.org  ", true);
+    assert.equal(fullyAuthorized.isPermitted, true);
+    assert.ok(fullyAuthorized.reason.includes("permitted"));
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
+test("Task: Gmail OAuth and REST API Error Sanitization Redacts Tokens and Provides Actionable Guidance", async () => {
+  const {
+    sanitizeOAuthError,
+    sanitizeGmailApiError,
+  } = await import("../src/lib/delivery/providers/gmail.ts");
+
+  // A. OAuth unauthorized_client (refresh token issued to different OAuth Client ID)
+  const unauthorizedClientMsg = sanitizeOAuthError("400 Bad Request: unauthorized_client");
+  assert.ok(unauthorizedClientMsg.includes("unauthorized_client"));
+  assert.ok(unauthorizedClientMsg.includes("issued to a different OAuth Client ID"));
+  assert.ok(unauthorizedClientMsg.includes("regenerate the refresh token using the exact same Client ID"));
+
+  // B. OAuth invalid_grant (revoked or expired refresh token)
+  const invalidGrantMsg = sanitizeOAuthError("invalid_grant: Token has been expired or revoked.");
+  assert.ok(invalidGrantMsg.includes("invalid_grant"));
+  assert.ok(invalidGrantMsg.includes("expired, or has been revoked"));
+
+  // C. OAuth invalid_client
+  const invalidClientMsg = sanitizeOAuthError("invalid_client: Unauthorized");
+  assert.ok(invalidClientMsg.includes("invalid_client"));
+  assert.ok(invalidClientMsg.includes("not recognized by Google"));
+
+  // D. Token redaction: ya29 access tokens and client secrets must never leak
+  const leakedResponse = "Error with ya29.a0AfH6SMB... and client_secret=TOP_SECRET_123";
+  const sanitizedLeak = sanitizeOAuthError(leakedResponse);
+  assert.equal(sanitizedLeak.includes("ya29.a0AfH6SMB"), false);
+  assert.equal(sanitizedLeak.includes("TOP_SECRET_123"), false);
+  assert.ok(sanitizedLeak.includes("[REDACTED]"));
+
+  // E. Gmail API 401 and 403 status translation
+  const api401 = sanitizeGmailApiError(401, "Invalid Credentials Bearer ya29.secretToken");
+  assert.ok(api401.includes("401"));
+  assert.equal(api401.includes("ya29.secretToken"), false);
+
+  const api403 = sanitizeGmailApiError(403, "accessNotConfigured: Gmail API has not been used");
+  assert.ok(api403.includes("403"));
+  assert.ok(api403.includes("Scope 'https://www.googleapis.com/auth/gmail.send' is required"));
+});
+
+test("Task: Admin Diagnostic Gmail Test dispatches harmless payload without customer or financial data", async () => {
+  const { executeAdminGmailPreviewTest } = await import("../src/lib/delivery/providers/gmail.ts");
+
+  const originalEnv = { ...process.env };
+
+  try {
+    // When preview real send is disabled, reports clear failure without sending
+    process.env.VERCEL_ENV = "preview";
+    process.env.GMAIL_PREVIEW_REAL_SEND_ENABLED = "false";
+    process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT = "tester@ssfi.org";
+
+    const disabledRes = await executeAdminGmailPreviewTest({ actorUserId: "admin-uuid-123" });
+    assert.equal(disabledRes.success, false);
+    assert.ok(disabledRes.error?.includes("Preview real sending is disabled"));
+    assert.ok(disabledRes.operationId.startsWith("diag-"));
+
+    // When missing credentials
+    process.env.GMAIL_PREVIEW_REAL_SEND_ENABLED = "true";
+    delete process.env.GMAIL_API_CLIENT_ID;
+    const noCredsRes = await executeAdminGmailPreviewTest({ actorUserId: "admin-uuid-123" });
+    assert.equal(noCredsRes.success, false);
+    assert.ok(noCredsRes.error?.includes("credentials"));
+  } finally {
+    process.env = originalEnv;
+  }
+});

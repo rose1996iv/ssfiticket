@@ -4,6 +4,7 @@ import { CalendarClock } from "lucide-react";
 import { requireAnyRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { CampaignControlForm } from "@/components/admin/CampaignControlForm";
+import { AdminGmailPreviewTestCard } from "@/components/admin/AdminGmailPreviewTestCard";
 import {
   CampaignAuditTrail,
   normalizeAuditLogs,
@@ -80,6 +81,9 @@ export default async function CampaignSettingsPage() {
 
       {/* Main Campaign Control Form */}
       <CampaignControlForm campaign={campaign} />
+
+      {/* Gmail API Preview Diagnostic Dispatch */}
+      <AdminGmailPreviewTestCard />
 
       {/* Administrative Audit Log History Card */}
       <CampaignAuditTrail

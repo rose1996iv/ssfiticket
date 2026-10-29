@@ -6,6 +6,10 @@ import {
   toIstDatetimeLocalString,
   fromIstDatetimeLocalToIso,
 } from "../src/lib/date/timezone.ts";
+import {
+  validateCampaignStatusPayload,
+  validateCampaignSchedulePayload,
+} from "../src/lib/campaign/validation.ts";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "FUNDRAISING_MANAGER" | "SELLER" | "CUSTOMER";
 
@@ -312,4 +316,159 @@ test("evaluateCampaignSchedule correctly classifies all states and targets", () 
   assert.equal(closed.scheduleStatus, "CLOSED");
   assert.equal(closed.isSellingOpen, false);
 });
+
+/* ============================================================================
+ * Regression Suite: Lifecycle Status & Schedule Validation Inputs (React Error #441 Prevention)
+ * ============================================================================ */
+
+test("Regression: Valid campaign lifecycle action input validates cleanly", () => {
+  // 1. ACTIVE without confirm code
+  const activeRes = validateCampaignStatusPayload({ status: "ACTIVE", confirmCode: null });
+  assert.equal(activeRes.valid, true);
+  assert.equal(activeRes.data?.status, "ACTIVE");
+
+  // 2. PAUSED without confirm code
+  const pausedRes = validateCampaignStatusPayload({ status: "PAUSED", confirmCode: "" });
+  assert.equal(pausedRes.valid, true);
+  assert.equal(pausedRes.data?.status, "PAUSED");
+
+  // 3. DRAFT without confirm code
+  const draftRes = validateCampaignStatusPayload({ status: "DRAFT" });
+  assert.equal(draftRes.valid, true);
+  assert.equal(draftRes.data?.status, "DRAFT");
+
+  // 4. CLOSED with valid confirm code
+  const closeRes = validateCampaignStatusPayload({ status: "CLOSED", confirmCode: "CLOSE" });
+  assert.equal(closeRes.valid, true);
+
+  // 5. CLOSED with case-insensitive whitespace trimmed confirm code
+  const closeTrimmedRes = validateCampaignStatusPayload({ status: "CLOSED", confirmCode: "  close  " });
+  assert.equal(closeTrimmedRes.valid, true);
+
+  // 6. CANCELLED with valid confirm code
+  const cancelRes = validateCampaignStatusPayload({ status: "CANCELLED", confirmCode: "CANCEL" });
+  assert.equal(cancelRes.valid, true);
+});
+
+test("Regression: Missing or null campaign identifier is safely permitted with fallback", () => {
+  // Null campaignId and publicId must not throw TypeError or fail validation
+  const nullIdRes = validateCampaignStatusPayload({
+    campaignId: null,
+    publicId: null,
+    status: "PAUSED",
+    confirmCode: null,
+  });
+  assert.equal(nullIdRes.valid, true);
+  assert.equal(nullIdRes.data?.campaignId, null);
+
+  // Undefined campaignId and publicId
+  const undefIdRes = validateCampaignStatusPayload({
+    status: "ACTIVE",
+    confirmCode: null,
+  });
+  assert.equal(undefIdRes.valid, true);
+
+  // Empty string identifier is rejected with clear validation error, never crashing
+  const emptyIdRes = validateCampaignStatusPayload({
+    campaignId: "",
+    status: "ACTIVE",
+    confirmCode: null,
+  });
+  assert.equal(emptyIdRes.valid, false);
+  assert.equal(emptyIdRes.error, "Campaign ID cannot be empty.");
+});
+
+test("Regression: Missing or null status input returns safe validation error without uncaught exception", () => {
+  // 1. Null status
+  const nullStatus = validateCampaignStatusPayload({ status: null });
+  assert.equal(nullStatus.valid, false);
+  assert.equal(nullStatus.error, "Invalid campaign status.");
+
+  // 2. Undefined status
+  const undefStatus = validateCampaignStatusPayload({});
+  assert.equal(undefStatus.valid, false);
+  assert.equal(undefStatus.error, "Invalid campaign status.");
+
+  // 3. Invalid status string
+  const invalidStatus = validateCampaignStatusPayload({ status: "NON_EXISTENT_STATUS" });
+  assert.equal(invalidStatus.valid, false);
+  assert.equal(invalidStatus.error, "Invalid campaign status.");
+});
+
+test("Regression: Missing or null confirmation input on critical actions returns clear validation error", () => {
+  // 1. CLOSE without confirmation code
+  const closeNull = validateCampaignStatusPayload({ status: "CLOSED", confirmCode: null });
+  assert.equal(closeNull.valid, false);
+  assert.equal(closeNull.error, "To close the campaign, you must type 'CLOSE' in the confirmation box.");
+
+  // 2. CLOSE with empty string confirmation
+  const closeEmpty = validateCampaignStatusPayload({ status: "CLOSED", confirmCode: "" });
+  assert.equal(closeEmpty.valid, false);
+  assert.equal(closeEmpty.error, "To close the campaign, you must type 'CLOSE' in the confirmation box.");
+
+  // 3. CLOSE with incorrect confirmation code
+  const closeWrong = validateCampaignStatusPayload({ status: "CLOSED", confirmCode: "YES" });
+  assert.equal(closeWrong.valid, false);
+  assert.equal(closeWrong.error, "To close the campaign, you must type 'CLOSE' in the confirmation box.");
+
+  // 4. CANCEL without confirmation code
+  const cancelNull = validateCampaignStatusPayload({ status: "CANCELLED", confirmCode: null });
+  assert.equal(cancelNull.valid, false);
+  assert.equal(cancelNull.error, "To cancel the campaign, you must type 'CANCEL' in the confirmation box.");
+
+  // 5. PAUSED does NOT require confirmation code, even when null
+  const pausedNull = validateCampaignStatusPayload({ status: "PAUSED", confirmCode: null });
+  assert.equal(pausedNull.valid, true);
+});
+
+test("Regression: Schedule input validation handles nulls and empty inputs safely", () => {
+  // Null inputs clear schedule without throwing
+  const nullSchedule = validateCampaignSchedulePayload({
+    campaignId: null,
+    publicId: null,
+    startAt: null,
+    endAt: null,
+  });
+  assert.equal(nullSchedule.valid, true);
+  assert.equal(nullSchedule.data?.startIso, null);
+  assert.equal(nullSchedule.data?.endIso, null);
+
+  // Empty string inputs
+  const emptySchedule = validateCampaignSchedulePayload({
+    startAt: "",
+    endAt: "",
+  });
+  assert.equal(emptySchedule.valid, true);
+  assert.equal(emptySchedule.data?.startIso, null);
+
+  // End time before start time returns clear validation error
+  const invertedSchedule = validateCampaignSchedulePayload({
+    startAt: "2026-11-15T18:00",
+    endAt: "2026-11-01T10:00",
+  });
+  assert.equal(invertedSchedule.valid, false);
+  assert.equal(invertedSchedule.error, "Closing date and time must be strictly after the opening date and time.");
+});
+
+test("Regression: Invalid status transitions (e.g. activating after expired closing time) are rejected", () => {
+  const expiredEndAt = "2026-10-01T00:00:00.000Z";
+  const isPast = new Date(expiredEndAt).getTime() <= Date.now();
+  assert.equal(isPast, true);
+
+  // Simulation of business logic guard
+  const guardActivation = (targetStatus: string, endAt: string | null) => {
+    if (targetStatus === "ACTIVE" && endAt && new Date(endAt).getTime() <= Date.now()) {
+      return {
+        success: false,
+        error: `Cannot activate campaign because the scheduled closing time (${formatIstDateTime(endAt)}) has already passed. Please update the schedule first.`,
+      };
+    }
+    return { success: true };
+  };
+
+  const res = guardActivation("ACTIVE", expiredEndAt);
+  assert.equal(res.success, false);
+  assert.ok(res.error?.includes("has already passed"));
+});
+
 

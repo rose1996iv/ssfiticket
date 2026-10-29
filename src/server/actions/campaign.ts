@@ -1,64 +1,64 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { requireAnyRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { fromIstDatetimeLocalToIso, formatIstDateTime } from "@/lib/date/timezone";
+import { formatIstDateTime } from "@/lib/date/timezone";
+import {
+  validateCampaignStatusPayload,
+  validateCampaignSchedulePayload,
+  type CampaignActionResponse,
+  type CampaignStatus,
+} from "@/lib/campaign/validation";
 
-const allowedStatuses = ["DRAFT", "ACTIVE", "PAUSED", "CLOSED", "CANCELLED"] as const;
-type CampaignStatus = (typeof allowedStatuses)[number];
-
-const scheduleSchema = z.object({
-  startAt: z.string().optional().or(z.literal("")),
-  endAt: z.string().optional().or(z.literal("")),
-});
-
-const statusSchema = z.object({
-  status: z.enum(allowedStatuses, { error: "Invalid campaign status." }),
-  confirmCode: z.string().optional(),
-});
+export type { CampaignActionResponse, CampaignStatus };
 
 /**
  * Updates the campaign opening (start_at) and closing (end_at) schedule.
  * Enforces Asia/Kolkata (IST) parsing and end_at > start_at invariant.
  * Restricts access to SUPER_ADMIN and ADMIN roles only.
  */
-export async function updateCampaignSchedule(formData: FormData) {
+export async function updateCampaignSchedule(formData: FormData): Promise<CampaignActionResponse> {
   const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
 
-  const parsed = scheduleSchema.safeParse({
+  const validation = validateCampaignSchedulePayload({
+    campaignId: formData.get("campaignId"),
+    publicId: formData.get("publicId"),
     startAt: formData.get("startAt"),
     endAt: formData.get("endAt"),
   });
 
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid schedule input.");
+  if (!validation.valid || !validation.data) {
+    return {
+      success: false,
+      error: validation.error ?? "Invalid schedule input.",
+    };
   }
 
-  const startIso = fromIstDatetimeLocalToIso(parsed.data.startAt);
-  const endIso = fromIstDatetimeLocalToIso(parsed.data.endAt);
-
-  if (startIso && endIso) {
-    const startTime = new Date(startIso).getTime();
-    const endTime = new Date(endIso).getTime();
-    if (endTime <= startTime) {
-      throw new Error("Closing date and time must be strictly after the opening date and time.");
-    }
-  }
-
+  const { startIso, endIso, campaignId, publicId } = validation.data;
   const admin = createSupabaseAdminClient();
 
   // 1. Fetch current campaign
-  const { data: campaign, error: fetchErr } = await admin
+  let query = admin
     .from("campaigns")
-    .select("id, public_id, start_at, end_at, status")
-    .eq("public_id", "ssfi-fundraising-lucky-draw")
-    .maybeSingle();
+    .select("id, public_id, start_at, end_at, status");
+
+  if (campaignId) {
+    query = query.eq("id", campaignId);
+  } else if (publicId) {
+    query = query.eq("public_id", publicId);
+  } else {
+    query = query.eq("public_id", "ssfi-fundraising-lucky-draw");
+  }
+
+  const { data: campaign, error: fetchErr } = await query.maybeSingle();
 
   if (fetchErr || !campaign) {
     console.error("[Campaign Settings Diagnostic] Failed to lookup campaign:", fetchErr);
-    throw new Error("Unable to locate fundraising campaign configuration.");
+    return {
+      success: false,
+      error: "Unable to locate fundraising campaign configuration.",
+    };
   }
 
   // 2. Perform atomic update
@@ -73,7 +73,10 @@ export async function updateCampaignSchedule(formData: FormData) {
 
   if (updateErr) {
     console.error("[Campaign Settings Diagnostic] Failed to update schedule:", updateErr);
-    throw new Error("Failed to save campaign schedule. Please check input parameters.");
+    return {
+      success: false,
+      error: "Failed to save campaign schedule. Please check input parameters.",
+    };
   }
 
   // 3. Trigger immediate automated schedule transition check if schedule is already in window
@@ -125,7 +128,12 @@ export async function syncCampaignSchedule() {
 
   if (error) {
     console.error("[Campaign Schedule Sync Diagnostic] RPC failed:", error);
-    throw new Error("Failed to process scheduled campaign transitions.");
+    return {
+      success: false,
+      error: "Failed to process scheduled campaign transitions.",
+      transitionCount: 0,
+      transitions: [],
+    };
   }
 
   const payload = data as {
@@ -134,7 +142,9 @@ export async function syncCampaignSchedule() {
     transitions?: Array<{ campaign_id: string; public_id: string; from: string; to: string; reason: string }>;
   } | null;
 
-  if (payload && Number(payload.transition_count) > 0) {
+  const count = Number(payload?.transition_count ?? 0);
+
+  if (count > 0) {
     revalidatePath("/admin/campaign-settings");
     revalidatePath("/buy");
     revalidatePath("/seller");
@@ -143,7 +153,7 @@ export async function syncCampaignSchedule() {
 
   return {
     success: true,
-    transitionCount: payload?.transition_count ?? 0,
+    transitionCount: count,
     transitions: payload?.transitions ?? [],
   };
 }
@@ -153,31 +163,47 @@ export async function syncCampaignSchedule() {
  * Enforces safety confirmation for critical state transitions.
  * Restricts access to SUPER_ADMIN and ADMIN roles only.
  */
-export async function updateCampaignStatus(formData: FormData) {
+export async function updateCampaignStatus(formData: FormData): Promise<CampaignActionResponse> {
   const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
 
-  const parsed = statusSchema.safeParse({
+  const validation = validateCampaignStatusPayload({
+    campaignId: formData.get("campaignId"),
+    publicId: formData.get("publicId"),
     status: formData.get("status"),
     confirmCode: formData.get("confirmCode"),
   });
 
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid status option.");
+  if (!validation.valid || !validation.data) {
+    return {
+      success: false,
+      error: validation.error ?? "Invalid status option.",
+    };
   }
 
-  const targetStatus = parsed.data.status as CampaignStatus;
+  const { status: targetStatus, campaignId, publicId } = validation.data;
   const admin = createSupabaseAdminClient();
 
   // 1. Fetch current campaign
-  const { data: campaign, error: fetchErr } = await admin
+  let query = admin
     .from("campaigns")
-    .select("id, public_id, status, start_at, end_at, sold_ticket_count")
-    .eq("public_id", "ssfi-fundraising-lucky-draw")
-    .maybeSingle();
+    .select("id, public_id, status, start_at, end_at, sold_ticket_count");
+
+  if (campaignId) {
+    query = query.eq("id", campaignId);
+  } else if (publicId) {
+    query = query.eq("public_id", publicId);
+  } else {
+    query = query.eq("public_id", "ssfi-fundraising-lucky-draw");
+  }
+
+  const { data: campaign, error: fetchErr } = await query.maybeSingle();
 
   if (fetchErr || !campaign) {
     console.error("[Campaign Settings Diagnostic] Failed to lookup campaign:", fetchErr);
-    throw new Error("Unable to locate fundraising campaign configuration.");
+    return {
+      success: false,
+      error: "Unable to locate fundraising campaign configuration.",
+    };
   }
 
   if (campaign.status === targetStatus) {
@@ -192,21 +218,10 @@ export async function updateCampaignStatus(formData: FormData) {
     // Prevent activating with an expired closing date
     if (campaign.end_at && new Date(campaign.end_at).getTime() <= Date.now()) {
       const endFormatted = formatIstDateTime(campaign.end_at);
-      throw new Error(
-        `Cannot activate campaign because the scheduled closing time (${endFormatted}) has already passed. Please update the schedule first.`
-      );
-    }
-  }
-
-  if (targetStatus === "CLOSED") {
-    if (parsed.data.confirmCode?.trim().toUpperCase() !== "CLOSE") {
-      throw new Error("To close the campaign, you must type 'CLOSE' in the confirmation box.");
-    }
-  }
-
-  if (targetStatus === "CANCELLED") {
-    if (parsed.data.confirmCode?.trim().toUpperCase() !== "CANCEL") {
-      throw new Error("To cancel the campaign, you must type 'CANCEL' in the confirmation box.");
+      return {
+        success: false,
+        error: `Cannot activate campaign because the scheduled closing time (${endFormatted}) has already passed. Please update the schedule first.`,
+      };
     }
   }
 
@@ -221,7 +236,10 @@ export async function updateCampaignStatus(formData: FormData) {
 
   if (updateErr) {
     console.error("[Campaign Settings Diagnostic] Failed to update campaign status:", updateErr);
-    throw new Error("Failed to change campaign status. Please try again.");
+    return {
+      success: false,
+      error: "Failed to change campaign status. Please try again.",
+    };
   }
 
   // 4. Write audit log entry
@@ -251,4 +269,3 @@ export async function updateCampaignStatus(formData: FormData) {
     message: `Campaign status successfully changed to ${targetStatus}.`,
   };
 }
-

@@ -81,7 +81,9 @@ export function CampaignControlForm({ campaign }: Props) {
     setSyncMessage(null);
     try {
       const res = await syncCampaignSchedule();
-      if (res.transitionCount > 0) {
+      if (!res.success) {
+        setSyncMessage(res.error || "Schedule synchronization failed.");
+      } else if (res.transitionCount > 0) {
         setSyncMessage(`Scheduler successfully executed ${res.transitionCount} transition(s).`);
       } else {
         setSyncMessage("Schedule is up to date. No pending transitions were due.");
@@ -99,13 +101,19 @@ export function CampaignControlForm({ campaign }: Props) {
     setScheduleSuccess(null);
     setScheduleError(null);
 
-    const formData = new FormData();
+    const formData = new FormData(e.currentTarget);
+    formData.set("campaignId", campaign.id);
+    formData.set("publicId", campaign.public_id);
     formData.set("startAt", startInput);
     formData.set("endAt", endInput);
 
     try {
       const res = await updateCampaignSchedule(formData);
-      setScheduleSuccess(res.message);
+      if (!res.success) {
+        setScheduleError(res.error || "Failed to update campaign schedule.");
+      } else {
+        setScheduleSuccess(res.message || "Campaign schedule updated successfully.");
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setScheduleError(err.message);
@@ -123,16 +131,20 @@ export function CampaignControlForm({ campaign }: Props) {
     setStatusError(null);
 
     const formData = new FormData();
+    formData.set("campaignId", campaign.id);
+    formData.set("publicId", campaign.public_id);
     formData.set("status", targetStatus);
-    if (confirmInput) {
-      formData.set("confirmCode", confirmInput.trim());
-    }
+    formData.set("confirmCode", confirmInput.trim());
 
     try {
       const res = await updateCampaignStatus(formData);
-      setStatusSuccess(res.message);
-      setConfirmModal({ isOpen: false, targetStatus: null });
-      setConfirmInput("");
+      if (!res.success) {
+        setStatusError(res.error || "Failed to change campaign status.");
+      } else {
+        setStatusSuccess(res.message || `Campaign status successfully changed to ${targetStatus}.`);
+        setConfirmModal({ isOpen: false, targetStatus: null });
+        setConfirmInput("");
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setStatusError(err.message);
@@ -244,6 +256,8 @@ export function CampaignControlForm({ campaign }: Props) {
         )}
 
         <form onSubmit={handleScheduleSubmit} className="space-y-6">
+          <input type="hidden" name="campaignId" value={campaign.id} />
+          <input type="hidden" name="publicId" value={campaign.public_id} />
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
               <label htmlFor="start-at-input" className="block text-xs font-bold uppercase tracking-wider text-[#705a54]">

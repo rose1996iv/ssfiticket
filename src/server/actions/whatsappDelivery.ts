@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatIstDateTime } from "@/lib/date/timezone";
-import { getBaseAppUrl } from "@/lib/config/appUrl";
+import { getCustomerOrderUrl } from "@/lib/config/appUrl";
 import { buildWhatsAppClickToChatUrl } from "@/lib/delivery/whatsappUrl";
 import type { DeliveryPayload } from "@/lib/delivery/types";
 
@@ -50,8 +50,7 @@ export async function prepareWhatsAppTicketDelivery(orderId: string) {
     };
   }
 
-  const cleanHost = getBaseAppUrl();
-  const ticketAccessUrl = `${cleanHost}/buy/order/${order.id}`;
+  const ticketAccessUrl = getCustomerOrderUrl(order.id);
   const issuedAt = payment?.verified_at || activeTickets[0]?.issued_at || new Date().toISOString();
 
   const payload: DeliveryPayload = {
@@ -66,8 +65,8 @@ export async function prepareWhatsAppTicketDelivery(orderId: string) {
     issuedAtIst: formatIstDateTime(issuedAt),
     ticketAccessUrl,
     sellerAttribution: seller ? `${seller.display_name} (${seller.seller_code})` : null,
-    supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || "+91 98765 43210",
-    supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@ssfi.org",
+    supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
+    supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
     isSimulated: false,
   };
 

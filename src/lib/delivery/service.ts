@@ -1,6 +1,6 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatIstDateTime } from "@/lib/date/timezone";
-import { getBaseAppUrl } from "../config/appUrl.ts";
+import { getCustomerOrderUrl } from "../config/appUrl.ts";
 import {
   DeliveryChannel,
   DeliveryPayload,
@@ -65,15 +65,17 @@ export async function dispatchOrderTicketDeliveries(
     throw new Error("Cannot dispatch delivery: No active issued tickets found for this order.");
   }
 
-  const cleanHost = getBaseAppUrl();
-  const ticketAccessUrl = `${cleanHost}/buy/order/${order.id}`;
+  const ticketAccessUrl = getCustomerOrderUrl(order.id);
 
   const issuedAt = payment?.verified_at || activeTickets[0]?.issued_at || new Date().toISOString();
 
-  // Determine if running in simulated mode
+  // Determine if running in simulated or live mode
+  const isVercelPreview =
+    process.env.VERCEL_ENV === "preview" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
+  const isDev = process.env.NODE_ENV !== "production" || isVercelPreview;
   const hasLiveWhatsApp = Boolean(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
   const hasLiveEmail = Boolean(process.env.RESEND_API_KEY);
-  const isDev = process.env.NODE_ENV !== "production";
 
   const payload: DeliveryPayload = {
     orderId: order.id,
@@ -87,10 +89,16 @@ export async function dispatchOrderTicketDeliveries(
     issuedAtIst: formatIstDateTime(issuedAt),
     ticketAccessUrl,
     sellerAttribution: seller ? `${seller.display_name} (${seller.seller_code})` : null,
-    supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || "+91 98765 43210",
-    supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@ssfi.org",
-    isSimulated: isDev || !hasLiveWhatsApp || !hasLiveEmail,
+    supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
+    supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
+    isSimulated: isDev || !hasLiveEmail,
   };
+
+  // Deduping: Fetch existing delivery records to prevent duplicate sends on retries
+  const { data: existingDeliveries } = await admin
+    .from("ticket_deliveries")
+    .select("channel, status, provider_message_id, sent_at")
+    .eq("order_id", order.id);
 
   const channelsToDeliver: DeliveryChannel[] = options?.forceChannel
     ? [options.forceChannel]
@@ -99,6 +107,29 @@ export async function dispatchOrderTicketDeliveries(
   const results: DeliveryResult[] = [];
 
   for (const channel of channelsToDeliver) {
+    // If this is NOT an explicit resend, skip if already sent successfully
+    if (!options?.resend) {
+      const existing = existingDeliveries?.find(
+        (d) => d.channel === channel && d.status === "SENT"
+      );
+      if (existing) {
+        console.log(
+          `[Delivery Service] Skipping ${channel} for order ${order.order_number}: already delivered (sent at ${existing.sent_at}, ID: ${existing.provider_message_id}).`
+        );
+        results.push({
+          channel: existing.channel as DeliveryChannel,
+          status: "SENT",
+          provider: "existing",
+          recipient: channel === "EMAIL" ? (payload.email || "customer") : payload.whatsappNumber,
+          providerMessageId: existing.provider_message_id,
+          renderedContent: "",
+          subject: "",
+          error: null,
+        });
+        continue;
+      }
+    }
+
     let result: DeliveryResult;
 
     if (channel === "WHATSAPP") {
@@ -283,7 +314,7 @@ async function executeWhatsAppDelivery(
 }
 
 /**
- * Handles Email delivery execution (Mock or Live).
+ * Handles Email delivery execution (Mock, Live Resend, or Dry-Run).
  */
 async function executeEmailDelivery(
   payload: DeliveryPayload,
@@ -291,7 +322,7 @@ async function executeEmailDelivery(
   isDev: boolean
 ): Promise<DeliveryResult> {
   const { subject, html, text } = renderEmailTicketMessage(payload);
-  const recipient = payload.email;
+  const recipient = payload.email?.trim() || null;
 
   if (!recipient) {
     return {
@@ -306,27 +337,58 @@ async function executeEmailDelivery(
     };
   }
 
-  // Live Resend Email Provider check
-  if (hasLiveConfig && !isDev) {
+  // 1. Dry run / Preview / Development environment safety guard
+  const isVercelPreview =
+    process.env.VERCEL_ENV === "preview" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
+  const isDevOrPreview = process.env.NODE_ENV !== "production" || isVercelPreview || isDev;
+  const isDryRun = process.env.RESEND_DRY_RUN === "true";
+
+  // In Preview or Development or Dry Run, strictly protect real customer inboxes:
+  if (isDevOrPreview || isDryRun) {
+    const allowedTestEmail = process.env.ALLOWED_TEST_EMAIL?.trim();
+
+    // Only allow live transmission if an explicit allowed test email is configured AND matches
+    const isApprovedTestRecipient =
+      Boolean(allowedTestEmail) &&
+      recipient.toLowerCase() === allowedTestEmail!.toLowerCase();
+
+    if (hasLiveConfig && !isDryRun && isApprovedTestRecipient) {
+      console.log(
+        `[Delivery Service] Live test email permitted for approved recipient: ${recipient}`
+      );
+    } else {
+      console.log(
+        `[Delivery Service] Preview/Dev mode: email to "${recipient}" was simulated (dry-run). Real customer email was not contacted.`
+      );
+      return {
+        channel: "EMAIL",
+        status: "SIMULATED",
+        provider: "mock_preview_dry_run",
+        recipient,
+        providerMessageId: `sim-em-${payload.orderNumber}-${Date.now()}`,
+        renderedContent: html,
+        subject,
+        error: null,
+      };
+    }
+  }
+
+  // 2. Live Resend Email Provider execution
+  if (hasLiveConfig) {
     try {
       const apiKey = process.env.RESEND_API_KEY;
-      const fromEmail = process.env.DELIVERY_FROM_EMAIL || "tickets@ssfi.org";
+      let fromEmail =
+        process.env.EMAIL_FROM ||
+        process.env.DELIVERY_FROM_EMAIL ||
+        "SSFI Lucky Draw <onboarding@resend.dev>";
 
-      const allowedTestEmail = process.env.ALLOWED_TEST_EMAIL;
-      if (allowedTestEmail && recipient !== allowedTestEmail) {
+      // Safety check: do not impersonate gmail.com as sender on Resend
+      if (fromEmail.toLowerCase().includes("@gmail.com")) {
         console.warn(
-          `[Delivery Service] Skipping live email to ${recipient}: does not match ALLOWED_TEST_EMAIL (${allowedTestEmail}). Falling back to simulation.`
+          "[Delivery Service] Warning: EMAIL_FROM cannot use @gmail.com on Resend. Falling back to default sender while preserving reply-to."
         );
-        return {
-          channel: "EMAIL",
-          status: "SIMULATED",
-          provider: "mock_restricted_recipient",
-          recipient,
-          providerMessageId: `sim-em-test-guard-${Date.now()}`,
-          renderedContent: html,
-          subject,
-          error: null,
-        };
+        fromEmail = "SSFI Lucky Draw <onboarding@resend.dev>";
       }
 
       const res = await fetch("https://api.resend.com/emails", {
@@ -337,7 +399,8 @@ async function executeEmailDelivery(
         },
         body: JSON.stringify({
           from: fromEmail,
-          to: recipient,
+          to: [recipient],
+          reply_to: "Senthangstudents@gmail.com",
           subject,
           html,
           text,
@@ -345,8 +408,19 @@ async function executeEmailDelivery(
       });
 
       if (!res.ok) {
-        const errorText = await res.text();
-        console.error("[Resend Provider Error]", errorText);
+        let errorDetail = `Status ${res.status}`;
+        try {
+          const errJson = await res.json();
+          errorDetail = errJson.message || errJson.error || JSON.stringify(errJson);
+        } catch {
+          errorDetail = await res.text();
+        }
+
+        console.error("[Resend Provider Error]", {
+          status: res.status,
+          message: errorDetail,
+        });
+
         return {
           channel: "EMAIL",
           status: "FAILED",
@@ -355,7 +429,7 @@ async function executeEmailDelivery(
           providerMessageId: null,
           renderedContent: html,
           subject,
-          error: `Email provider returned status ${res.status}`,
+          error: `Email provider returned status ${res.status}: ${errorDetail}`,
         };
       }
 
@@ -371,7 +445,8 @@ async function executeEmailDelivery(
         error: null,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Email delivery failed";
+      const msg = err instanceof Error ? err.message : "Email delivery network error";
+      console.error("[Delivery Service Error] Live email dispatch failed:", msg);
       return {
         channel: "EMAIL",
         status: "FAILED",
@@ -385,15 +460,15 @@ async function executeEmailDelivery(
     }
   }
 
-  // Default Mock / Localhost Provider
+  // Fallback: If live config is missing in production
   return {
     channel: "EMAIL",
-    status: "SIMULATED",
-    provider: "mock",
+    status: "FAILED",
+    provider: "resend",
     recipient,
-    providerMessageId: `sim-em-${payload.orderNumber}-${Date.now()}`,
+    providerMessageId: null,
     renderedContent: html,
     subject,
-    error: null,
+    error: "Resend email provider not configured (missing RESEND_API_KEY).",
   };
 }

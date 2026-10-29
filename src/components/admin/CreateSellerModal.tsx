@@ -344,7 +344,7 @@ export function CreateSellerModal() {
                     </label>
                     <input
                       type="tel"
-                      placeholder="e.g. +91 98765 43210"
+                      placeholder="e.g. +91 91234 56789"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       className="mt-1 w-full rounded-xl border border-[#eadbcf] bg-[#fffaf7]/50 px-3 py-2 text-xs text-[#35110f] focus:border-[#7c1619] focus:outline-hidden focus:ring-1 focus:ring-[#7c1619]"

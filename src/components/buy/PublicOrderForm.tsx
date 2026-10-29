@@ -135,7 +135,7 @@ export function PublicOrderForm({
             type="tel"
             required
             pattern="[0-9+ -]{7,20}"
-            placeholder="e.g. +91 98765 43210"
+            placeholder="e.g. +91 91234 56789"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />
           <p className="mt-1 text-xs text-[#705a54]">

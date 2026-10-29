@@ -5,7 +5,7 @@ import { getBaseAppUrl } from "../config/appUrl.ts";
  * Builds the canonical public verification URL for an official SSFI ticket.
  */
 export function getTicketVerificationUrl(ticketNumber: string, baseUrl?: string): string {
-  const cleanHost = getBaseAppUrl(baseUrl);
+  const cleanHost = getBaseAppUrl(baseUrl, { forCustomerFacingLink: true });
   return `${cleanHost}/verify/${encodeURIComponent(ticketNumber.trim().toUpperCase())}`;
 }
 

@@ -159,7 +159,7 @@ export function SellerOrderForm({
             required
             disabled={isSubmitting || !isCampaignActive}
             pattern="[0-9+ -]{7,20}"
-            placeholder="e.g. +91 98765 43210"
+            placeholder="e.g. +91 91234 56789"
             className="mt-1.5 w-full rounded-lg border border-[#eadbcf] bg-white p-2.5 text-sm text-[#35110f] shadow-2xs focus:border-[#7c1619] focus:outline-hidden disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
           <p className="mt-1 text-xs text-[#705a54]">

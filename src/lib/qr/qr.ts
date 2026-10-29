@@ -7,7 +7,7 @@ import { getBaseAppUrl } from "../config/appUrl.ts";
  */
 export function getSellerReferralUrl(sellerCode: string, origin?: string): string {
   const cleanCode = sellerCode.trim().toUpperCase();
-  const base = getBaseAppUrl(origin);
+  const base = getBaseAppUrl(origin, { forCustomerFacingLink: true });
 
   return `${base}/buy?ref=${encodeURIComponent(cleanCode)}`;
 }

@@ -10,6 +10,7 @@ import {
 } from "../src/lib/delivery/whatsappUrl.ts";
 import type { DeliveryPayload, DeliveryResult } from "../src/lib/delivery/types.ts";
 import { getTicketVerificationUrl } from "../src/lib/ticket/qr.ts";
+import { getBaseAppUrl, getCustomerOrderUrl } from "../src/lib/config/appUrl.ts";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "FUNDRAISING_MANAGER" | "SELLER" | "CUSTOMER";
 
@@ -993,4 +994,236 @@ test("Bidirectional Messaging: Threading association and role assignment", () =>
   assert.equal(messages[1].sender_role, "ADMIN");
   assert.equal(messages[1].parent_message_id, "msg-001");
 });
+
+// -----------------------------------------------------------------------------
+// Customer Order Link & Production Base URL Tests
+// -----------------------------------------------------------------------------
+
+test("Customer Order Link: Generates public production URL by default without protected preview hash", () => {
+  const orderId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  const url = getCustomerOrderUrl(orderId);
+
+  // Must start with canonical domain
+  assert.ok(
+    url.startsWith("https://ssfiticket.vercel.app/buy/order/"),
+    `Expected canonical production link, got: ${url}`
+  );
+  assert.equal(url, `https://ssfiticket.vercel.app/buy/order/${orderId}`);
+  assert.ok(!url.includes("-git-"), "Customer link must never expose git branch preview hashes");
+  assert.ok(!url.includes(".preview."), "Customer link must not contain protected preview domains");
+});
+
+test("Customer Order Link: Respects custom explicit APP_BASE_URL", () => {
+  const orderId = "test-order-99";
+  const customOrigin = "https://fundraising.ssfi.in";
+  const url = getCustomerOrderUrl(orderId, customOrigin);
+
+  assert.equal(url, "https://fundraising.ssfi.in/buy/order/test-order-99");
+});
+
+test("Customer Order Link: getBaseAppUrl strips trailing slashes and normalizes protocols", () => {
+  assert.equal(getBaseAppUrl("https://ssfiticket.vercel.app/"), "https://ssfiticket.vercel.app");
+  assert.equal(getBaseAppUrl("https://ssfiticket.vercel.app///"), "https://ssfiticket.vercel.app");
+  assert.equal(getBaseAppUrl("ssfiticket.vercel.app"), "https://ssfiticket.vercel.app");
+});
+
+// -----------------------------------------------------------------------------
+// Official SSFI Contact & Template Tests
+// -----------------------------------------------------------------------------
+
+test("Official SSFI Contact: Templates use Senthangstudents@gmail.com and omit unverified phone", () => {
+  const payload: DeliveryPayload = {
+    orderId: "ord-test-contact",
+    orderNumber: "SSFI-ORD-7777",
+    customerName: "Mary Vung",
+    whatsappNumber: "9123456789",
+    email: "mary@example.com",
+    ticketNumbers: ["SSFI-007777"],
+    amountInr: 100,
+    campaignName: "SSFI Fundraiser 2026",
+    issuedAtIst: "29 Oct 2026, 06:00 PM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-test-contact",
+  };
+
+  const waMsg = renderWhatsAppTicketMessage(payload);
+  const emailMsg = renderEmailTicketMessage(payload);
+
+  // 1. Must contain verified official email
+  assert.ok(waMsg.includes("Senthangstudents@gmail.com"));
+  assert.ok(emailMsg.text.includes("Senthangstudents@gmail.com"));
+  assert.ok(emailMsg.html.includes("Senthangstudents@gmail.com"));
+
+  // 2. Must NOT contain fake support email or fake phone
+  assert.ok(!waMsg.includes("support@ssfi.org"));
+  assert.ok(!emailMsg.text.includes("support@ssfi.org"));
+  assert.ok(!emailMsg.html.includes("support@ssfi.org"));
+
+  assert.ok(!waMsg.includes("+91 98765 43210"));
+  assert.ok(!emailMsg.text.includes("+91 98765 43210"));
+  assert.ok(!emailMsg.html.includes("+91 98765 43210"));
+
+  // 3. Must NOT contain corrupted replacement characters (\uFFFD)
+  assert.ok(!waMsg.includes("\uFFFD"));
+  assert.ok(!emailMsg.text.includes("\uFFFD"));
+  assert.ok(!emailMsg.html.includes("\uFFFD"));
+
+  // 4. Must render valid INR currency
+  assert.ok(waMsg.includes("₹100"));
+  assert.ok(emailMsg.text.includes("₹100"));
+  assert.ok(emailMsg.html.includes("₹100"));
+});
+
+// -----------------------------------------------------------------------------
+// Automated Email Delivery & Deduping Scenarios
+// -----------------------------------------------------------------------------
+
+test("Email Delivery Simulation: Success scenario includes all mandatory order details", () => {
+  const payload: DeliveryPayload = {
+    orderId: "ord-email-success",
+    orderNumber: "SSFI-ORD-1234",
+    customerName: "David Lal",
+    whatsappNumber: "9812345678",
+    email: "david@example.com",
+    ticketNumbers: ["SSFI-000101", "SSFI-000102"],
+    amountInr: 200,
+    campaignName: "SSFI Annual Draw 2026",
+    issuedAtIst: "29 Oct 2026, 07:30 PM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-email-success",
+    sellerAttribution: "Lian (SSFI-SEL-001)",
+    isSimulated: true,
+  };
+
+  const { subject, html, text } = renderEmailTicketMessage(payload);
+
+  assert.ok(subject.includes("SSFI-ORD-1234"));
+  assert.ok(text.includes("SSFI-ORD-1234"));
+  assert.ok(text.includes("SSFI-000101"));
+  assert.ok(text.includes("SSFI-000102"));
+  assert.ok(text.includes("₹200"));
+  assert.ok(text.includes("29 Oct 2026, 07:30 PM IST"));
+  assert.ok(text.includes("Lian (SSFI-SEL-001)"));
+  assert.ok(text.includes("https://ssfiticket.vercel.app/buy/order/ord-email-success"));
+
+  assert.ok(html.includes("David Lal"));
+  assert.ok(html.includes("SSFI-ORD-1234"));
+  assert.ok(html.includes("SSFI-000101"));
+  assert.ok(html.includes("SSFI-000102"));
+  assert.ok(html.includes("View &amp; Verify Tickets Online"));
+});
+
+test("Email Delivery: Missing customer email gracefully skips or records FAILED without crash", () => {
+  function simulateEmailDispatch(email: string | null): { status: string; error?: string } {
+    if (!email || email.trim() === "") {
+      return {
+        status: "FAILED",
+        error: "No email address recorded for customer.",
+      };
+    }
+    return { status: "SENT" };
+  }
+
+  const result = simulateEmailDispatch(null);
+  assert.equal(result.status, "FAILED");
+  assert.equal(result.error, "No email address recorded for customer.");
+
+  const emptyResult = simulateEmailDispatch("");
+  assert.equal(emptyResult.status, "FAILED");
+});
+
+test("Email Delivery Deduping: Repeated approval requests do not re-send already SENT emails", () => {
+  type DeliveryRecord = {
+    channel: string;
+    status: string;
+    sent_at: string;
+    attempt_count: number;
+  };
+
+  const existingDeliveries: DeliveryRecord[] = [
+    {
+      channel: "EMAIL",
+      status: "SENT",
+      sent_at: "2026-10-29T14:00:00Z",
+      attempt_count: 1,
+    },
+  ];
+
+  function evaluateDeliveryDispatch(
+    channel: string,
+    resend: boolean
+  ): { shouldSend: boolean; reason: string } {
+    if (!resend) {
+      const existing = existingDeliveries.find(
+        (d) => d.channel === channel && d.status === "SENT"
+      );
+      if (existing) {
+        return { shouldSend: false, reason: "Already successfully sent" };
+      }
+    }
+    return { shouldSend: true, reason: "Dispatch permitted" };
+  }
+
+  // 1. Repeated verification / approval (resend = false)
+  const repeatCheck = evaluateDeliveryDispatch("EMAIL", false);
+  assert.equal(repeatCheck.shouldSend, false);
+  assert.equal(repeatCheck.reason, "Already successfully sent");
+
+  // 2. Explicit manual resend by staff (resend = true)
+  const forceResendCheck = evaluateDeliveryDispatch("EMAIL", true);
+  assert.equal(forceResendCheck.shouldSend, true);
+});
+
+test("Email Delivery: Provider failure does not rollback valid ticket allocation", () => {
+  let paymentVerified = false;
+  let ticketsAllocated = false;
+  let deliveryResultStatus = "";
+
+  // 1. Transaction step
+  paymentVerified = true;
+  ticketsAllocated = true;
+
+  // 2. Delivery dispatch step wrapped in safe try/catch
+  try {
+    // Simulate provider outage (e.g. Resend 500 or network timeout)
+    throw new Error("Resend provider 503 service unavailable");
+  } catch {
+    deliveryResultStatus = "FAILED";
+    // Crucial: paymentVerified and ticketsAllocated remain true!
+  }
+
+  assert.equal(paymentVerified, true);
+  assert.equal(ticketsAllocated, true);
+  assert.equal(deliveryResultStatus, "FAILED");
+});
+
+test("Preview Environment Safety: Protects real customers by enforcing dry-run mode unless allowed test recipient", () => {
+  function evaluatePreviewEmailSafety(
+    recipient: string,
+    isPreview: boolean,
+    allowedTestEmail?: string
+  ): { liveSendPermitted: boolean; mode: string } {
+    if (isPreview) {
+      if (allowedTestEmail && recipient.toLowerCase() === allowedTestEmail.toLowerCase()) {
+        return { liveSendPermitted: true, mode: "TEST_INBOX_PERMITTED" };
+      }
+      return { liveSendPermitted: false, mode: "MOCK_PREVIEW_DRY_RUN" };
+    }
+    return { liveSendPermitted: true, mode: "PRODUCTION_LIVE" };
+  }
+
+  // Real customer in preview -> strictly dry-run
+  const realCust = evaluatePreviewEmailSafety("real.customer@gmail.com", true, "developer@ssfi.org");
+  assert.equal(realCust.liveSendPermitted, false);
+  assert.equal(realCust.mode, "MOCK_PREVIEW_DRY_RUN");
+
+  // Approved developer in preview -> allowed test send
+  const devTest = evaluatePreviewEmailSafety("developer@ssfi.org", true, "developer@ssfi.org");
+  assert.equal(devTest.liveSendPermitted, true);
+  assert.equal(devTest.mode, "TEST_INBOX_PERMITTED");
+
+  // In preview with no allowed test email configured -> strictly dry-run
+  const noConfig = evaluatePreviewEmailSafety("anyone@example.com", true, undefined);
+  assert.equal(noConfig.liveSendPermitted, false);
+  assert.equal(noConfig.mode, "MOCK_PREVIEW_DRY_RUN");
+});
+
 

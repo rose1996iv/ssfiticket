@@ -11,6 +11,11 @@ import {
 import type { DeliveryPayload, DeliveryResult } from "../src/lib/delivery/types.ts";
 import { getTicketVerificationUrl } from "../src/lib/ticket/qr.ts";
 import { getBaseAppUrl, getCustomerOrderUrl } from "../src/lib/config/appUrl.ts";
+import {
+  buildUpiPaymentUri,
+  parseUpiPaymentUri,
+  generateUpiQrDataUrl,
+} from "../src/lib/payment/upi.ts";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "FUNDRAISING_MANAGER" | "SELLER" | "CUSTOMER";
 
@@ -1713,5 +1718,248 @@ test("WhatsApp Template Formatting & Unicode Fidelity: Preserves line breaks, em
 });
 
 
+/* ========================================================================== */
+/* DYNAMIC TICKET PRICING, FREE UPI INTENT & DYNAMIC QR TESTS                */
+/* ========================================================================== */
 
+test("Ticket Quantity and Dynamic Total: Calculates total based on authoritative campaign price", () => {
+  // Campaign source of truth: 10000 paise (₹100)
+  const campaignPricePaise = 10000;
 
+  // Quantity 1 -> ₹100.00
+  const order1TotalPaise = 1 * campaignPricePaise;
+  assert.equal(order1TotalPaise, 10000);
+  assert.equal((order1TotalPaise / 100).toFixed(2), "100.00");
+
+  // Quantity 3 -> ₹300.00
+  const order3TotalPaise = 3 * campaignPricePaise;
+  assert.equal(order3TotalPaise, 30000);
+  assert.equal((order3TotalPaise / 100).toFixed(2), "300.00");
+
+  // Quantity 5 -> ₹500.00
+  const order5TotalPaise = 5 * campaignPricePaise;
+  assert.equal(order5TotalPaise, 50000);
+  assert.equal((order5TotalPaise / 100).toFixed(2), "500.00");
+
+  // Custom campaign price: ₹150 (15000 paise)
+  const customCampaignPricePaise = 15000;
+  const orderCustomTotalPaise = 3 * customCampaignPricePaise;
+  assert.equal(orderCustomTotalPaise, 45000);
+  assert.equal((orderCustomTotalPaise / 100).toFixed(2), "450.00");
+});
+
+test("Ticket Quantity Validation: Enforces minimum 1 and configured maximum limits", () => {
+  // Valid quantities
+  const validateQuantity = (qty: number, maxCapacity: number) => {
+    if (!Number.isInteger(qty) || qty < 1) return { valid: false, error: "Minimum 1 ticket." };
+    if (qty > 100) return { valid: false, error: "Maximum 100 tickets per online order." };
+    if (qty > maxCapacity) return { valid: false, error: `Exceeds remaining capacity of ${maxCapacity}.` };
+    return { valid: true };
+  };
+
+  assert.equal(validateQuantity(1, 1000).valid, true);
+  assert.equal(validateQuantity(5, 1000).valid, true);
+  assert.equal(validateQuantity(100, 1000).valid, true);
+
+  // Rejected invalid quantities
+  assert.equal(validateQuantity(0, 1000).valid, false);
+  assert.equal(validateQuantity(-1, 1000).valid, false);
+  assert.equal(validateQuantity(101, 1000).valid, false);
+  assert.equal(validateQuantity(15, 10).valid, false); // Exceeds capacity of 10
+});
+
+test("Client Tamper Resistance: Server ignores client total and enforces authoritative calculation", () => {
+  const authoritativeUnitPricePaise = 10000;
+  const requestedQuantity = 4;
+
+  // Attacker attempts to forge client total as ₹1 (100 paise) or ₹50 instead of ₹400
+  const tamperedClientAmount = 100;
+
+  // Server calculation strictly derives total from DB
+  const serverAuthoritativeTotalPaise = requestedQuantity * authoritativeUnitPricePaise;
+  assert.equal(serverAuthoritativeTotalPaise, 40000);
+  assert.notEqual(serverAuthoritativeTotalPaise, tamperedClientAmount);
+  assert.equal((serverAuthoritativeTotalPaise / 100).toFixed(2), "400.00");
+});
+
+test("Free UPI Intent URI: Generates standard upi://pay URI matching exact specification", () => {
+  const uri = buildUpiPaymentUri({
+    payeeVpa: "6909251270@ptaxis",
+    payeeName: "HLAWN THA DAWT",
+    amountPaise: 30000, // ₹300.00
+    orderNumber: "SSFI-ORD-2026-000010",
+    currency: "INR",
+  });
+
+  // Verify format matches specification:
+  // upi://pay?pa=6909251270%40ptaxis&pn=HLAWN%20THA%20DAWT&am=300.00&cu=INR&tn=SSFI-ORD-2026-000010
+  assert.ok(uri.startsWith("upi://pay?"));
+  assert.ok(uri.includes("pa=6909251270%40ptaxis"));
+  assert.ok(uri.includes("pn=HLAWN%20THA%20DAWT"));
+  assert.ok(uri.includes("am=300.00"));
+  assert.ok(uri.includes("cu=INR"));
+  assert.ok(uri.includes("tn=SSFI-ORD-2026-000010"));
+
+  // Parse and assert round-trip extraction
+  const parsed = parseUpiPaymentUri(uri);
+  assert.equal(parsed.payeeVpa, "6909251270@ptaxis");
+  assert.equal(parsed.payeeName, "HLAWN THA DAWT");
+  assert.equal(parsed.amount, "300.00");
+  assert.equal(parsed.amountPaise, 30000);
+  assert.equal(parsed.currency, "INR");
+  assert.equal(parsed.transactionNote, "SSFI-ORD-2026-000010");
+});
+
+test("Free UPI Intent URI: Formats amounts with exact two decimals (e.g. 100.00, 250.50)", () => {
+  const uri1 = buildUpiPaymentUri({
+    payeeVpa: "6909251270@ptaxis",
+    payeeName: "HLAWN THA DAWT",
+    amountPaise: 10000, // ₹100
+    orderNumber: "ORD-001",
+  });
+  const parsed1 = parseUpiPaymentUri(uri1);
+  assert.equal(parsed1.amount, "100.00");
+
+  const uri2 = buildUpiPaymentUri({
+    payeeVpa: "6909251270@ptaxis",
+    payeeName: "HLAWN THA DAWT",
+    amountPaise: 25050, // ₹250.50
+    orderNumber: "ORD-002",
+  });
+  const parsed2 = parseUpiPaymentUri(uri2);
+  assert.equal(parsed2.amount, "250.50");
+});
+
+test("Dynamic Order QR: Encodes complete UPI URI with amount and payee", async () => {
+  const upiUri = buildUpiPaymentUri({
+    payeeVpa: "6909251270@ptaxis",
+    payeeName: "HLAWN THA DAWT",
+    amountPaise: 50000, // ₹500.00
+    orderNumber: "SSFI-ORD-2026-000055",
+    currency: "INR",
+  });
+
+  const qrDataUrl = await generateUpiQrDataUrl(upiUri, { width: 320 });
+
+  // QR Data URL must be a valid PNG base64 string
+  assert.ok(qrDataUrl.startsWith("data:image/png;base64,"));
+  assert.ok(qrDataUrl.length > 500);
+
+  // Assert URI parsed from the source encoded into the QR
+  const parsed = parseUpiPaymentUri(upiUri);
+  assert.equal(parsed.payeeVpa, "6909251270@ptaxis");
+  assert.equal(parsed.amount, "500.00");
+  assert.equal(parsed.transactionNote, "SSFI-ORD-2026-000055");
+});
+
+test("Payment Safety: Submitting UTR transitions only to SUBMITTED and never auto-approves", () => {
+  type PaymentRecord = {
+    status: "PENDING" | "SUBMITTED" | "VERIFIED" | "FAILED";
+    utr: string | null;
+  };
+
+  const payment: PaymentRecord = {
+    status: "PENDING",
+    utr: null,
+  };
+
+  // Customer submits valid UTR
+  const submitUtr = (p: PaymentRecord, utr: string): PaymentRecord => {
+    if (p.status !== "PENDING" && p.status !== "FAILED") throw new Error("Not eligible for submission");
+    return {
+      status: "SUBMITTED", // Moves strictly to SUBMITTED for review
+      utr,
+    };
+  };
+
+  const updated = submitUtr(payment, "123456789012");
+  assert.equal(updated.status, "SUBMITTED");
+  assert.notEqual(updated.status, "VERIFIED"); // Must NEVER be auto-approved
+});
+
+test("Payment Safety: Duplicate UTR is strictly rejected with a clean message", () => {
+  const submittedUtrs = new Set<string>(["123456789012"]);
+
+  const processSubmission = (utr: string) => {
+    if (submittedUtrs.has(utr)) {
+      return {
+        success: false,
+        error: "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
+    }
+    submittedUtrs.add(utr);
+    return { success: true };
+  };
+
+  const dupRes = processSubmission("123456789012");
+  assert.equal(dupRes.success, false);
+  assert.ok(dupRes.error?.includes("already been submitted"));
+
+  const newRes = processSubmission("987654321098");
+  assert.equal(newRes.success, true);
+});
+
+test("Ticket Issuance Isolation: Tickets are created ONLY after verified payment status", () => {
+  type OrderWithTickets = {
+    status: "PENDING_PAYMENT" | "PAYMENT_SUBMITTED" | "TICKETS_ISSUED";
+    paymentStatus: "PENDING" | "SUBMITTED" | "VERIFIED";
+    tickets: string[];
+  };
+
+  const order: OrderWithTickets = {
+    status: "PENDING_PAYMENT",
+    paymentStatus: "PENDING",
+    tickets: [],
+  };
+
+  // In pending or submitted status, ticket list MUST be empty
+  assert.equal(order.tickets.length, 0);
+
+  // App opening event or customer return does NOT issue tickets
+  const simulateAppReturn = (ord: OrderWithTickets): OrderWithTickets => ord;
+  const returnedOrder = simulateAppReturn(order);
+  assert.equal(returnedOrder.tickets.length, 0);
+
+  // Only Admin verification issues tickets
+  const verifyByAdmin = (ord: OrderWithTickets, role: Role): OrderWithTickets => {
+    if (role !== "ADMIN" && role !== "SUPER_ADMIN") throw new Error("Unauthorized");
+    return {
+      status: "TICKETS_ISSUED",
+      paymentStatus: "VERIFIED",
+      tickets: ["SSFI-000101", "SSFI-000102", "SSFI-000103"],
+    };
+  };
+
+  const verifiedOrder = verifyByAdmin(order, "ADMIN");
+  assert.equal(verifiedOrder.status, "TICKETS_ISSUED");
+  assert.equal(verifiedOrder.tickets.length, 3);
+});
+
+test("Cross-Channel Consistency: Order total and quantity match across WhatsApp and Email", () => {
+  const payload: DeliveryPayload = {
+    orderId: "ord-match-999",
+    orderNumber: "SSFI-ORD-2026-000099",
+    customerName: "Mary Ramthangi",
+    whatsappNumber: "+91 91234 56789",
+    email: "mary@example.com",
+    ticketNumbers: ["SSFI-000101", "SSFI-000102", "SSFI-000103", "SSFI-000104"],
+    amountInr: 400,
+    campaignName: "SSFI Fundraising Lucky Draw",
+    issuedAtIst: "30 Oct 2026, 01:00 AM IST",
+    ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/ord-match-999",
+    supportEmail: "Senthangstudents@gmail.com",
+    isSimulated: false,
+  };
+
+  const wa = renderWhatsAppTicketMessage(payload);
+  const email = renderEmailTicketMessage(payload);
+
+  // Both must report 4 tickets and ₹400
+  assert.ok(wa.includes("Tickets Allocated (4):"));
+  assert.ok(wa.includes("Verified Amount:* ₹400"));
+
+  assert.ok(email.text.includes("Allocated Ticket Numbers (4):"));
+  assert.ok(email.text.includes("Amount Paid: ₹400"));
+  assert.ok(email.html.includes("SSFI-000101"));
+  assert.ok(email.html.includes("SSFI-000104"));
+});

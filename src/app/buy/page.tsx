@@ -196,7 +196,7 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
             ))}
             <div className="flex items-center justify-center gap-1 rounded-lg border border-dashed border-[#d6a23b] bg-[#fffaf7] p-2 text-[#7c1619]">
               <Sparkles size={14} className="text-[#d6a23b]" />
-              <span className="font-semibold">₹100 / Ticket</span>
+              <span className="font-semibold">₹{ticketPricePaise / 100} / Ticket</span>
             </div>
           </div>
         </section>

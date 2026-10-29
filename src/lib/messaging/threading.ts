@@ -80,3 +80,4 @@ export function getThreadReplyCount<T extends BaseMessageItem>(
   const thread = getConversationThread(target, allMessages);
   return Math.max(0, thread.length - 1);
 }
+

@@ -16,9 +16,11 @@ import {
 import { manualUpiConfig } from "@/lib/config/payment";
 import { resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
 import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
+import { buildUpiPaymentUri, generateUpiQrDataUrl } from "@/lib/payment/upi";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/brand/Logo";
 import { PublicUpiPaymentForm } from "@/components/payment/PublicUpiPaymentForm";
+import { UpiPaymentBox } from "@/components/payment/UpiPaymentBox";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
 export const instant = false;
@@ -82,11 +84,16 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   // Environment-aware resolution ensuring verification URLs point to the same database
   const { baseUrl: envBaseUrl } = resolveEnvironmentAppUrl();
 
-  const upiIntentUri = `upi://pay?pa=${encodeURIComponent(
-    manualUpiConfig.upiId
-  )}&pn=${encodeURIComponent(
-    manualUpiConfig.displayName
-  )}&am=${totalInr}&cu=INR&tn=${encodeURIComponent(order.order_number)}`;
+  const upiIntentUri = buildUpiPaymentUri({
+    payeeVpa: manualUpiConfig.upiId,
+    payeeName: manualUpiConfig.displayName,
+    amountPaise: order.total_amount_paise,
+    orderNumber: order.order_number,
+    transactionRef: order.order_number,
+    currency: manualUpiConfig.currency,
+  });
+
+  const dynamicQrDataUrl = await generateUpiQrDataUrl(upiIntentUri, { width: 320 });
 
   const isPending = order.status === "PENDING_PAYMENT";
   const isSubmitted =
@@ -359,7 +366,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           </div>
         )}
 
-        {/* Payment Instructions & Official QR Display (Pending or Rejected) */}
+        {/* Payment Instructions & Official UPI Options (Pending or Rejected) */}
         {(isPending || isRejected) && (
           <div className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm">
             <div className="flex items-center gap-2 font-bold text-[#7c1619]">
@@ -370,71 +377,21 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               Pay via any UPI application (Google Pay, PhonePe, Paytm, BHIM, or Mobile Banking).
             </p>
 
-            {/* Preview Inspection Warning Banner */}
-            {manualUpiConfig.isMock && (
-              <div className="my-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 shadow-2xs">
-                <div className="flex items-start gap-2.5">
-                  <FlaskConical className="mt-0.5 text-amber-700 shrink-0" size={18} />
-                  <div className="leading-relaxed">
-                    <p className="font-bold text-amber-950">
-                      PREVIEW INSPECTION MODE — OFFICIAL QR DISPLAYED FOR TESTING
-                    </p>
-                    <p className="mt-1 text-amber-900">
-                      The QR code below is the <b>official SSFI payment QR</b>. Scanning it with a UPI app will initiate a <b>REAL transfer to HLAWN THA DAWT ({manualUpiConfig.upiId})</b>.
-                    </p>
-                    <p className="mt-1 font-semibold text-amber-950">
-                      ⚠️ DO NOT transfer real money for preview test orders! Use the Simulated Test Controls below to test payment submission and admin verification safely.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Official Scannable UPI QR Code Card */}
-            <div className="my-5 flex flex-col items-center justify-center rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs">
-              <div className="text-center mb-3">
-                <span className="inline-block rounded-full bg-[#7c1619]/10 px-3 py-1 text-[11px] font-bold text-[#7c1619]">
-                  Official SSFI UPI QR Code
-                </span>
-                <p className="mt-1 text-xs text-[#705a54]">
-                  Scan using Google Pay, PhonePe, Paytm, BHIM or any banking app
-                </p>
-              </div>
-
-              <div className="relative overflow-hidden rounded-xl border border-[#eadbcf] bg-white p-2 shadow-sm">
-                <Image
-                  src={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                  alt={`Official SSFI UPI QR Code - Payee: ${manualUpiConfig.displayName}`}
-                  width={320}
-                  height={520}
-                  className="mx-auto h-auto max-w-[260px] sm:max-w-[300px] rounded-lg object-contain shadow-xs"
-                  priority
-                  unoptimized
-                />
-              </div>
-
-              <div className="mt-3 flex items-center gap-3">
-                <a
-                  href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
-                >
-                  <span>Open Full QR Image</span>
-                  <ExternalLink size={12} />
-                </a>
-                <span className="text-[#eadbcf]">·</span>
-                <a
-                  href={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                  download="SSFI_UPI_QR.jpeg"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#705a54] hover:underline"
-                >
-                  <span>Download QR</span>
-                </a>
-              </div>
+            {/* Interactive UPI Payment Box with Intent Launch & Dynamic Order QR */}
+            <div className="my-5">
+              <UpiPaymentBox
+                orderNumber={order.order_number}
+                payeeName={manualUpiConfig.displayName}
+                upiId={manualUpiConfig.upiId}
+                amountInr={totalInr}
+                upiIntentUri={upiIntentUri}
+                dynamicQrDataUrl={dynamicQrDataUrl}
+                staticQrImagePath={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+                isMock={manualUpiConfig.isMock}
+              />
             </div>
 
-            {/* Payment Summary Table */}
+            {/* Payment Summary Details */}
             <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#705a54]">Order Number</span>
@@ -450,7 +407,9 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               </div>
               <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
                 <span className="text-xs text-[#705a54]">Amount Due</span>
-                <span className="text-base font-bold text-[#7c1619]">₹{totalInr} {manualUpiConfig.currency}</span>
+                <span className="text-base font-bold text-[#7c1619]">
+                  ₹{totalInr.toFixed(2)} {manualUpiConfig.currency}
+                </span>
               </div>
               <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
                 <span className="text-xs text-[#705a54]">Support &amp; Inquiries</span>
@@ -458,31 +417,10 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               </div>
             </div>
 
-            {/* UPI Deep Link Button */}
-            <div className="mb-6">
-              {manualUpiConfig.isMock ? (
-                <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
-                  <span>1-Click UPI Deep Link Disabled in Preview (Display Inspection Only)</span>
-                </div>
-              ) : (
-                <a
-                  href={upiIntentUri}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#d6a23b] p-3 text-sm font-bold text-[#35110f] shadow-xs transition hover:bg-[#c29130]"
-                >
-                  <span>Pay ₹{totalInr} via UPI App</span>
-                  <ArrowRight size={16} />
-                </a>
-              )}
-              <p className="mt-1 text-center text-[11px] text-[#705a54]">
-                {manualUpiConfig.isMock
-                  ? "Preview inspection mode active — use simulated controls below to test order progression safely"
-                  : "Works on mobile devices with UPI apps installed"}
-              </p>
-            </div>
-
             {/* UTR Form with Simulated Test Controls */}
             <PublicUpiPaymentForm orderId={order.id} isMock={manualUpiConfig.isMock} />
           </div>
+        )}
         )}
 
         {/* Back Link */}

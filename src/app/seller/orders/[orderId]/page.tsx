@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Send, Ticket } from "lucide-react";
 import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
 export const instant = false;
 
@@ -12,7 +13,7 @@ type SellerOrder = {
   quantity: number;
   total_amount_paise: number;
   status: string;
-  customers: { full_name: string }[];
+  customers: { full_name: string; phone?: string | null }[] | { full_name: string; phone?: string | null } | null;
   payments: {
     status: string;
     utr_reference: string | null;
@@ -46,7 +47,7 @@ export default async function SellerOrderPage({
   const { data } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, customers(full_name), payments(status, utr_reference, rejection_reason), tickets(ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, customers(full_name, phone), payments(status, utr_reference, rejection_reason), tickets(ticket_number, status)"
     )
     .eq("id", orderId)
     .eq("seller_id", seller.id)
@@ -55,6 +56,7 @@ export default async function SellerOrderPage({
   const order = data as unknown as SellerOrder | null;
   if (!order) notFound();
 
+  const customer = Array.isArray(order.customers) ? order.customers[0] : order.customers;
   const payment = order.payments[0];
 
   // Fetch delivery status for this seller's order
@@ -110,7 +112,7 @@ export default async function SellerOrderPage({
         <dl className="mt-6 grid gap-4 rounded-xl border border-[#f0e7df] bg-[#fffaf7] p-5 text-xs sm:grid-cols-2">
           <div>
             <dt className="text-[10px] uppercase font-bold text-[#705a54]">Customer Name</dt>
-            <dd className="mt-0.5 text-sm font-bold text-[#35110f]">{order.customers[0]?.full_name}</dd>
+            <dd className="mt-0.5 text-sm font-bold text-[#35110f]">{customer?.full_name}</dd>
           </div>
           <div>
             <dt className="text-[10px] uppercase font-bold text-[#705a54]">Attributed Seller</dt>
@@ -170,6 +172,27 @@ export default async function SellerOrderPage({
                 </div>
               ))}
             </div>
+
+            {/* Direct WhatsApp Click-to-Chat for Seller */}
+            {customer?.phone && (
+              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-900">
+                      Deliver to Customer (100% Free WhatsApp)
+                    </h3>
+                    <p className="mt-0.5 text-xs text-emerald-800">
+                      Launch WhatsApp Click-to-Chat with tickets pre-filled for {customer.full_name} ({customer.phone}).
+                    </p>
+                  </div>
+                  <WhatsAppTicketDeliveryButton
+                    orderId={order.id}
+                    recipientPhone={customer.phone}
+                    initialStatus={deliveries.find((d) => d.channel === "WHATSAPP")?.status}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -1,5 +1,12 @@
 export type DeliveryChannel = "WHATSAPP" | "EMAIL";
-export type DeliveryStatus = "PENDING" | "SENT" | "DELIVERED" | "FAILED" | "SIMULATED";
+export type DeliveryStatus =
+  | "PENDING"
+  | "SENT"
+  | "DELIVERED"
+  | "FAILED"
+  | "SIMULATED"
+  | "WHATSAPP_LINK_OPENED"
+  | "MANUALLY_SENT";
 
 export type DeliveryPayload = {
   orderId: string;

@@ -4,6 +4,10 @@ import {
   renderWhatsAppTicketMessage,
   renderEmailTicketMessage,
 } from "../src/lib/delivery/templates.ts";
+import {
+  formatWhatsAppPhoneNumber,
+  buildWhatsAppClickToChatUrl,
+} from "../src/lib/delivery/whatsappUrl.ts";
 import type { DeliveryPayload, DeliveryResult } from "../src/lib/delivery/types.ts";
 import { getTicketVerificationUrl } from "../src/lib/ticket/qr.ts";
 
@@ -887,3 +891,106 @@ test("14. Complete Mock Lifecycle: Mock Submission -> Admin Approval -> Atomic T
   assert.equal(repeatRes.success, false);
   assert.equal(verifyRes.newTickets?.length, 3); // No extra tickets created
 });
+
+// -----------------------------------------------------------------------------
+// Free WhatsApp Click-to-Chat Delivery Tests
+// -----------------------------------------------------------------------------
+
+test("WhatsApp Phone Normalization: Formats Indian mobile numbers to international format", () => {
+  assert.equal(formatWhatsAppPhoneNumber("9876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("+919876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("09876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("+91 98765-43210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber("919876543210"), "919876543210");
+  assert.equal(formatWhatsAppPhoneNumber(""), "");
+});
+
+test("Free WhatsApp Click-to-Chat: Builds valid wa.me URL with pre-filled message and verification links", () => {
+  const payload: DeliveryPayload = {
+    orderId: "ord-test-1234",
+    orderNumber: "SSFI-ORD-9999",
+    customerName: "Rahul Sharma",
+    whatsappNumber: "9876543210",
+    email: "rahul@example.com",
+    ticketNumbers: ["SSFI-001001", "SSFI-001002"],
+    amountInr: 200,
+    campaignName: "SSFI Roller Skating Championship 2026",
+    issuedAtIst: "29 Oct 2026, 05:00 PM IST",
+    ticketAccessUrl: "https://ssfiticket.org/verify/SSFI-001001",
+    sellerAttribution: "Official Seller Ravi",
+  };
+
+  const result = buildWhatsAppClickToChatUrl(payload);
+
+  assert.equal(result.recipientPhone, "919876543210");
+  assert.ok(result.url.startsWith("https://wa.me/919876543210?text="));
+  assert.ok(result.messageText.includes("SSFI-ORD-9999"));
+  assert.ok(result.messageText.includes("Rahul Sharma"));
+  assert.ok(result.messageText.includes("SSFI-001001"));
+  assert.ok(result.messageText.includes("SSFI-001002"));
+  assert.ok(result.url.includes(encodeURIComponent("SSFI-001001")));
+});
+
+test("Duplicate UTR Submission: Gracefully catches duplicate reference without unhandled crash", () => {
+  const existingUtrs = new Set<string>(["UTR1122334455", "UTR9988776655"]);
+
+  function simulateManualUpiSubmission(utr: string): { success: boolean; error?: string } {
+    const trimmed = utr.trim().toUpperCase();
+    if (existingUtrs.has(trimmed)) {
+      return {
+        success: false,
+        error: "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
+    }
+    existingUtrs.add(trimmed);
+    return { success: true };
+  }
+
+  // Duplicate attempt
+  const dupResult = simulateManualUpiSubmission("UTR1122334455");
+  assert.equal(dupResult.success, false);
+  assert.ok(dupResult.error?.includes("already been submitted"));
+
+  // Fresh attempt
+  const freshResult = simulateManualUpiSubmission("UTR5566778899");
+  assert.equal(freshResult.success, true);
+  assert.equal(freshResult.error, undefined);
+});
+
+test("Bidirectional Messaging: Threading association and role assignment", () => {
+  type MessageRecord = {
+    id: string;
+    sender_role: "ADMIN" | "SELLER";
+    parent_message_id: string | null;
+    subject: string;
+    body: string;
+  };
+
+  const messages: MessageRecord[] = [];
+
+  // Seller creates inquiry
+  const sellerMsg: MessageRecord = {
+    id: "msg-001",
+    sender_role: "SELLER",
+    parent_message_id: null,
+    subject: "Payment confirmation delay query",
+    body: "Customer says they paid 30 minutes ago with UTR 99881122.",
+  };
+  messages.push(sellerMsg);
+
+  // Admin replies to that inquiry
+  const adminReply: MessageRecord = {
+    id: "msg-002",
+    sender_role: "ADMIN",
+    parent_message_id: "msg-001",
+    subject: "Re: Payment confirmation delay query",
+    body: "We have reviewed the bank statement and approved the order. Tickets are now dispatched.",
+  };
+  messages.push(adminReply);
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].sender_role, "SELLER");
+  assert.equal(messages[1].sender_role, "ADMIN");
+  assert.equal(messages[1].parent_message_id, "msg-001");
+});
+

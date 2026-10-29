@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { ArrowLeft, ExternalLink, Ticket } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { OrderDeliveryCard, DeliveryItem } from "@/components/admin/OrderDeliveryCard";
+import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
 export const instant = false;
 
@@ -200,6 +201,30 @@ export default async function AdminOrderDetailPage({
           )}
         </div>
       </div>
+
+      {/* Free WhatsApp Ticket Dispatch Card */}
+      {order.tickets.length > 0 && order.customers?.phone && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                Direct Dispatch (100% Free WhatsApp)
+              </span>
+              <h2 className="mt-1 text-base font-bold text-emerald-950">
+                Send Tickets via WhatsApp to {order.customers.full_name}
+              </h2>
+              <p className="mt-0.5 text-xs text-emerald-700">
+                Launches official WhatsApp Click-to-Chat pre-filled with verified ticket numbers and audit links for {order.customers.phone}.
+              </p>
+            </div>
+            <WhatsAppTicketDeliveryButton
+              orderId={order.id}
+              recipientPhone={order.customers.phone}
+              initialStatus={deliveries.find((d) => d.channel === "WHATSAPP")?.status}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Automated Ticket Delivery Card */}
       <OrderDeliveryCard

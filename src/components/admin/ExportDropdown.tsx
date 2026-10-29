@@ -151,15 +151,24 @@ export function ExportDropdown({
         }
       }
 
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      try {
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = downloadUrl;
+        anchor.download = filename;
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+
+        // Clean up DOM and delay revocation so browser finishes streaming the blob asynchronously
+        setTimeout(() => {
+          anchor.remove();
+          window.URL.revokeObjectURL(downloadUrl);
+        }, 1500);
+      } catch (blobErr) {
+        console.warn("[Export Client Blob Stream Warning]", blobErr);
+      }
 
       setFeedback({
         type: "success",

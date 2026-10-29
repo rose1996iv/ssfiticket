@@ -178,11 +178,18 @@ export async function createPublicCustomerOrder(formData: FormData) {
   redirect(`/buy/order/${orderId}`);
 }
 
+export type PaymentSubmissionResult = {
+  success: boolean;
+  error?: string;
+  redirectUrl?: string;
+};
+
 /**
  * Submits a manual UPI payment UTR reference for a public customer order.
  * Transitions payment to SUBMITTED for staff manual verification.
+ * Returns structured result to permit friendly inline error handling without throwing unhandled exceptions.
  */
-export async function submitPublicUpiPayment(formData: FormData) {
+export async function submitPublicUpiPayment(formData: FormData): Promise<PaymentSubmissionResult> {
   const parsed = publicUtrSchema.safeParse({
     orderId: formData.get("orderId"),
     utr: formData.get("utr"),
@@ -191,16 +198,18 @@ export async function submitPublicUpiPayment(formData: FormData) {
 
   if (!parsed.success) {
     const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Invalid payment reference.";
-    throw new Error(firstError);
+    return { success: false, error: firstError };
   }
 
   // Preserve Preview mock mode: Require explicitly identified test references in mock mode
   if (manualUpiConfig.isMock) {
     const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(parsed.data.utr.trim());
     if (!isTestRef) {
-      throw new Error(
-        "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678)."
-      );
+      return {
+        success: false,
+        error:
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+      };
     }
   }
 
@@ -214,14 +223,17 @@ export async function submitPublicUpiPayment(formData: FormData) {
     .maybeSingle();
 
   if (orderLookupErr || !order) {
-    throw new Error("Order not found.");
+    return { success: false, error: "Order not found." };
   }
 
   if (order.status !== "PENDING_PAYMENT") {
     if (order.status === "PAYMENT_SUBMITTED") {
-      throw new Error("A payment reference has already been submitted for this order and is currently under review.");
+      return {
+        success: false,
+        error: "A payment reference has already been submitted for this order and is currently under review.",
+      };
     }
-    throw new Error("This order is not eligible for payment submission.");
+    return { success: false, error: "This order is not eligible for payment submission." };
   }
 
   // Submit manual UPI via RPC
@@ -239,18 +251,31 @@ export async function submitPublicUpiPayment(formData: FormData) {
       orderId: parsed.data.orderId,
     });
 
-    const message = rpcErr.message;
-    if (message.includes("UTR is already attached")) {
-      throw new Error("This UTR / Transaction Reference has already been submitted for another order.");
+    const message = rpcErr.message || "";
+    if (
+      message.includes("UTR is already attached") ||
+      message.includes("payments_manual_upi_utr_unique") ||
+      rpcErr.code === "23505"
+    ) {
+      return {
+        success: false,
+        error:
+          "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
     }
     if (rpcErr.code === "22P02" || message.includes("enum payment_status")) {
-      throw new Error(
-        "Payment reference submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied."
-      );
+      return {
+        success: false,
+        error:
+          "Payment reference submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied.",
+      };
     }
-    throw new Error("Payment reference submission failed. Please try again.");
+    return { success: false, error: "Payment reference submission failed. Please try again." };
   }
 
   revalidatePath(`/buy/order/${parsed.data.orderId}`);
-  redirect(`/buy/order/${parsed.data.orderId}?submitted=1`);
+  return {
+    success: true,
+    redirectUrl: `/buy/order/${parsed.data.orderId}?submitted=1`,
+  };
 }

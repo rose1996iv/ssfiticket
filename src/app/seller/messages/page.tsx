@@ -22,11 +22,11 @@ export default async function SellerMessagesPage() {
     redirect("/unauthorized?reason=seller_inactive");
   }
 
-  // Fetch only messages addressed to this authenticated seller
+  // Fetch messages addressed to or initiated by this authenticated seller
   const { data: rawMessages = [] } = await db
     .from("seller_messages")
     .select(
-      "id, subject, body, created_at, read_at, archived_at, profiles(full_name, email)"
+      "id, subject, body, created_at, read_at, archived_at, sender_role, parent_message_id, profiles(full_name, email)"
     )
     .eq("recipient_seller_id", seller.id)
     .order("created_at", { ascending: false });

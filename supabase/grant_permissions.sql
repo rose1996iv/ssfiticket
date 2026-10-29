@@ -63,3 +63,30 @@ begin
   return new;
 end $$;
 
+-- 7. Bidirectional Seller Messaging Columns & Policies
+alter table public.seller_messages
+  add column if not exists sender_role text not null default 'ADMIN' check (sender_role in ('ADMIN', 'SELLER')),
+  add column if not exists parent_message_id uuid references public.seller_messages(id) on delete cascade;
+
+create index if not exists idx_seller_messages_parent on public.seller_messages(parent_message_id);
+create index if not exists idx_seller_messages_role on public.seller_messages(sender_role);
+
+do $$ begin
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'seller_messages' and policyname = 'seller_messages_seller_insert'
+  ) then
+    create policy seller_messages_seller_insert on public.seller_messages
+      for insert to authenticated
+      with check (
+        sender_role = 'SELLER'
+        and exists (
+          select 1 from public.sellers s
+          where s.id = seller_messages.recipient_seller_id
+            and s.profile_id = auth.uid()
+            and s.is_active = true
+        )
+      );
+  end if;
+end $$;
+
+

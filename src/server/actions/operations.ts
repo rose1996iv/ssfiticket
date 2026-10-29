@@ -7,6 +7,7 @@ import { requireAnyRole, requireAuth, requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { dispatchOrderTicketDeliveries } from "@/lib/delivery/service";
+import { manualUpiConfig } from "@/lib/config/payment";
 
 const saleSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters.").max(120),
@@ -171,7 +172,11 @@ export async function createSale(formData: FormData) {
   redirect(`/seller/orders/${data}/payment`);
 }
 
-export async function submitManualUpi(formData: FormData) {
+export async function submitManualUpi(formData: FormData): Promise<{
+  success: boolean;
+  error?: string;
+  redirectUrl?: string;
+}> {
   const parsed = utrSchema.safeParse({
     orderId: formData.get("orderId"),
     utr: formData.get("utr"),
@@ -180,7 +185,19 @@ export async function submitManualUpi(formData: FormData) {
 
   if (!parsed.success) {
     const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Enter a valid UTR/reference.";
-    throw new Error(firstError);
+    return { success: false, error: firstError };
+  }
+
+  // Preview mock mode validation
+  if (manualUpiConfig.isMock) {
+    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(parsed.data.utr.trim());
+    if (!isTestRef) {
+      return {
+        success: false,
+        error:
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+      };
+    }
   }
 
   const sellerId = await currentSellerId();
@@ -194,13 +211,23 @@ export async function submitManualUpi(formData: FormData) {
     .maybeSingle();
 
   if (orderErr || !order) {
-    throw new Error("This order does not belong to your seller account.");
+    return { success: false, error: "This order does not belong to your seller account." };
+  }
+
+  if (order.status !== "PENDING_PAYMENT") {
+    if (order.status === "PAYMENT_SUBMITTED") {
+      return {
+        success: false,
+        error: "A payment reference has already been submitted for this order and is currently under review.",
+      };
+    }
+    return { success: false, error: "This order is not eligible for payment submission." };
   }
 
   const { error } = await admin.rpc("submit_manual_upi", {
     p_order_id: parsed.data.orderId,
-    p_utr: parsed.data.utr,
-    p_payer_name: parsed.data.payerName || "",
+    p_utr: parsed.data.utr.trim(),
+    p_payer_name: parsed.data.payerName?.trim() || "",
   });
 
   if (error) {
@@ -208,19 +235,32 @@ export async function submitManualUpi(formData: FormData) {
       code: error.code,
       message: error.message,
     });
-    if (error.message.includes("UTR is already attached")) {
-      throw new Error("This UTR / Transaction Reference has already been submitted for another payment.");
+    if (
+      error.message.includes("UTR is already attached") ||
+      error.message.includes("payments_manual_upi_utr_unique") ||
+      error.code === "23505"
+    ) {
+      return {
+        success: false,
+        error:
+          "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
     }
     if (error.code === "22P02" || error.message.includes("enum payment_status")) {
-      throw new Error(
-        "Payment submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied."
-      );
+      return {
+        success: false,
+        error:
+          "Payment submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied.",
+      };
     }
-    throw new Error("This payment cannot be submitted in its current state.");
+    return { success: false, error: "This payment cannot be submitted in its current state." };
   }
 
   revalidatePath(`/seller/orders/${parsed.data.orderId}`);
-  redirect(`/seller/orders/${parsed.data.orderId}?submitted=1`);
+  return {
+    success: true,
+    redirectUrl: `/seller/orders/${parsed.data.orderId}?submitted=1`,
+  };
 }
 
 export async function verifyPayment(formData: FormData) {

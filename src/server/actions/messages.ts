@@ -196,6 +196,180 @@ export async function markSellerMessageAsRead(formData: FormData) {
   return { success: true };
 }
 
+const sellerToAdminSchema = z.object({
+  subject: z
+    .string()
+    .trim()
+    .min(2, "Subject must be at least 2 characters.")
+    .max(200, "Subject cannot exceed 200 characters."),
+  body: z
+    .string()
+    .trim()
+    .min(5, "Message body must be at least 5 characters.")
+    .max(5000, "Message body cannot exceed 5,000 characters."),
+  parentMessageId: z.string().uuid().optional().nullable(),
+});
+
+/**
+ * Sends a message or inquiry from an authenticated active seller to the SSFI Admin team.
+ */
+export async function sendSellerToAdminMessage(formData: FormData) {
+  const user = await requireRole("SELLER");
+
+  const parsed = sellerToAdminSchema.safeParse({
+    subject: formData.get("subject"),
+    body: formData.get("body"),
+    parentMessageId: formData.get("parentMessageId") || null,
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Please check your message inputs.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  // Look up authenticated seller profile
+  const { data: seller, error: sellerErr } = await admin
+    .from("sellers")
+    .select("id, is_active, seller_code, display_name")
+    .eq("profile_id", user.id)
+    .maybeSingle();
+
+  if (sellerErr || !seller) {
+    return { success: false, error: "Your seller account is unavailable." };
+  }
+
+  if (!seller.is_active) {
+    return { success: false, error: "Your seller account is currently inactive." };
+  }
+
+  // Insert message row
+  const { data: inserted, error: insertErr } = await admin
+    .from("seller_messages")
+    .insert({
+      recipient_seller_id: seller.id,
+      sender_profile_id: user.id,
+      sender_role: "SELLER",
+      parent_message_id: parsed.data.parentMessageId || null,
+      subject: parsed.data.subject,
+      body: parsed.data.body,
+    })
+    .select("id")
+    .single();
+
+  if (insertErr) {
+    console.error("[Messaging Diagnostic] Seller message to Admin failed:", {
+      code: insertErr.code,
+      message: insertErr.message,
+    });
+    return { success: false, error: "Failed to send message. Please try again." };
+  }
+
+  // Record audit log
+  try {
+    await admin.from("audit_logs").insert({
+      actor_user_id: user.id,
+      action: "SELLER_MESSAGE_SENT",
+      entity_type: "seller_message",
+      entity_id: inserted.id,
+      metadata: {
+        seller_code: seller.seller_code,
+        subject: parsed.data.subject,
+        is_reply: Boolean(parsed.data.parentMessageId),
+      },
+    });
+  } catch (auditErr) {
+    console.warn("[Messaging Diagnostic] Audit log insertion failed:", auditErr);
+  }
+
+  revalidatePath("/seller/messages");
+  revalidatePath("/seller");
+  revalidatePath("/admin/messages");
+
+  return {
+    success: true,
+    message: "Your message has been delivered to the SSFI Admin team.",
+  };
+}
+
+/**
+ * Administrative staff replies to an existing seller conversation or inquiry.
+ */
+export async function replyAdminToSellerMessage(formData: FormData) {
+  const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+
+  const replySchema = z.object({
+    recipientSellerId: z.string().uuid("Invalid seller ID format."),
+    parentMessageId: z.string().uuid("Invalid parent message ID."),
+    subject: z.string().trim().min(2).max(200),
+    body: z.string().trim().min(5).max(5000),
+  });
+
+  const parsed = replySchema.safeParse({
+    recipientSellerId: formData.get("recipientSellerId"),
+    parentMessageId: formData.get("parentMessageId"),
+    subject: formData.get("subject"),
+    body: formData.get("body"),
+  });
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Please check the reply inputs.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  const { data: inserted, error: insertErr } = await admin
+    .from("seller_messages")
+    .insert({
+      recipient_seller_id: parsed.data.recipientSellerId,
+      sender_profile_id: user.id,
+      sender_role: "ADMIN",
+      parent_message_id: parsed.data.parentMessageId,
+      subject: parsed.data.subject,
+      body: parsed.data.body,
+    })
+    .select("id")
+    .single();
+
+  if (insertErr) {
+    console.error("[Messaging Diagnostic] Admin reply insert failed:", {
+      code: insertErr.code,
+      message: insertErr.message,
+    });
+    return { success: false, error: "Failed to send reply. Please try again." };
+  }
+
+  try {
+    await admin.from("audit_logs").insert({
+      actor_user_id: user.id,
+      action: "STAFF_MESSAGE_REPLIED",
+      entity_type: "seller_message",
+      entity_id: inserted.id,
+      metadata: {
+        parent_message_id: parsed.data.parentMessageId,
+        recipient_seller_id: parsed.data.recipientSellerId,
+      },
+    });
+  } catch (auditErr) {
+    console.warn("[Messaging Diagnostic] Non-fatal audit log insertion failure:", auditErr);
+  }
+
+  revalidatePath("/admin/messages");
+  revalidatePath("/seller/messages");
+  revalidatePath("/seller");
+
+  return {
+    success: true,
+    message: "Reply sent successfully.",
+  };
+}
+
 /**
  * Archives a message in the seller's inbox.
  */

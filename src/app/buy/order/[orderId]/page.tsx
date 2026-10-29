@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import { manualUpiConfig } from "@/lib/config/payment";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { submitPublicUpiPayment } from "@/server/actions/publicOrder";
 import { Logo } from "@/components/brand/Logo";
+import { PublicUpiPaymentForm } from "@/components/payment/PublicUpiPaymentForm";
+import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
 export const instant = false;
 
@@ -229,6 +230,18 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
                 )}
               </div>
             )}
+
+            {/* Free WhatsApp Ticket Delivery Option */}
+            <div className="mt-5 border-t border-green-200 pt-4">
+              <p className="text-xs font-semibold text-[#594541] mb-2">
+                Save or Share Tickets via WhatsApp:
+              </p>
+              <WhatsAppTicketDeliveryButton
+                orderId={order.id}
+                recipientPhone={customer?.whatsapp_number}
+                initialStatus={deliveries.find((d) => d.channel === "WHATSAPP")?.status}
+              />
+            </div>
           </div>
         )}
 
@@ -323,48 +336,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </div>
 
             {/* UTR Form */}
-            <form action={submitPublicUpiPayment} className="space-y-4 border-t border-[#f0e7df] pt-5">
-              <input type="hidden" name="orderId" value={order.id} />
-
-              <div>
-                <label htmlFor="utr-input" className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]">
-                  UPI Reference / UTR Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="utr-input"
-                  name="utr"
-                  required
-                  minLength={6}
-                  maxLength={64}
-                  pattern="[A-Za-z0-9-]+"
-                  placeholder="e.g. 428172918291"
-                  className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 font-mono text-sm text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-                />
-                <p className="mt-1 text-[11px] text-[#705a54]">
-                  Found in your UPI app receipt under &quot;UTR&quot;, &quot;UPI Ref No.&quot;, or &quot;Google Transaction ID&quot;.
-                </p>
-              </div>
-
-              <div>
-                <label htmlFor="payer-name-input" className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]">
-                  Payer Name / Bank Account Name <span className="text-xs font-normal text-[#705a54]">(Optional)</span>
-                </label>
-                <input
-                  id="payer-name-input"
-                  name="payerName"
-                  maxLength={120}
-                  placeholder="Name as it appears in your bank"
-                  className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full rounded-xl bg-[#7c1619] p-3.5 text-sm font-bold text-white shadow-xs transition hover:bg-[#631214]"
-              >
-                Submit Payment Reference
-              </button>
-            </form>
+            <PublicUpiPaymentForm orderId={order.id} isMock={manualUpiConfig.isMock} />
           </div>
         )}
 

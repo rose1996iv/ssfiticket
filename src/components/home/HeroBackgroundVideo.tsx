@@ -36,6 +36,7 @@ export function HeroBackgroundVideo({ videoUrl }: HeroBackgroundVideoProps) {
             title="SSFI Promotional Video"
             tabIndex={-1}
             aria-hidden="true"
+            loading="lazy"
             className="pointer-events-none absolute top-1/2 left-1/2 aspect-video min-h-full min-w-full -translate-x-1/2 -translate-y-1/2 border-0 [height:56.25vw] [width:177.78vh] filter saturate-85"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             referrerPolicy="strict-origin-when-cross-origin"

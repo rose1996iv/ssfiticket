@@ -29,11 +29,11 @@ export default async function AdminMessagesPage() {
 
   const sellers = rawSellers as SellerOption[];
 
-  // Fetch recent sent message history with recipient seller & sender profile joins
+  // Fetch recent message history with recipient seller & sender profile joins
   const { data: rawMessages = [] } = await db
     .from("seller_messages")
     .select(
-      "id, subject, body, created_at, read_at, archived_at, sellers(seller_code, display_name), profiles(full_name, email)"
+      "id, subject, body, created_at, read_at, archived_at, sender_role, parent_message_id, recipient_seller_id, sellers(seller_code, display_name), profiles(full_name, email)"
     )
     .order("created_at", { ascending: false })
     .limit(100);

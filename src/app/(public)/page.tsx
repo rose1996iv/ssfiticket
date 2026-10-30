@@ -9,6 +9,7 @@ import { OfficialContactsSection } from "@/components/home/OfficialContactsSecti
 import { OfficialFooter } from "@/components/home/OfficialFooter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getPublicSellerDirectory } from "@/server/actions/sellerDirectory";
+import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash Giveaway"],
@@ -27,12 +28,12 @@ export default async function Home() {
     .eq("public_id", "ssfi-fundraising-lucky-draw")
     .maybeSingle();
 
-  const now = new Date();
-  const isWithinSchedule =
-    (!campaign?.start_at || now >= new Date(campaign.start_at)) &&
-    (!campaign?.end_at || now < new Date(campaign.end_at));
-
-  const isCampaignActive = campaign?.status === "ACTIVE" && isWithinSchedule;
+  const schedule = evaluateCampaignSchedule(
+    campaign?.status ?? "DRAFT",
+    campaign?.start_at,
+    campaign?.end_at
+  );
+  const isCampaignActive = schedule.isSellingOpen;
   const ticketPriceInr = campaign?.ticket_price_paise
     ? campaign.ticket_price_paise / 100
     : 100;
@@ -131,7 +132,7 @@ export default async function Home() {
       {/* Step-by-Step Ticket Purchase Guideline */}
       <PurchaseGuideline
         isCampaignActive={isCampaignActive}
-        campaignStatusText={campaign?.status || "DRAFT"}
+        campaignStatusText={schedule.scheduleStatus}
       />
 
       {/* Payment Instructions & Important Information Section */}

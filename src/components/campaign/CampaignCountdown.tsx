@@ -45,8 +45,8 @@ export function CampaignCountdown({
   const nowMs = useSyncExternalStore(subscribeTime, getTimeSnapshot, getServerSnapshot);
   const isHydrated = nowMs > 0;
 
-  // On server (nowMs === 0), evaluate deterministically with startAt/epoch; on client, use live nowMs
-  const referenceTime = isHydrated ? new Date(nowMs) : new Date(startAt || 0);
+  // On server (nowMs === 0), evaluate with current server date; on client, use live nowMs
+  const referenceTime = isHydrated ? new Date(nowMs) : new Date();
   const analysis = evaluateCampaignSchedule(status, startAt, endAt, referenceTime);
 
   // Time remaining calculation

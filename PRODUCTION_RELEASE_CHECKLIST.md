@@ -1,7 +1,7 @@
 # SSFI Fundraising Ticket System — Production Release Checklist
 
-**Document Version:** 1.2.0  
-**Audit Phase:** Final Preview QA, Visual Regression Audit & Permanent Workflow Validation  
+**Document Version:** 1.3.0  
+**Audit Phase:** Preview Release Candidate Deployment & Visual Validation  
 **Evaluation Date:** 2026-10-31  
 **Target Launch Window:** Ticket Sales Start November 1, 2026 | Draw Ceremony December 19, 2026  
 **Status Legend:**
@@ -12,36 +12,57 @@
 
 ---
 
-## 1. Visual Regression Audit & Screenshot Evidence (Task 1)
+## 1. Release Candidate Deployment Record (Step 4 & Step 6)
+
+| Deployment Attribute | Recorded Detail | Status | Evidence |
+| :--- | :--- | :---: | :--- |
+| **Preview Git Branch** | `deploy/ssfi-homepage-preview` | `[ DONE ]` | Verified by `git status` |
+| **New Commit SHA** | `354a067fc50788f2e3c54364d2b8fbddbf3956ad` | `[ DONE ]` | Pushed cleanly to `origin/deploy/ssfi-homepage-preview` |
+| **Commit Message** | `fix(campaign): align scheduled sales status across pages` | `[ DONE ]` | Verified by `git log -1` |
+| **GitHub Remote** | `https://github.com/rose1996iv/ssfiticket.git` | `[ DONE ]` | Verified by `git remote -v` |
+| **Vercel Deployment ID** | `FY9sJA1vUwVpDN2JzCDDZPr6SCLC` | `[ DONE ]` | Vercel GitHub Bot commit status (`state: 'success'`) |
+| **Vercel Deployment Status** | `READY` (Completed) | `[ DONE ]` | `created_at: 2026-10-30T19:13:51Z` |
+| **Vercel Deployment Target** | `https://vercel.com/rose1996ivs-projects/ssfiticket/FY9sJA1vUwVpDN2JzCDDZPr6SCLC` | `[ DONE ]` | Target deployment URL from Vercel |
+| **Target Preview Domain** | `https://ssfiticket-c9cde17q6-rose1996ivs-projects.vercel.app` | `[ DONE ]` | Verified 200 OK |
+| **Target Database** | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | `[ DONE ]` | RLS, functions, and synthetic records verified |
+
+---
+
+## 2. Visual Regression Audit & Screenshot Evidence
 
 Captured using headless Google Chrome (`120+`) across 3 viewports:
 - **Desktop:** `1440 x 900`
 - **Tablet:** `768 x 1024`
 - **Mobile:** `390 x 844`
 
-| Page Inspected | Desktop (`1440x900`) | Tablet (`768x1024`) | Mobile (`390x844`) | Visual Regression Verdict |
+| Page Inspected | Desktop (`1440x900`) | Tablet (`768x1024`) | Mobile (`390x844`) | Visual Verdict |
 | :--- | :---: | :---: | :---: | :--- |
-| **Homepage (`/`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Clean hero, brand logo, video backdrop, prizes grid, zero layout shifts |
-| **Purchase Referral (`/buy?ref=SELLER-002`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Displays resolved seller, schedule countdown, compulsory contact fields |
-| **Authentication (`/login`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Official crest, credentials form, password toggle, setup guide accordion |
-| **Terms & Conditions (`/terms`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Sections 1–7 verified (dates: 1 Nov 2026 / 19 Dec 2026, payee: HLAWN THA DAWT) |
-| **Ticket Verification (`/verify/SSFI-000001`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | High-contrast QR code (`#7c1619`), verified badge, timestamp |
-| **Seller Directory (`/#sellers`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Verified active sellers (`SELLER-002`, `SELLER-003`, `SELLER-007`) rendered |
+| **Homepage (`/`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Hero section, video backdrop, logo, headline typography, prize celebration cards (`₹10,000`, `₹8,000`, Induction, Ukulele, Soundbox), official footer, and seller directory render cleanly. Zero horizontal overflow or clipped text. |
+| **Referral Checkout (`/buy?ref=SELLER-002`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Displays resolved seller, live countdown to official launch (1 Nov 2026), prize summary, and order form. |
+| **Invalid Referral Fallback (`/buy?ref=SELLER-001`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Gracefully prompts user with referral error card and code input fallback without uncaught exceptions. |
+| **Staff & Seller Login (`/login`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Centered card, official SSFI crest, masked password toggle, setup guidance accordion. |
+| **Terms & Conditions (`/terms`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | Complete legal text; verified campaign dates: **1 November 2026** (Sales Open) and **19 December 2026** (Draw Ceremony); official payee: **HLAWN THA DAWT** (`6909251270@ptaxis`). |
+| **Ticket Verification (`/verify/SSFI-000001`)** | `[ DONE ]` | `[ DONE ]` | `[ DONE ]` | High-contrast QR code (`#7c1619`), authentic green stamp, timestamp, and metadata render sharply. |
 
-*Screenshot Storage Directory:* `C:\Users\Joseph\.gemini\antigravity\brain\f1fe0dbc-6633-4b76-b6b7-fdb3af5bbb02\screenshots\`
+*Screenshot Archive:* `C:\Users\Joseph\.gemini\antigravity\brain\f1fe0dbc-6633-4b76-b6b7-fdb3af5bbb02\screenshots\`
 
 ---
 
-## 2. Campaign Status Inconsistency Investigation & Resolution (Task 2)
+## 3. Campaign Status Inconsistency Resolution
 
 | Issue Observed | Root Cause Analysis | Code Remedy | Status |
 | :--- | :--- | :--- | :---: |
-| **Homepage Contradiction** ("Ticket Booking Status: ACTIVE" vs "Sales Closed or in preparation") | `src/app/(public)/page.tsx` bypassed `evaluateCampaignSchedule` and passed raw `campaign.status` (`ACTIVE`) even when `now < start_at`. | Updated `page.tsx` to use authoritative `evaluateCampaignSchedule` and pass `schedule.scheduleStatus` (`UPCOMING`). | `[ DONE ]` |
+| **Homepage Contradiction** ("Ticket Booking Status: ACTIVE" vs "Sales Closed or in preparation") | `src/app/(public)/page.tsx` bypassed `evaluateCampaignSchedule` and passed raw `campaign.status` (`ACTIVE`) even when `now < start_at`. | Connected `evaluateCampaignSchedule()` in `page.tsx` and passed `schedule.scheduleStatus` (`UPCOMING`). | `[ DONE ]` |
 | **Purchase Page Contradiction** ("Ticket Sales Live" vs "Ticket Orders Currently Inactive") | `CampaignCountdown.tsx` line 48 artificially evaluated `referenceTime = new Date(startAt)` during SSR (`nowMs === 0`), causing SSR to evaluate as `LIVE` while `PublicOrderForm` evaluated as `UPCOMING`. | Updated `CampaignCountdown.tsx` line 49 to evaluate `referenceTime = isHydrated ? new Date(nowMs) : new Date();`. SSR and client now agree on `UPCOMING`. | `[ DONE ]` |
+
+### Boundary Verification Results:
+- **Before Opening Time (31 Oct 2026 23:59 IST):** `scheduleStatus: "UPCOMING"`, `isSellingOpen: false`, `badgeLabel: "Opening Soon"`.
+- **At Opening Timestamp (01 Nov 2026 00:00 IST):** `scheduleStatus: "LIVE"`, `isSellingOpen: true`, `badgeLabel: "Live Sales Open"`.
+- **At Closing Timestamp (19 Dec 2026 23:59:59 IST):** `scheduleStatus: "CLOSED"`, `isSellingOpen: false`, `badgeLabel: "Campaign Closed"`.
 
 ---
 
-## 3. Buyer Contact Enforcement (Task 3)
+## 4. Buyer Contact Enforcement
 
 | Validation Surface | Verification Scope & Rule | Status | Evidence |
 | :--- | :--- | :---: | :--- |
@@ -55,7 +76,7 @@ Captured using headless Google Chrome (`120+`) across 3 viewports:
 
 ---
 
-## 4. Complete Preview Functional Verification (Task 4)
+## 5. Preview Functional Verification
 
 | Workflow / Module | Tested Path / Evidence | Status |
 | :--- | :--- | :---: |
@@ -72,52 +93,19 @@ Captured using headless Google Chrome (`120+`) across 3 viewports:
 
 ---
 
-## 5. Permanent Vercel Release Workflow (Task 5)
+## 6. Permanent Vercel Release Workflow
 
 ### Environment Mapping & Branch Strategy
 
 | Layer | Git Branch | Supabase Target | Environment Variables Scope |
 | :--- | :--- | :--- | :--- |
 | **Local Dev** | `deploy/ssfi-homepage-preview` | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | `.env.local` |
-| **Vercel Preview** | `deploy/ssfi-homepage-preview` | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | Vercel Preview Settings (`GMAIL_PREVIEW_ALLOWED_RECIPIENT` active) |
-| **Vercel Production** | `main` | `ssfiticket` (`fohpqheglxhfdecadhzw`) | Vercel Production Settings (`GMAIL_PREVIEW_ALLOWED_RECIPIENT` removed) |
-
-### Permanent Development & Deployment Lifecycle
-```
-[Local / Branch Edit] ──> [Push to deploy/ssfi-homepage-preview]
-                                       │
-                                       ▼
-                       [Vercel Automatic Preview Build]
-                       (Points to ssfiticketdev Supabase)
-                                       │
-                                       ▼
-                             [Preview QA & Approval]
-                                       │
-                                       ▼
-                       [Manual Fast-Forward Merge to main]
-                                       │
-                                       ▼
-                      [Vercel Automatic Production Build]
-                       (Points to ssfiticket Supabase)
-                                       │
-                                       ▼
-                          [Live Smoke Test on ssfiticket.vercel.app]
-```
-
-### Production Rollback Procedure
-If an issue occurs post-release in Production:
-1. **Instant Vercel Rollback:** In Vercel Project Dashboard $\rightarrow$ **Deployments**, locate the last known healthy deployment (e.g., commit `3f33f50`) and click **Instant Rollback**. Traffic is reverted in < 5 seconds.
-2. **Git Rollback:** Revert `main` to the previous commit:
-   ```bash
-   git checkout main
-   git revert HEAD -m 1 --no-edit
-   git push origin main
-   ```
-3. **Database Rollback:** If a rollback of database DDL is ever required, execute the documented reverse statements in `PRODUCTION_MIGRATION_PREFLIGHT.md`.
+| **Vercel Preview** | `deploy/ssfi-homepage-preview` | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | Preview Settings (`GMAIL_PREVIEW_ALLOWED_RECIPIENT` active) |
+| **Vercel Production**| `main` | `ssfiticket` (`fohpqheglxhfdecadhzw`) | Production Settings (`GMAIL_PREVIEW_ALLOWED_RECIPIENT` removed) |
 
 ---
 
-## 6. Release Gate Readiness Summary
+## 7. Release Gate Readiness Summary
 
 | Gate | Description | Status |
 | :--- | :--- | :---: |

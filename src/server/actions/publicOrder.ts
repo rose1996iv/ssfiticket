@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
+import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { manualUpiConfig } from "@/lib/config/payment";
 
@@ -14,12 +15,9 @@ const publicOrderSchema = z.object({
     .trim()
     .toUpperCase()
     .regex(SELLER_CODE_REGEX, "Invalid seller referral code format."),
-  name: z.string().trim().min(2, "Name must be at least 2 characters.").max(120),
-  whatsapp: z
-    .string()
-    .trim()
-    .regex(/^[0-9+ -]{7,20}$/, "Enter a valid phone/WhatsApp number."),
-  email: z.string().trim().email("Enter a valid email address.").optional().or(z.literal("")),
+  name: z.string().trim().min(2, "Full name must be at least 2 characters.").max(120, "Name cannot exceed 120 characters."),
+  whatsapp: whatsappSchema,
+  email: emailSchema,
   quantity: z.coerce.number().int().min(1, "Minimum 1 ticket.").max(100, "Maximum 100 tickets per online order."),
   acceptTerms: z
     .preprocess(
@@ -153,7 +151,7 @@ export async function createPublicCustomerOrder(formData: FormData) {
     p_seller_id: seller.id,
     p_name: parsed.data.name,
     p_whatsapp: parsed.data.whatsapp,
-    p_email: parsed.data.email || "",
+    p_email: parsed.data.email,
     p_quantity: parsed.data.quantity,
   });
 

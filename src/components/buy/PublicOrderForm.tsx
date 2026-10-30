@@ -118,6 +118,8 @@ export function PublicOrderForm({
           <input
             id="customer-name"
             name="name"
+            type="text"
+            autoComplete="name"
             required
             minLength={2}
             maxLength={120}
@@ -128,33 +130,39 @@ export function PublicOrderForm({
 
         <div>
           <label htmlFor="customer-whatsapp" className="block text-sm font-semibold text-[#35110f]">
-            Phone / WhatsApp Number <span className="text-red-500">*</span>
+            WhatsApp Number <span className="text-red-500">*</span>
           </label>
           <input
             id="customer-whatsapp"
             name="whatsapp"
             type="tel"
+            autoComplete="tel"
             required
-            pattern="[0-9+ -]{7,20}"
-            placeholder="e.g. +91 91234 56789"
+            pattern="[0-9+ \-()]{7,25}"
+            placeholder="e.g. +91 91234 56789 or international"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />
           <p className="mt-1 text-xs text-[#705a54]">
-            Your ticket numbers and draw updates will be referenced with this number.
+            Must be active on WhatsApp with country calling code. Digital ticket numbers and draw notices are sent here.
           </p>
         </div>
 
         <div>
           <label htmlFor="customer-email" className="block text-sm font-semibold text-[#35110f]">
-            Email Address <span className="text-xs font-normal text-[#705a54]">(Optional)</span>
+            Email Address <span className="text-red-500">*</span>
           </label>
           <input
             id="customer-email"
             name="email"
             type="email"
+            autoComplete="email"
+            required
             placeholder="your.email@example.com"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />
+          <p className="mt-1 text-xs text-[#705a54]">
+            Official ticket confirmation and scannable verification link will be emailed immediately upon payment approval.
+          </p>
         </div>
       </div>
 

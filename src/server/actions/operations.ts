@@ -5,14 +5,15 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAnyRole, requireAuth, requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { dispatchOrderTicketDeliveries } from "@/lib/delivery/service";
 import { manualUpiConfig } from "@/lib/config/payment";
 
 const saleSchema = z.object({
-  name: z.string().trim().min(2, "Name must be at least 2 characters.").max(120),
-  whatsapp: z.string().trim().regex(/^[0-9+ -]{7,20}$/, "Enter a valid phone/WhatsApp number."),
-  email: z.string().trim().email("Enter a valid email address.").optional().or(z.literal("")),
+  name: z.string().trim().min(2, "Full name must be at least 2 characters.").max(120, "Name cannot exceed 120 characters."),
+  whatsapp: whatsappSchema,
+  email: emailSchema,
   quantity: z.coerce.number().int().min(1, "Minimum 1 ticket.").max(1000, "Maximum 1,000 tickets per seller order."),
 });
 
@@ -27,7 +28,7 @@ const utrSchema = z.object({
   payerName: z.string().trim().max(120).optional(),
 });
 
-async function currentSellerId() {
+async function currentSellerContext() {
   const user = await requireRole("SELLER");
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
@@ -52,7 +53,12 @@ async function currentSellerId() {
     throw new Error("Your seller account is currently inactive.");
   }
 
-  return data.id as string;
+  return { sellerId: data.id as string, userId: user.id as string };
+}
+
+async function currentSellerId() {
+  const { sellerId } = await currentSellerContext();
+  return sellerId;
 }
 
 export async function createSale(formData: FormData) {
@@ -68,7 +74,7 @@ export async function createSale(formData: FormData) {
     throw new Error(firstError);
   }
 
-  const sellerId = await currentSellerId();
+  const { sellerId, userId } = await currentSellerContext();
   const admin = createSupabaseAdminClient();
 
   // 1. Strict Server-Side Campaign State Verification
@@ -131,13 +137,14 @@ export async function createSale(formData: FormData) {
     throw new Error(`Sorry, the requested quantity (${parsed.data.quantity}) exceeds remaining campaign capacity (${remaining} tickets available).`);
   }
 
-  // 2. Call RPC create_seller_order
+  // 2. Call RPC create_seller_order with authenticated seller actor
   const { data, error } = await admin.rpc("create_seller_order", {
     p_seller_id: sellerId,
     p_name: parsed.data.name,
     p_whatsapp: parsed.data.whatsapp,
-    p_email: parsed.data.email || "",
+    p_email: parsed.data.email,
     p_quantity: parsed.data.quantity,
+    p_actor: userId,
   });
 
   if (error || !data) {

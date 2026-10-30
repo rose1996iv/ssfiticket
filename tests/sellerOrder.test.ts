@@ -250,3 +250,68 @@ test("Seller order creation sets initial order status to PENDING_PAYMENT, never 
   assert.equal(issuedTicketsCount, 0);
 });
 
+/**
+ * Simulates SQL actor resolution and channel classification in create_seller_order()
+ */
+function resolveOrderActorAndChannel(
+  seller: { id: string; profile_id: string; is_active: boolean },
+  actorInput: string | null | undefined,
+  isStaffFn: (uid: string) => boolean
+): { actorUserId: string | null; channel: "SELLER_DIRECT" | "PUBLIC_REFERRAL" } {
+  const actorUserId = actorInput ?? null;
+  if (actorUserId !== null) {
+    const isOwner = actorUserId === seller.profile_id;
+    const isStaff = isStaffFn(actorUserId);
+    if (!isOwner && !isStaff) {
+      throw new Error("access denied: invalid actor for seller order");
+    }
+    return { actorUserId, channel: "SELLER_DIRECT" };
+  }
+  return { actorUserId: null, channel: "PUBLIC_REFERRAL" };
+}
+
+test("Actor Attribution: Seller direct order classifies as SELLER_DIRECT with seller profile actor", () => {
+  const seller = { id: "seller-uuid-1", profile_id: "user-seller-profile-1", is_active: true };
+  const mockIsStaff = () => false;
+
+  const res = resolveOrderActorAndChannel(seller, seller.profile_id, mockIsStaff);
+  assert.equal(res.channel, "SELLER_DIRECT");
+  assert.equal(res.actorUserId, "user-seller-profile-1");
+});
+
+test("Actor Attribution: Staff-created seller order classifies as SELLER_DIRECT with staff actor", () => {
+  const seller = { id: "seller-uuid-1", profile_id: "user-seller-profile-1", is_active: true };
+  const staffUserId = "user-super-admin-profile";
+  const mockIsStaff = (uid: string) => uid === staffUserId;
+
+  const res = resolveOrderActorAndChannel(seller, staffUserId, mockIsStaff);
+  assert.equal(res.channel, "SELLER_DIRECT");
+  assert.equal(res.actorUserId, staffUserId);
+});
+
+test("Actor Attribution: Public referral order classifies as PUBLIC_REFERRAL with null actor", () => {
+  const seller = { id: "seller-uuid-1", profile_id: "user-seller-profile-1", is_active: true };
+  const mockIsStaff = () => false;
+
+  // p_actor omitted or passed as null
+  const resNull = resolveOrderActorAndChannel(seller, null, mockIsStaff);
+  assert.equal(resNull.channel, "PUBLIC_REFERRAL");
+  assert.equal(resNull.actorUserId, null);
+
+  const resUndef = resolveOrderActorAndChannel(seller, undefined, mockIsStaff);
+  assert.equal(resUndef.channel, "PUBLIC_REFERRAL");
+  assert.equal(resUndef.actorUserId, null);
+});
+
+test("Actor Attribution: Unauthorized actor substitution is strictly rejected", () => {
+  const seller = { id: "seller-uuid-1", profile_id: "user-seller-profile-1", is_active: true };
+  const rogueUserId = "rogue-user-attacker";
+  const mockIsStaff = () => false;
+
+  assert.throws(
+    () => resolveOrderActorAndChannel(seller, rogueUserId, mockIsStaff),
+    /access denied: invalid actor for seller order/
+  );
+});
+
+

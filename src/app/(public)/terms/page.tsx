@@ -278,8 +278,10 @@ export default async function TermsAndConditionsPage() {
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                8.1. <b>Accurate Contact Information:</b> Customers must provide an active, reachable WhatsApp phone number
-                and legal name to ensure proper delivery of ticket numbers.
+                8.1. <b>Mandatory Contact Information:</b> Customers must provide both an active, reachable WhatsApp phone number
+                (including country calling code) and a valid Email address alongside their legal full name. Official digital ticket
+                confirmations and scannable verification URLs are dispatched to the submitted email upon payment approval, and referenced
+                via WhatsApp Click-to-Chat.
               </p>
               <p>
                 8.2. <b>Security of Credentials:</b> Customers must never share their UPI PIN, OTP, banking password, or card details.

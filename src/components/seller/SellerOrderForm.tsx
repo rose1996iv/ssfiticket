@@ -149,21 +149,22 @@ export function SellerOrderForm({
           <label htmlFor="customer-whatsapp" className="block text-xs font-semibold text-[#35110f]">
             <span className="flex items-center gap-1.5">
               <Phone size={13} className="text-[#705a54]" />
-              Phone / WhatsApp Number <span className="text-red-500">*</span>
+              WhatsApp Number <span className="text-red-500">*</span>
             </span>
           </label>
           <input
             id="customer-whatsapp"
             name="whatsapp"
             type="tel"
+            autoComplete="tel"
             required
             disabled={isSubmitting || !isCampaignActive}
-            pattern="[0-9+ -]{7,20}"
-            placeholder="e.g. +91 91234 56789"
+            pattern="[0-9+ \-()]{7,25}"
+            placeholder="e.g. +91 91234 56789 or international"
             className="mt-1.5 w-full rounded-lg border border-[#eadbcf] bg-white p-2.5 text-sm text-[#35110f] shadow-2xs focus:border-[#7c1619] focus:outline-hidden disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
           <p className="mt-1 text-xs text-[#705a54]">
-            Official draw notifications and digital ticket numbers are sent here.
+            Must be active on WhatsApp with country calling code. Digital ticket numbers and draw notices are sent here.
           </p>
         </div>
 
@@ -171,17 +172,22 @@ export function SellerOrderForm({
           <label htmlFor="customer-email" className="block text-xs font-semibold text-[#35110f]">
             <span className="flex items-center gap-1.5">
               <Mail size={13} className="text-[#705a54]" />
-              Email Address <span className="font-normal text-[#705a54]">(Optional)</span>
+              Email Address <span className="text-red-500">*</span>
             </span>
           </label>
           <input
             id="customer-email"
             name="email"
             type="email"
+            autoComplete="email"
+            required
             disabled={isSubmitting || !isCampaignActive}
             placeholder="customer@example.com"
             className="mt-1.5 w-full rounded-lg border border-[#eadbcf] bg-white p-2.5 text-sm text-[#35110f] shadow-2xs focus:border-[#7c1619] focus:outline-hidden disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
+          <p className="mt-1 text-xs text-[#705a54]">
+            Official ticket confirmation and scannable verification link will be emailed upon payment approval.
+          </p>
         </div>
       </div>
 

@@ -13,7 +13,10 @@ type SellerOrder = {
   quantity: number;
   total_amount_paise: number;
   status: string;
-  customers: { full_name: string; phone?: string | null }[] | { full_name: string; phone?: string | null } | null;
+  customers:
+    | { full_name: string; phone?: string | null; whatsapp_number?: string | null; email?: string | null }[]
+    | { full_name: string; phone?: string | null; whatsapp_number?: string | null; email?: string | null }
+    | null;
   payments: {
     status: string;
     utr_reference: string | null;
@@ -47,7 +50,7 @@ export default async function SellerOrderPage({
   const { data } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, customers(full_name, phone), payments(status, utr_reference, rejection_reason), tickets(ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, customers(full_name, phone, whatsapp_number, email), payments(status, utr_reference, rejection_reason), tickets(ticket_number, status)"
     )
     .eq("id", orderId)
     .eq("seller_id", seller.id)
@@ -117,6 +120,14 @@ export default async function SellerOrderPage({
           <div>
             <dt className="text-[10px] uppercase font-bold text-[#705a54]">Attributed Seller</dt>
             <dd className="mt-0.5 font-bold text-[#35110f]">{seller.display_name} ({seller.seller_code})</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase font-bold text-[#705a54]">WhatsApp Number</dt>
+            <dd className="mt-0.5 text-sm font-bold text-[#35110f]">{customer?.whatsapp_number || customer?.phone || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase font-bold text-[#705a54]">Email Address</dt>
+            <dd className="mt-0.5 text-sm font-bold text-[#35110f]">{customer?.email || "—"}</dd>
           </div>
           <div>
             <dt className="text-[10px] uppercase font-bold text-[#705a54]">Tickets Requested</dt>

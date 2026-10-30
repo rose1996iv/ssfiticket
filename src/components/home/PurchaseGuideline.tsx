@@ -28,7 +28,7 @@ const STEPS = [
     title: "Enter Your Details",
     icon: UserCheck,
     description:
-      "Provide your Full Name, WhatsApp number for ticket delivery, and optional email address for order notifications.",
+      "Provide your Full Name, WhatsApp number for instant delivery, and verified email address for official ticket confirmation.",
   },
   {
     step: 3,

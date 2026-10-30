@@ -81,6 +81,9 @@ export default async function TermsAndConditionsPage() {
                 1.3. <b>Zero Client Trust:</b> Client-supplied totals, browser parameter modifications, or unauthorized discounts
                 are strictly rejected by the server validation layer.
               </p>
+              <p>
+                1.4. <b>Official Campaign Window:</b> Ticket sales officially open on <b>1 November 2026</b> and close on <b>19 December 2026</b> prior to the grand lucky draw ceremony.
+              </p>
             </div>
           </section>
 

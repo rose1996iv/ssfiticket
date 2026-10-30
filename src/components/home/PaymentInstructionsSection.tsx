@@ -37,7 +37,7 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-[#705a54]">
             Please read these guidelines carefully before purchasing your lucky draw tickets.
-            The official draw ceremony is confirmed for <b>19 December 2026</b>.
+            Ticket sales commence on <b>1 November 2026</b>, and the official draw ceremony is confirmed for <b>19 December 2026</b>.
             SSFI uses manual UPI verification with human oversight to ensure transparent, secure student fundraising accounting.
           </p>
         </div>

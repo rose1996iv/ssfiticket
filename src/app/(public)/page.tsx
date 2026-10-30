@@ -82,7 +82,7 @@ export default async function Home() {
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df] drop-shadow-xs">
             Support student fellowship and education initiatives by participating in the official
-            SSFI Fundraising Lucky Draw.
+            SSFI Fundraising Lucky Draw. Ticket sales commence on 1 November 2026, with the grand lucky draw ceremony on 19 December 2026.
           </p>
 
           <div className="mt-9 flex flex-wrap items-center gap-4">

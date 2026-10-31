@@ -10,12 +10,13 @@
  *   - GMAIL_API_CLIENT_SECRET
  *   - GMAIL_API_REFRESH_TOKEN
  *   - GMAIL_SENDER_ADDRESS (defaults to Senthangstudents@gmail.com)
- * - Preview-only live email feature gate:
- *   - GMAIL_PREVIEW_REAL_SEND_ENABLED (must be exactly 'true')
- *   - GMAIL_PREVIEW_ALLOWED_RECIPIENT (exact case-insensitive recipient allowlist)
- * - MIME RFC 2822 base64url message composition
- * - Safe preview/development isolation with fail-closed behavior
- * - Non-fatal execution: failures never throw or rollback ticket issuance
+ * - Minimum required Google OAuth Scope:
+ *   - https://www.googleapis.com/auth/gmail.send
+ * - Separated Preview Diagnostic and Production Customer Delivery policies:
+ *   - Preview Diagnostic Dispatch: Strictly gated by GMAIL_PREVIEW_ALLOWED_RECIPIENT & GMAIL_PREVIEW_REAL_SEND_ENABLED
+ *   - Production Customer Transactional Email: Sends directly to customer in Production without Preview recipient restrictions
+ * - Safe preview/development isolation with fail-closed simulation
+ * - Non-fatal execution: failures never corrupt or rollback ticket issuance or order payment state
  * - Zero secrets or token values in logs or client responses
  */
 
@@ -33,6 +34,23 @@ export type GmailPreviewGateConfig = {
   isVercelPreview: boolean;
   isRealSendEnabled: boolean;
   allowedRecipient?: string;
+};
+
+export type GmailOAuthHealth = {
+  isConfigured: boolean;
+  senderAddress: string;
+  status:
+    | "HEALTHY"
+    | "UNCONFIGURED"
+    | "INVALID_CREDENTIALS"
+    | "EXPIRED_REFRESH_TOKEN"
+    | "SCOPE_MISSING"
+    | "SENDER_MISMATCH"
+    | "ERROR";
+  message: string;
+  scopes?: string[];
+  authenticatedUser?: string;
+  checkedAtIst: string;
 };
 
 export function getGmailApiConfig(): GmailApiConfig {
@@ -184,7 +202,7 @@ export function sanitizeGmailApiError(status: number, rawMessage: string): strin
 /**
  * Exchanges OAuth 2.0 refresh token for an access token from Google.
  */
-async function getGmailAccessToken(config: GmailApiConfig): Promise<string> {
+export async function getGmailAccessToken(config: GmailApiConfig): Promise<string> {
   if (!config.clientId || !config.clientSecret || !config.refreshToken) {
     throw new Error("Missing required Gmail API credentials (client_id, client_secret, refresh_token).");
   }
@@ -219,6 +237,113 @@ async function getGmailAccessToken(config: GmailApiConfig): Promise<string> {
   }
 
   return data.access_token;
+}
+
+/**
+ * Validates Google OAuth connection health and verifies sender identity & scopes.
+ * Safe for admin display: zero secret credentials, access tokens, or refresh tokens exposed.
+ */
+export async function checkGmailOAuthHealth(): Promise<GmailOAuthHealth> {
+  const config = getGmailApiConfig();
+  const checkedAtIst = formatIstDateTime(new Date().toISOString());
+
+  if (!config.clientId || !config.clientSecret || !config.refreshToken) {
+    return {
+      isConfigured: false,
+      senderAddress: config.senderAddress,
+      status: "UNCONFIGURED",
+      message: "Gmail API credentials (GMAIL_API_CLIENT_ID, GMAIL_API_CLIENT_SECRET, GMAIL_API_REFRESH_TOKEN) are not configured.",
+      checkedAtIst,
+    };
+  }
+
+  try {
+    const accessToken = await getGmailAccessToken(config);
+
+    // 1. Inspect granted scopes and identity via tokeninfo
+    let scopes: string[] = [];
+    let authenticatedUser: string | undefined;
+
+    try {
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (tokenInfoRes.ok) {
+        const tokenInfo = (await tokenInfoRes.json()) as { scope?: string; email?: string };
+        if (tokenInfo.scope) {
+          scopes = tokenInfo.scope.split(" ").map((s) => s.trim());
+        }
+        if (tokenInfo.email) {
+          authenticatedUser = tokenInfo.email;
+        }
+      }
+    } catch (infoErr) {
+      console.warn("[Gmail Health Check] tokeninfo lookup warning:", infoErr);
+    }
+
+    // 2. Validate scope (must include gmail.send or mail.google.com)
+    const hasSendScope = scopes.some(
+      (s) => s.includes("gmail.send") || s.includes("mail.google.com")
+    );
+
+    if (scopes.length > 0 && !hasSendScope) {
+      return {
+        isConfigured: true,
+        senderAddress: config.senderAddress,
+        status: "SCOPE_MISSING",
+        message: "OAuth token is missing the required 'https://www.googleapis.com/auth/gmail.send' scope.",
+        scopes,
+        authenticatedUser,
+        checkedAtIst,
+      };
+    }
+
+    // 3. Validate sender address against authenticated account
+    if (authenticatedUser) {
+      const cleanAuth = authenticatedUser.trim().toLowerCase();
+      const cleanConfig = config.senderAddress.trim().toLowerCase();
+      if (cleanAuth !== cleanConfig) {
+        return {
+          isConfigured: true,
+          senderAddress: config.senderAddress,
+          status: "SENDER_MISMATCH",
+          message: `Authenticated Google account (${authenticatedUser}) does not match configured SSFI sender (${config.senderAddress}).`,
+          scopes,
+          authenticatedUser,
+          checkedAtIst,
+        };
+      }
+    }
+
+    return {
+      isConfigured: true,
+      senderAddress: config.senderAddress,
+      status: "HEALTHY",
+      message: "Google OAuth 2.0 refresh token authorization and Gmail API send scope verified successfully.",
+      scopes,
+      authenticatedUser: authenticatedUser || config.senderAddress,
+      checkedAtIst,
+    };
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : "OAuth verification failure";
+    const sanitized = sanitizeOAuthError(rawMsg);
+    const lower = rawMsg.toLowerCase();
+
+    let status: GmailOAuthHealth["status"] = "ERROR";
+    if (lower.includes("invalid_grant") || lower.includes("revoked") || lower.includes("expired")) {
+      status = "EXPIRED_REFRESH_TOKEN";
+    } else if (lower.includes("unauthorized_client") || lower.includes("invalid_client")) {
+      status = "INVALID_CREDENTIALS";
+    }
+
+    return {
+      isConfigured: true,
+      senderAddress: config.senderAddress,
+      status,
+      message: sanitized,
+      checkedAtIst,
+    };
+  }
 }
 
 /**
@@ -272,17 +397,25 @@ function buildMimeMessage(options: {
   return lines.join("\r\n");
 }
 
-/**
- * Dispatches email using the Gmail REST API with strict Preview gate enforcement.
- */
-export async function sendEmailViaGmailApi(options: {
+export type GmailSendOptions = {
   recipient: string;
   subject: string;
   text: string;
   html: string;
   payload?: DeliveryPayload;
   isStaffAuthorized?: boolean;
-}): Promise<DeliveryResult> {
+  /**
+   * Dispatch policy type:
+   * - "PREVIEW_DIAGNOSTIC": Strictly enforces checkGmailPreviewGate with GMAIL_PREVIEW_ALLOWED_RECIPIENT.
+   * - "CUSTOMER_TRANSACTIONAL": Legitimate customer transactional delivery. Never checks GMAIL_PREVIEW_ALLOWED_RECIPIENT.
+   */
+  dispatchType?: "PREVIEW_DIAGNOSTIC" | "CUSTOMER_TRANSACTIONAL";
+};
+
+/**
+ * Dispatches email using the Gmail REST API with strict Preview gate enforcement.
+ */
+export async function sendEmailViaGmailApi(options: GmailSendOptions): Promise<DeliveryResult> {
   const config = getGmailApiConfig();
   const isConfigured = isGmailApiConfigured();
 
@@ -292,32 +425,65 @@ export async function sendEmailViaGmailApi(options: {
   const isDev = process.env.NODE_ENV !== "production";
   const isDryRun = process.env.GMAIL_DRY_RUN === "true" || process.env.RESEND_DRY_RUN === "true";
 
-  // PREVIEW / DEV ENVIRONMENT SAFETY GATE
-  if (isVercelPreview || isDev || isDryRun) {
-    const gate = checkGmailPreviewGate(options.recipient, options.isStaffAuthorized ?? false);
+  const dispatchType = options.dispatchType ?? "CUSTOMER_TRANSACTIONAL";
 
-    if (!gate.isPermitted) {
+  // 1. PREVIEW DIAGNOSTIC DISPATCH POLICY
+  if (dispatchType === "PREVIEW_DIAGNOSTIC") {
+    if (isVercelPreview || isDev || isDryRun) {
+      const gate = checkGmailPreviewGate(options.recipient, options.isStaffAuthorized ?? false);
+
+      if (!gate.isPermitted) {
+        console.log(
+          `[Gmail API Gate] Preview Diagnostic Fail-closed: ${gate.reason} (recipient: ${options.recipient})`
+        );
+        return {
+          channel: "EMAIL",
+          status: "SIMULATED",
+          provider: isConfigured ? "gmail_api_preview_dry_run" : "gmail_api_unconfigured",
+          recipient: options.recipient,
+          providerMessageId: `sim-diag-${Date.now()}`,
+          renderedContent: options.html,
+          subject: options.subject,
+          error: isConfigured ? null : gate.reason,
+        };
+      }
+
       console.log(
-        `[Gmail API Gate] Fail-closed in preview/dev: ${gate.reason} (recipient: ${options.recipient})`
+        `[Gmail API Gate] Preview Diagnostic live transmission authorized for allowlisted recipient: ${options.recipient}`
       );
-      return {
-        channel: "EMAIL",
-        status: "SIMULATED",
-        provider: isConfigured ? "gmail_api_preview_dry_run" : "gmail_api_unconfigured",
-        recipient: options.recipient,
-        providerMessageId: `sim-gmail-${options.payload?.orderNumber || "preview"}-${Date.now()}`,
-        renderedContent: options.html,
-        subject: options.subject,
-        error: isConfigured ? null : gate.reason,
-      };
     }
+  } else {
+    // 2. CUSTOMER TRANSACTIONAL DISPATCH POLICY
+    // In Preview / Development / Dry Run: real customer inboxes are strictly protected via simulation
+    if (isVercelPreview || isDev || isDryRun) {
+      const allowedTestEmail = process.env.ALLOWED_TEST_EMAIL?.trim()?.toLowerCase();
+      const isApprovedTester =
+        Boolean(allowedTestEmail) &&
+        options.recipient.trim().toLowerCase() === allowedTestEmail;
 
-    console.log(
-      `[Gmail API Gate] Preview live transmission authorized for allowlisted recipient: ${options.recipient}`
-    );
+      if (!isApprovedTester) {
+        console.log(
+          `[Gmail API Gate] Preview/Dev mode: customer email to "${options.recipient}" was safely simulated (dry-run). Real customer was not contacted.`
+        );
+        return {
+          channel: "EMAIL",
+          status: "SIMULATED",
+          provider: "gmail_api_preview_simulated",
+          recipient: options.recipient,
+          providerMessageId: `sim-gmail-${options.payload?.orderNumber || "job"}-${Date.now()}`,
+          renderedContent: options.html,
+          subject: options.subject,
+          error: null,
+        };
+      }
+
+      console.log(
+        `[Gmail API Gate] Preview/Dev live customer delivery permitted for approved test recipient: ${options.recipient}`
+      );
+    }
   }
 
-  // PRODUCTION CHECK: Must be configured
+  // PRODUCTION & AUTHORIZED TRANSMISSION CHECK
   if (!isConfigured) {
     return {
       channel: "EMAIL",
@@ -327,7 +493,7 @@ export async function sendEmailViaGmailApi(options: {
       providerMessageId: null,
       renderedContent: options.html,
       subject: options.subject,
-      error: "Gmail API credentials are not configured on the server.",
+      error: "Gmail API credentials (client ID, client secret, refresh token) are not configured on the server.",
     };
   }
 
@@ -506,13 +672,14 @@ export async function executeAdminGmailPreviewTest(options: {
 </body>
 </html>`;
 
-  // Dispatch via Gmail API
+  // Dispatch via Gmail API with explicit PREVIEW_DIAGNOSTIC type
   const deliveryResult = await sendEmailViaGmailApi({
     recipient: targetRecipient,
     subject,
     text,
     html,
     isStaffAuthorized: true,
+    dispatchType: "PREVIEW_DIAGNOSTIC",
   });
 
   const success = deliveryResult.status === "SENT";

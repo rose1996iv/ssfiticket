@@ -15,11 +15,12 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 
 ### Key Audit Findings & Remediations Applied:
 1. **Mock Payment Fail-Closed Enforcement**: Hardened `isMockPaymentMode()` in `src/lib/config/payment.ts` and server actions (`publicOrder.ts`, `operations.ts`) so that if `VERCEL_ENV === "production"`, mock payments and test references are strictly and unconditionally forbidden, even in the event of accidental environment misconfiguration.
-2. **Customer Email Delivery Fail-Closed Hardening**: Enforced that in Production (`VERCEL_ENV === "production"`), customer email delivery operates exclusively in live mode via the Google OAuth 2.0 Gmail REST API. The simulation fallback banner is strictly suppressed in Production.
-3. **WhatsApp Dispatch Database Integrity**: Corrected WhatsApp Click-to-Chat status tracking so that manual confirmation transitions `ticket_deliveries.status` to `DELIVERED` (a valid PostgreSQL enum value in `public.delivery_status`), eliminating enum syntax exceptions while preserving full audit metadata.
-4. **Public Verification Route Completeness**: Created `src/app/verify/page.tsx` as an interactive public search portal, eliminating 404 responses when visitors navigate directly to `/verify`.
-5. **Zero Disruption to Approved UI/UX**: The approved burgundy (`#7c1619`) and gold (`#d6a23b`) visual design, countdown components, marketing copy, and customer forms remain 100% intact.
-6. **Automated Test Suite**: 208 of 208 unit and integration tests passing (`node --test`), TypeScript check passed cleanly, and Next.js Turbopack build succeeds across all 30 routes.
+2. **Customer Email Delivery Fail-Closed Hardening**: Enforced that in Production (`VERCEL_ENV === "production"`), customer email delivery operates exclusively in live mode via the Google OAuth 2.0 Gmail REST API. The simulation fallback banner is strictly suppressed in Production. API acceptance is accurately labeled "API Accepted", avoiding misleading claims of guaranteed inbox delivery.
+3. **WhatsApp Dispatch Semantics & Database Integrity**: Corrected WhatsApp Click-to-Chat status tracking so that manual confirmation uses supported enum `SENT` with `metadata.manual_send_confirmed = true` and `metadata.whatsapp_action = "MANUALLY_CONFIRMED"`. Added duplicate confirmation guard and order status guard (`TICKETS_ISSUED`). UI labels updated to "Manually Confirmed Sent" and "Click-to-Chat Prepared".
+4. **Campaign Schedule Status Synchronization**: Updated `evaluateCampaignSchedule` to accept `UPCOMING` and `LIVE` campaign states, and ensured `buy/page.tsx`, `seller/page.tsx`, and `seller/orders/new/page.tsx` pass evaluated `schedule.scheduleStatus` to `<CampaignCountdown>`.
+5. **Public Verification Route Completeness**: Created `src/app/verify/page.tsx` as an interactive public search portal, eliminating 404 responses when visitors navigate directly to `/verify`.
+6. **Zero Disruption to Approved UI/UX**: The approved burgundy (`#7c1619`) and gold (`#d6a23b`) visual design, countdown components, marketing copy, and customer forms remain 100% intact.
+7. **Automated Test Suite**: 210 of 210 unit and integration tests passing (`node --test`), TypeScript check passed cleanly, and Next.js Turbopack build succeeds across all 30 routes.
 
 ---
 
@@ -52,11 +53,13 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 
 ## Area 2: Ticket Issuance & Database Integrity
 
-### 2.1 Atomic Ticket Number Assignment
+### 2.1 Atomic Ticket Number Assignment & Concurrency Protection
 - **Sequence**: Database sequence `ssfi_ticket_number_sequence` with `maxvalue 999999`.
 - **Formatting**: 6-digit padded string formatted as `SSFI-000001` through `SSFI-999999`.
-- **Atomicity**: Executed inside `verify_payment_and_issue` PostgreSQL function within a single transaction. Tickets are generated using `generate_series`, guaranteeing zero gaps and zero duplicates.
-- **Capacity Decrement**: Campaign `sold_ticket_count` is atomically incremented by ticket quantity; orders exceeding remaining capacity are rejected.
+- **Atomicity & Row Locks**: Executed inside `verify_payment_and_issue` PostgreSQL function within a single ACID transaction. The order is locked via `SELECT * FROM orders WHERE id = ... FOR UPDATE`, and the campaign is locked via `SELECT * FROM campaigns WHERE id = ... FOR UPDATE`, serializing capacity decrements and ticket issuance across concurrent operations.
+- **Idempotency Guard**: `v_order.status NOT IN ('PAYMENT_VERIFIED')` ensures an order cannot be verified or have tickets minted multiple times.
+- **Capacity Decrement**: Campaign `sold_ticket_count` is atomically incremented by ticket quantity under row lock; orders exceeding remaining capacity are strictly rejected with an exception.
+- **Gap & Rollback Behavior**: Sequence values strictly monotonically increase. In PostgreSQL, sequences do not roll back upon transaction abort to prevent deadlocks across concurrent connections. However, during normal operations, `nextval` is only invoked after all payment, actor, and capacity assertions have passed, guaranteeing gapless allocation during standard operation. In the event of an abort, duplicate allocation is mathematically impossible due to the database constraint `UNIQUE(ticket_number)`.
 
 ### 2.2 Security & Access Controls (RLS)
 - **Least Privilege Grants**:
@@ -102,11 +105,13 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 - **Ticket Audit Links**: Lists every allocated ticket with direct verification URL: `• *SSFI-000001*: https://ssfiticket.vercel.app/verify/SSFI-000001`
 - **Official Channels**: Links to official SSFI YouTube (`@SenthangStudentsSSFI`) and Facebook (`senthangstudents`).
 
-### 4.3 Database Status Synchronization
+### 4.3 Database Status Synchronization & Delivery Semantics
 - **PostgreSQL Enum Compatibility**: Database column `ticket_deliveries.status` utilizes `public.delivery_status` (`'PENDING'`, `'SENT'`, `'DELIVERED'`, `'FAILED'`, `'SIMULATED'`).
 - **Status Updates**:
-  - Clicking "Send via WhatsApp" records audit log `WHATSAPP_LINK_OPENED` and updates metadata.
-  - Clicking "Mark as Sent" records audit log `TICKET_DELIVERY_MANUALLY_SENT` and updates `ticket_deliveries.status` to `DELIVERED` with `metadata.whatsapp_action = "MANUALLY_SENT"`.
+  - Clicking "Open WhatsApp Chat (Free)" invokes `prepareWhatsAppTicketDelivery` and `recordWhatsAppOpenedAction`, recording audit log `WHATSAPP_LINK_OPENED` and setting `metadata.whatsapp_action = "WHATSAPP_LINK_OPENED"`.
+  - Clicking "Confirm Manually Sent" invokes `recordWhatsAppManuallySentAction`, transitioning `ticket_deliveries.status` to `SENT` with `metadata.manual_send_confirmed = true` and `metadata.whatsapp_action = "MANUALLY_CONFIRMED"`. Status `DELIVERED` is strictly reserved for automated webhook receipts.
+  - UI displays "Manually Confirmed Sent" when confirmed, "WhatsApp Link Opened" when link was opened, and "Click-to-Chat Prepared" when pending.
+  - Email API response displays "API Accepted" by Gmail REST API, avoiding misleading claims of guaranteed inbox delivery.
 
 ---
 
@@ -149,6 +154,7 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 
 ### 7.2 Automation Architecture (Vercel Hobby Plan Compatibility)
 - **Pre-Flight On-Demand Synchronization**: Order creation RPCs (`create_seller_order`) and server actions (`publicOrder.ts`, `operations.ts`) invoke `process_scheduled_campaign_transitions()` prior to order creation. Transitions occur dynamically upon visitor requests, independent of external cron reliability.
+- **Campaign Countdown Schedule Evaluation**: `evaluateCampaignSchedule` evaluates opening and closing timestamps against Asia/Kolkata timezone. The evaluated status (`schedule.scheduleStatus`) is passed directly to `<CampaignCountdown>`, ensuring the countdown accurately displays "Ticket Sales Open In" counting down to 1 November 2026, 00:00 IST without discrepancies.
 - **Cron API Endpoint**: `/api/cron/campaign-schedule` supports automated triggers from Vercel Cron or GitHub Actions. Protected in Production by `CRON_SECRET` authorization header.
 
 ---
@@ -189,3 +195,4 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 | 8. Environment Configuration | Dual project separation | Fully documented & verified | **READY** |
 
 **OVERALL READINESS STATUS: PRODUCTION RELEASE CANDIDATE READY FOR OWNER SIGN-OFF**
+

@@ -120,6 +120,21 @@ export async function recordWhatsAppOpenedAction(orderId: string) {
   const admin = createSupabaseAdminClient();
   const user = await getCurrentUser();
 
+  // Guard: Order must exist and tickets must be issued
+  const { data: order, error: orderErr } = await admin
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderErr || !order) {
+    throw new Error("Order not found for WhatsApp action.");
+  }
+
+  if (order.status !== "TICKETS_ISSUED") {
+    throw new Error("Cannot record WhatsApp delivery: Tickets have not been issued for this order.");
+  }
+
   try {
     await admin.from("audit_logs").insert({
       actor_user_id: user?.id || null,
@@ -134,26 +149,36 @@ export async function recordWhatsAppOpenedAction(orderId: string) {
     });
 
     // Update ticket_deliveries record if present
-    // Store link opened state in metadata and timestamp to ensure full PostgreSQL enum compatibility
     const { data: existingDelivery } = await admin
       .from("ticket_deliveries")
-      .select("metadata")
+      .select("status, metadata")
       .eq("order_id", orderId)
       .eq("channel", "WHATSAPP")
       .maybeSingle();
 
     const currentMetadata = (existingDelivery?.metadata as Record<string, unknown>) || {};
+    const isAlreadyManuallySent =
+      existingDelivery?.status === "SENT" &&
+      Boolean(currentMetadata.manual_send_confirmed);
+
+    // If already confirmed sent, do not overwrite manual confirmation or revert status
+    const updatedMetadata = isAlreadyManuallySent
+      ? {
+          ...currentMetadata,
+          reopened_at: new Date().toISOString(),
+        }
+      : {
+          ...currentMetadata,
+          whatsapp_action: "WHATSAPP_LINK_OPENED",
+          opened_at: new Date().toISOString(),
+          opened_by: user?.email || "staff",
+        };
 
     await admin
       .from("ticket_deliveries")
       .update({
         last_attempt_at: new Date().toISOString(),
-        metadata: {
-          ...currentMetadata,
-          whatsapp_action: "WHATSAPP_LINK_OPENED",
-          opened_at: new Date().toISOString(),
-          opened_by: user?.email || "staff",
-        },
+        metadata: updatedMetadata,
       })
       .eq("order_id", orderId)
       .eq("channel", "WHATSAPP");
@@ -169,10 +194,47 @@ export async function recordWhatsAppOpenedAction(orderId: string) {
 
 /**
  * Records when the staff member or seller manually confirms sending the WhatsApp message.
+ * Updates ticket_deliveries to SENT (supported PostgreSQL enum) with manual confirmation metadata.
  */
-export async function recordWhatsAppManuallySentAction(orderId: string) {
+export async function recordWhatsAppManuallySentAction(orderId: string): Promise<{
+  success: boolean;
+  alreadyConfirmed?: boolean;
+}> {
   const admin = createSupabaseAdminClient();
   const user = await getCurrentUser();
+
+  // Guard: Order must exist and tickets must be issued
+  const { data: order, error: orderErr } = await admin
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderErr || !order) {
+    throw new Error("Order not found for WhatsApp action.");
+  }
+
+  if (order.status !== "TICKETS_ISSUED") {
+    throw new Error("Cannot confirm WhatsApp delivery: Tickets have not been issued for this order.");
+  }
+
+  // Fetch existing delivery
+  const { data: existingDelivery } = await admin
+    .from("ticket_deliveries")
+    .select("status, metadata")
+    .eq("order_id", orderId)
+    .eq("channel", "WHATSAPP")
+    .maybeSingle();
+
+  const currentMetadata = (existingDelivery?.metadata as Record<string, unknown>) || {};
+
+  // Idempotency: Guard against duplicate confirmations
+  if (
+    existingDelivery?.status === "SENT" &&
+    Boolean(currentMetadata.manual_send_confirmed)
+  ) {
+    return { success: true, alreadyConfirmed: true };
+  }
 
   try {
     await admin.from("audit_logs").insert({
@@ -188,25 +250,17 @@ export async function recordWhatsAppManuallySentAction(orderId: string) {
       },
     });
 
-    // Update ticket_deliveries to DELIVERED (valid PostgreSQL enum) with full manual confirmation metadata
-    const { data: existingDelivery } = await admin
-      .from("ticket_deliveries")
-      .select("metadata")
-      .eq("order_id", orderId)
-      .eq("channel", "WHATSAPP")
-      .maybeSingle();
-
-    const currentMetadata = (existingDelivery?.metadata as Record<string, unknown>) || {};
-
+    // Update ticket_deliveries to SENT (valid PostgreSQL enum) with manual confirmation metadata
     await admin
       .from("ticket_deliveries")
       .update({
-        status: "DELIVERED",
+        status: "SENT",
         sent_at: new Date().toISOString(),
         last_attempt_at: new Date().toISOString(),
         metadata: {
           ...currentMetadata,
-          whatsapp_action: "MANUALLY_SENT",
+          whatsapp_action: "MANUALLY_CONFIRMED",
+          manual_send_confirmed: true,
           confirmed_at: new Date().toISOString(),
           confirmed_by: user?.email || "staff",
         },
@@ -220,5 +274,5 @@ export async function recordWhatsAppManuallySentAction(orderId: string) {
   revalidatePath(`/admin/orders/${orderId}`);
   revalidatePath(`/seller/orders/${orderId}`);
   revalidatePath(`/buy/order/${orderId}`);
-  return { success: true };
+  return { success: true, alreadyConfirmed: false };
 }

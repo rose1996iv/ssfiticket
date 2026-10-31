@@ -223,10 +223,10 @@ test("Phase 2: Delivery & Gmail API Verification", async (t) => {
 
   await t.test("Delivery status labels accurately reflect semantics without false claims", () => {
     assert.equal(formatDeliveryStatusLabel("PENDING", "EMAIL"), "Email Queued");
-    assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Prepared");
+    assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Click-to-Chat Prepared");
     assert.equal(formatDeliveryStatusLabel("WHATSAPP_LINK_OPENED"), "WhatsApp Link Opened");
     assert.equal(formatDeliveryStatusLabel("MANUALLY_SENT"), "Manually Confirmed Sent");
-    assert.equal(formatDeliveryStatusLabel("SENT"), "Provider/API Accepted");
+    assert.equal(formatDeliveryStatusLabel("SENT"), "API Accepted");
     assert.equal(formatDeliveryStatusLabel("DELIVERED"), "Delivery Confirmed");
     assert.equal(formatDeliveryStatusLabel("SIMULATED"), "Simulated (Preview Test)");
     assert.equal(formatDeliveryStatusLabel("FAILED"), "Failed");

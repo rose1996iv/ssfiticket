@@ -216,8 +216,8 @@ export function evaluateCampaignSchedule(
     };
   }
 
-  // 2. ACTIVE campaign schedule checks
-  if (status === "ACTIVE") {
+  // 2. ACTIVE / UPCOMING / LIVE campaign schedule checks
+  if (status === "ACTIVE" || status === "UPCOMING" || status === "LIVE") {
     // If start_at is in the future
     if (startDate && startDate.getTime() > nowMs) {
       return {

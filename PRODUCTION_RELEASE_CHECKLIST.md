@@ -1,7 +1,7 @@
 # SSFI Fundraising Ticket System — Production Release Checklist
 
-**Document Version:** 1.4.0  
-**Audit Phase:** Complete Production Readiness Audit & Remediation  
+**Document Version:** 1.5.0<br/>
+**Audit Phase:** Final Pre-Production Release Gate Corrections<br/>
 **Evaluation Date:** 2026-10-31  
 **Target Launch Window:** Ticket Sales Start November 1, 2026 | Draw Ceremony December 19, 2026  
 **Status Legend:**
@@ -21,7 +21,7 @@
 | **GitHub Remote** | `https://github.com/rose1996iv/ssfiticket.git` | `[ DONE ]` | Verified by `git remote -v` |
 | **Vercel Project** | `ssfiticket` | `[ DONE ]` | Linked to GitHub `rose1996iv/ssfiticket` |
 | **Vercel Deployment Status** | `READY` (Completed) | `[ DONE ]` | Verified across automated builds |
-| **Target Preview Domain** | `https://ssfiticket-c9cde17q6-rose1996ivs-projects.vercel.app` | `[ DONE ]` | Verified 200 OK |
+| **Exact Preview Domain** | `https://ssfiticket-git-deploy-ssfi-homepage-051907-rose1996ivs-projects.vercel.app` | `[ DONE ]` | Verified 200 OK (Resolved from GitHub check-run metadata) |
 | **Target Database** | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | `[ DONE ]` | RLS, functions, and synthetic records verified |
 | **Production Database** | `ssfiticket` (`fohpqheglxhfdecadhzw`) | `[ UNTOUCHED ]` | Strictly read-only / protected |
 
@@ -32,12 +32,12 @@
 | Area | Scope & Key Remediations | Pre-Audit | Post-Audit | Status |
 | :--- | :--- | :---: | :---: | :---: |
 | **1. Payment Processing** | Payee `HLAWN THA DAWT`, UPI `6909251270@ptaxis`, `/upi_qr.jpeg`. Enforced `isMockPaymentMode()` fail-closed guard in Production (`VERCEL_ENV === "production"`). Server actions reject test references unconditionally in production. | Mock enabled in preview | Production fail-closed | `[ DONE ]` |
-| **2. Ticket Issuance & DB** | Atomic RPC `verify_payment_and_issue` mints 6-digit tickets from `ssfi_ticket_number_sequence` (`SSFI-000001` format), decrements campaign capacity, enforces RLS least privilege, and writes immutable audit logs. | Operational | Atomic & verified | `[ DONE ]` |
-| **3. Customer Email Delivery** | Direct Google OAuth 2.0 Gmail REST API (`Senthangstudents@gmail.com`). Fail-closed in Production. Suppressed simulation banner in Production. Polished multi-ticket rendering and confirmed draw date (19 Dec 2026). | Preview gate active | Production fail-closed | `[ DONE ]` |
-| **4. WhatsApp Distribution** | 100% Free wa.me Click-to-Chat with direct ticket verification URLs. Enforced PostgreSQL enum compatibility (`status = "DELIVERED"` with `metadata.whatsapp_action = "MANUALLY_SENT"`). | Working via wa.me | Enum hardened | `[ DONE ]` |
+| **2. Ticket Issuance & DB** | Atomic RPC `verify_payment_and_issue` mints 6-digit tickets from `ssfi_ticket_number_sequence` (`SSFI-000001` format), decrements campaign capacity under row locks (`FOR UPDATE`), enforces RLS least privilege, and writes immutable audit logs. | Operational | Atomic & verified | `[ DONE ]` |
+| **3. Customer Email Delivery** | Direct Google OAuth 2.0 Gmail REST API (`Senthangstudents@gmail.com`). Fail-closed in Production. Suppressed simulation banner in Production. Polished multi-ticket rendering and confirmed draw date (19 Dec 2026). Status labeled "API Accepted". | Preview gate active | Production fail-closed | `[ DONE ]` |
+| **4. WhatsApp Distribution** | 100% Free wa.me Click-to-Chat with direct ticket verification URLs. Enforced supported enum `status = "SENT"` with `metadata.manual_send_confirmed = true` and `metadata.whatsapp_action = "MANUALLY_CONFIRMED"`. Added duplicate guard and `TICKETS_ISSUED` order check. UI updated to "Open WhatsApp Chat (Free)", "Confirm Manually Sent", "Click-to-Chat Prepared", and Email "API Accepted". | Working via wa.me | Enum & semantics hardened | `[ DONE ]` |
 | **5. QR Code Verification** | Created public verification index portal `/verify` (`src/app/verify/page.tsx`). Validates `/verify/[ticketNumber]` in real time without exposing customer PII. | Single route only | Portal complete | `[ DONE ]` |
 | **6. Admin & Seller Ops** | Full RBAC (`SUPER_ADMIN`, `ADMIN`, `FUNDRAISING_MANAGER`, `SELLER`). Seller messaging immutability trigger verified. CSV/Excel exports protected with formula injection sanitization. | Active | Verified passing | `[ DONE ]` |
-| **7. Campaign Schedule & Cron** | Campaign launch 1 Nov 2026 00:00 IST; Draw date 19 Dec 2026. On-demand pre-flight synchronization inside order creation guarantees transitions on Vercel Hobby plan. Cron secured with `CRON_SECRET`. | Redundant scheduler | Fully validated | `[ DONE ]` |
+| **7. Campaign Schedule & Cron** | Campaign launch 1 Nov 2026 00:00 IST; Draw date 19 Dec 2026. On-demand pre-flight synchronization inside order creation guarantees transitions on Vercel Hobby plan. Evaluated `schedule.scheduleStatus` passed to `CampaignCountdown`. Cron secured with `CRON_SECRET`. | Redundant scheduler | Fully validated | `[ DONE ]` |
 | **8. Environment Config** | Complete inventory and segregation of Preview (`jiyuiydzsfydjklosvvq`) vs Production (`fohpqheglxhfdecadhzw`) environment variables documented in `PRODUCTION_READINESS_AUDIT.md`. | Verified | Fully documented | `[ DONE ]` |
 
 ---
@@ -79,7 +79,7 @@ Captured across 3 viewports:
 
 | Quality Gate | Command | Result | Status |
 | :--- | :--- | :--- | :---: |
-| **Automated Unit & Integration Tests** | `npm test` | **208 / 208 PASS** (1.82s across 16 test suites) | `[ DONE ]` |
+| **Automated Unit & Integration Tests** | `npm test` | **210 / 210 PASS** (2.02s across 16 test suites) | `[ DONE ]` |
 | **TypeScript Typecheck** | `npm run typecheck` | `tsc --noEmit` exited 0 (Zero errors) | `[ DONE ]` |
 | **ESLint Static Analysis** | `npm run lint` | Next.js flat ESLint exited 0 (Zero errors / warnings) | `[ DONE ]` |
 | **Next.js Production Compilation** | `npm run build` | **30 routes compiled cleanly** in 1554ms via Turbopack | `[ DONE ]` |

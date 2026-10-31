@@ -81,9 +81,9 @@ export function OrderDeliveryCard({
         <div className="flex items-center gap-2">
           <Send className="text-[#7c1619]" size={18} />
           <div>
-            <h2 className="text-base font-bold text-[#35110f]">Automated Ticket Delivery — {orderNumber}</h2>
+            <h2 className="text-base font-bold text-[#35110f]">Ticket Distribution & Delivery — {orderNumber}</h2>
             <p className="text-xs text-[#705a54]">
-              Dispatches ticket confirmation and verification links via official SSFI channels.
+              Dispatches ticket confirmation via Gmail REST API and provides zero-cost wa.me Click-to-Chat for WhatsApp.
             </p>
           </div>
         </div>
@@ -127,7 +127,7 @@ export function OrderDeliveryCard({
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-bold text-[#35110f]">
                 <MessageSquare size={14} className="text-emerald-700" />
-                <span>WhatsApp Delivery</span>
+                <span>WhatsApp (wa.me Manual Chat)</span>
               </span>
 
               {whatsappDelivery ? (
@@ -210,7 +210,7 @@ export function OrderDeliveryCard({
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-bold text-[#35110f]">
                 <Mail size={14} className="text-blue-700" />
-                <span>Email Delivery</span>
+                <span>Email (Gmail API)</span>
               </span>
 
               {emailDelivery ? (

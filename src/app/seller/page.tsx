@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { connection } from "next/server";
 import { SellerReferralCard } from "@/components/seller/SellerReferralCard";
 import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
+import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 
 export const instant = false;
 
@@ -24,6 +25,12 @@ export default async function SellerPage() {
     .select("status, start_at, end_at")
     .eq("public_id", "ssfi-fundraising-lucky-draw")
     .maybeSingle();
+
+  const schedule = evaluateCampaignSchedule(
+    campaign?.status ?? "DRAFT",
+    campaign?.start_at,
+    campaign?.end_at
+  );
 
   const { count: unreadMessagesCount = 0 } = seller
     ? await db
@@ -57,7 +64,7 @@ export default async function SellerPage() {
       {/* Campaign Schedule & Countdown */}
       <div className="mt-6">
         <CampaignCountdown
-          status={campaign?.status ?? "DRAFT"}
+          status={schedule.scheduleStatus}
           startAt={campaign?.start_at ?? null}
           endAt={campaign?.end_at ?? null}
           variant="seller"

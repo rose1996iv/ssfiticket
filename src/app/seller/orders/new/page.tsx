@@ -68,7 +68,7 @@ export default async function NewSalePage() {
       {/* Campaign Schedule & Countdown Banner */}
       <div className="mb-6">
         <CampaignCountdown
-          status={campaign?.status ?? "DRAFT"}
+          status={schedule.scheduleStatus}
           startAt={campaign?.start_at ?? null}
           endAt={campaign?.end_at ?? null}
           variant="seller"

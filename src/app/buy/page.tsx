@@ -174,7 +174,7 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
         {/* Live Campaign Schedule & Countdown Card */}
         <div className="mb-6">
           <CampaignCountdown
-            status={campaign?.status ?? "DRAFT"}
+            status={schedule.scheduleStatus}
             startAt={campaign?.start_at ?? null}
             endAt={campaign?.end_at ?? null}
             variant="customer"

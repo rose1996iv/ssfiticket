@@ -102,7 +102,7 @@ export function WhatsAppTicketDeliveryButton({
               ? "Re-open WhatsApp Chat"
               : isLinkOpened
               ? "Re-open WhatsApp Chat"
-              : "Send via WhatsApp (Free)"}
+              : "Open WhatsApp Chat (Free)"}
           </span>
           <ExternalLink size={13} className="text-[#0b3819]/70" />
         </button>
@@ -119,14 +119,14 @@ export function WhatsAppTicketDeliveryButton({
             ) : (
               <Send size={14} className="text-emerald-700" />
             )}
-            <span>Mark as Sent</span>
+            <span>Confirm Manually Sent</span>
           </button>
         )}
 
         {isManuallySent && (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">
             <CheckCircle2 size={13} />
-            <span>Manually Sent</span>
+            <span>Manually Confirmed Sent</span>
           </span>
         )}
       </div>

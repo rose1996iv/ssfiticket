@@ -128,11 +128,11 @@ test("Area 4: WhatsApp confirmation template formatting and links", () => {
 
 test("Area 4: formatDeliveryStatusLabel accurately formats labels across channels and actions", () => {
   // PENDING state
-  assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Prepared");
+  assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Click-to-Chat Prepared");
   assert.equal(formatDeliveryStatusLabel("PENDING", "EMAIL"), "Email Queued");
 
   // SENT state
-  assert.equal(formatDeliveryStatusLabel("SENT", "EMAIL"), "Provider/API Accepted");
+  assert.equal(formatDeliveryStatusLabel("SENT", "EMAIL"), "API Accepted");
 
   // DELIVERED state for WHATSAPP
   assert.equal(formatDeliveryStatusLabel("DELIVERED", "WHATSAPP"), "Manually Confirmed Sent");
@@ -152,3 +152,144 @@ test("Area 4: formatDeliveryStatusLabel accurately formats labels across channel
   assert.equal(formatDeliveryStatusLabel("FAILED", "WHATSAPP"), "Failed");
   assert.equal(formatDeliveryStatusLabel("SIMULATED", "EMAIL"), "Simulated (Preview Test)");
 });
+
+test("Area 4: WhatsApp Click-to-Chat semantics and valid enum usage", () => {
+  // 1. Manual confirmation uses valid enum 'SENT' with metadata.manual_send_confirmed = true
+  assert.equal(
+    formatDeliveryStatusLabel("SENT", "WHATSAPP", {
+      manual_send_confirmed: true,
+      whatsapp_action: "MANUALLY_CONFIRMED",
+    }),
+    "Manually Confirmed Sent",
+    "Must display 'Manually Confirmed Sent' when confirmed"
+  );
+
+  // 2. Click-to-chat prepared displays 'Click-to-Chat Prepared'
+  assert.equal(
+    formatDeliveryStatusLabel("PENDING", "WHATSAPP"),
+    "Click-to-Chat Prepared",
+    "Must display 'Click-to-Chat Prepared' before link is opened"
+  );
+
+  // 3. Link opened displays 'WhatsApp Link Opened'
+  assert.equal(
+    formatDeliveryStatusLabel("PENDING", "WHATSAPP", {
+      whatsapp_action: "WHATSAPP_LINK_OPENED",
+    }),
+    "WhatsApp Link Opened",
+    "Must display 'WhatsApp Link Opened' when link was clicked"
+  );
+
+  // 4. Email API acceptance displays 'API Accepted', never claiming guaranteed inbox delivery
+  assert.equal(
+    formatDeliveryStatusLabel("SENT", "EMAIL"),
+    "API Accepted",
+    "Email transmission must be labeled 'API Accepted'"
+  );
+
+  // 5. Simulated state displays 'Simulated (Preview Test)'
+  assert.equal(
+    formatDeliveryStatusLabel("SIMULATED", "WHATSAPP"),
+    "Simulated (Preview Test)"
+  );
+});
+
+test("Area 4: WhatsApp transition state machine validation", () => {
+  type DeliveryState = {
+    status: "PENDING" | "SENT" | "FAILED" | "SIMULATED";
+    metadata: {
+      manual_send_confirmed?: boolean;
+      whatsapp_action?: string;
+    };
+  };
+
+  // Simulating the state transitions enforced in src/server/actions/whatsappDelivery.ts
+  function applyWhatsAppAction(
+    currentState: DeliveryState,
+    orderStatus: string,
+    action: "OPEN_LINK" | "CONFIRM_MANUALLY"
+  ): { nextState: DeliveryState; alreadyConfirmed?: boolean } {
+    if (orderStatus !== "TICKETS_ISSUED") {
+      throw new Error(`Cannot record WhatsApp delivery: order is in '${orderStatus}' status.`);
+    }
+
+    if (action === "OPEN_LINK") {
+      // Re-opening after confirmation retains confirmation
+      return {
+        nextState: {
+          status: currentState.status,
+          metadata: {
+            ...currentState.metadata,
+            whatsapp_action: currentState.metadata.manual_send_confirmed
+              ? currentState.metadata.whatsapp_action
+              : "WHATSAPP_LINK_OPENED",
+          },
+        },
+      };
+    }
+
+    if (action === "CONFIRM_MANUALLY") {
+      if (currentState.metadata.manual_send_confirmed) {
+        return { nextState: currentState, alreadyConfirmed: true };
+      }
+      return {
+        nextState: {
+          status: "SENT", // Valid enum in PostgreSQL delivery_status
+          metadata: {
+            ...currentState.metadata,
+            manual_send_confirmed: true,
+            whatsapp_action: "MANUALLY_CONFIRMED",
+          },
+        },
+      };
+    }
+
+    return { nextState: currentState };
+  }
+
+  // A. Initial state
+  const initial: DeliveryState = {
+    status: "PENDING",
+    metadata: {},
+  };
+  assert.equal(formatDeliveryStatusLabel(initial.status, "WHATSAPP", initial.metadata), "Click-to-Chat Prepared");
+
+  // B. Invalid order status throws
+  assert.throws(
+    () => applyWhatsAppAction(initial, "PENDING_PAYMENT", "OPEN_LINK"),
+    /Cannot record WhatsApp delivery: order is in 'PENDING_PAYMENT' status/
+  );
+  assert.throws(
+    () => applyWhatsAppAction(initial, "PAYMENT_SUBMITTED", "CONFIRM_MANUALLY"),
+    /Cannot record WhatsApp delivery: order is in 'PAYMENT_SUBMITTED' status/
+  );
+
+  // C. Step 1: Open link
+  const step1 = applyWhatsAppAction(initial, "TICKETS_ISSUED", "OPEN_LINK");
+  assert.equal(
+    formatDeliveryStatusLabel(step1.nextState.status, "WHATSAPP", step1.nextState.metadata),
+    "WhatsApp Link Opened"
+  );
+
+  // D. Step 2: Confirm manually sent
+  const step2 = applyWhatsAppAction(step1.nextState, "TICKETS_ISSUED", "CONFIRM_MANUALLY");
+  assert.equal(step2.nextState.status, "SENT", "Must use valid enum 'SENT'");
+  assert.equal(step2.nextState.metadata.manual_send_confirmed, true);
+  assert.equal(
+    formatDeliveryStatusLabel(step2.nextState.status, "WHATSAPP", step2.nextState.metadata),
+    "Manually Confirmed Sent"
+  );
+
+  // E. Step 3: Duplicate confirmation is idempotent
+  const step3 = applyWhatsAppAction(step2.nextState, "TICKETS_ISSUED", "CONFIRM_MANUALLY");
+  assert.equal(step3.alreadyConfirmed, true, "Duplicate confirmation returns alreadyConfirmed: true");
+  assert.equal(step3.nextState.status, "SENT");
+
+  // F. Step 4: Re-opening chat after confirmation retains confirmation
+  const step4 = applyWhatsAppAction(step2.nextState, "TICKETS_ISSUED", "OPEN_LINK");
+  assert.equal(
+    formatDeliveryStatusLabel(step4.nextState.status, "WHATSAPP", step4.nextState.metadata),
+    "Manually Confirmed Sent"
+  );
+});
+

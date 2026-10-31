@@ -47,11 +47,11 @@ export interface DeliveryProvider {
  * Formats precise, consistent delivery status labels across all UI views.
  *
  * Recognized labels per SSFI specifications:
- * - "Prepared" (WhatsApp prepared / pending)
+ * - "Click-to-Chat Prepared" (WhatsApp prepared / pending)
  * - "WhatsApp Link Opened" (wa.me link clicked by staff)
  * - "Manually Confirmed Sent" (staff marked WhatsApp message as sent)
  * - "Email Queued" (Email pending transmission)
- * - "Provider/API Accepted" (HTTP 200/API response accepted by Gmail/Resend)
+ * - "API Accepted" (HTTP 200/API response accepted by Gmail/Resend)
  * - "Delivery Confirmed" (webhook confirmation of delivery)
  * - "Failed" (API error or rejection)
  * - "Simulated (Preview Test)" (local preview dry-run)
@@ -61,21 +61,32 @@ export function formatDeliveryStatusLabel(
   channel?: DeliveryChannel,
   metadata?: Record<string, unknown>
 ): string {
-  if (metadata?.whatsapp_action === "MANUALLY_SENT") {
+  if (
+    metadata?.manual_send_confirmed === true ||
+    metadata?.whatsapp_action === "MANUALLY_CONFIRMED" ||
+    metadata?.whatsapp_action === "MANUALLY_SENT" ||
+    status === "MANUALLY_SENT"
+  ) {
     return "Manually Confirmed Sent";
   }
-  if (metadata?.whatsapp_action === "WHATSAPP_LINK_OPENED" && status !== "DELIVERED") {
+  if (
+    (metadata?.whatsapp_action === "WHATSAPP_LINK_OPENED" || status === "WHATSAPP_LINK_OPENED") &&
+    status !== "DELIVERED"
+  ) {
     return "WhatsApp Link Opened";
   }
   switch (status) {
     case "PENDING":
-      return channel === "EMAIL" ? "Email Queued" : "Prepared";
+      return channel === "EMAIL" ? "Email Queued" : "Click-to-Chat Prepared";
     case "WHATSAPP_LINK_OPENED":
       return "WhatsApp Link Opened";
     case "MANUALLY_SENT":
       return "Manually Confirmed Sent";
     case "SENT":
-      return "Provider/API Accepted";
+      if (channel === "WHATSAPP") {
+        return metadata?.manual_send_confirmed ? "Manually Confirmed Sent" : "WhatsApp Link Opened";
+      }
+      return "API Accepted";
     case "DELIVERED":
       return channel === "WHATSAPP" ? "Manually Confirmed Sent" : "Delivery Confirmed";
     case "FAILED":

@@ -2331,11 +2331,11 @@ test("Task 5 & 8: Delivery status nomenclature and Database Separation Verificat
   const { formatDeliveryStatusLabel } = await import("../src/lib/delivery/types.ts");
 
   // Precise labels per Task 8
-  assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Prepared");
+  assert.equal(formatDeliveryStatusLabel("PENDING", "WHATSAPP"), "Click-to-Chat Prepared");
   assert.equal(formatDeliveryStatusLabel("PENDING", "EMAIL"), "Email Queued");
   assert.equal(formatDeliveryStatusLabel("WHATSAPP_LINK_OPENED"), "WhatsApp Link Opened");
   assert.equal(formatDeliveryStatusLabel("MANUALLY_SENT"), "Manually Confirmed Sent");
-  assert.equal(formatDeliveryStatusLabel("SENT"), "Provider/API Accepted");
+  assert.equal(formatDeliveryStatusLabel("SENT"), "API Accepted");
   assert.equal(formatDeliveryStatusLabel("DELIVERED"), "Delivery Confirmed");
   assert.equal(formatDeliveryStatusLabel("FAILED"), "Failed");
   assert.equal(formatDeliveryStatusLabel("SIMULATED"), "Simulated (Preview Test)");

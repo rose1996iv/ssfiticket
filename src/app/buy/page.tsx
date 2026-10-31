@@ -9,7 +9,7 @@ import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
-export const instant = false;
+
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash"],

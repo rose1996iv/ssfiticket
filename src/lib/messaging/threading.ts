@@ -7,7 +7,9 @@ export type BaseMessageItem = {
   archived_at: string | null;
   sender_role?: "ADMIN" | "SELLER";
   parent_message_id?: string | null;
-  recipient_seller_id?: string;
+  recipient_seller_id?: string | null;
+  recipient_seller_code?: string | null;
+  recipient_display_name?: string | null;
   sellers?: { seller_code: string; display_name: string } | null;
   profiles?: { full_name: string; email: string } | null;
 };

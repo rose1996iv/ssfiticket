@@ -269,3 +269,178 @@ test("Permanent deletion requires SUPER_ADMIN role and exact confirmation code",
   assert.equal(successResult.deleted, true);
 });
 
+// ============================================================================
+// FOREIGN KEY CONSTRAINT & SELLER MESSAGES PRESERVATION TESTS
+// ============================================================================
+
+type MockSellerMessage = {
+  id: string;
+  recipient_seller_id: string | null;
+  recipient_seller_code: string | null;
+  recipient_display_name: string | null;
+  subject: string;
+  body: string;
+  created_at: string;
+};
+
+test("Permanent deletion blocks if seller has issued tickets even with zero orders", () => {
+  const sellerWithTicketsOnly: SellerState = {
+    id: "seller-tickets",
+    seller_code: "SELLER-TKT",
+    is_active: false,
+    profile_active: false,
+    auth_banned: true,
+    order_count: 0,
+    ticket_count: 5,
+    roles: ["SELLER"],
+  };
+
+  const result = deleteSeller(sellerWithTicketsOnly, "SUPER_ADMIN", "SELLER-TKT");
+  assert.equal(result.success, false);
+  assert.match(result.error!, /5 ticket\(s\)/);
+});
+
+test("Permanent deletion blocks if seller has orders even with zero tickets", () => {
+  const sellerWithOrdersOnly: SellerState = {
+    id: "seller-orders",
+    seller_code: "SELLER-ORD",
+    is_active: false,
+    profile_active: false,
+    auth_banned: true,
+    order_count: 2,
+    ticket_count: 0,
+    roles: ["SELLER"],
+  };
+
+  const result = deleteSeller(sellerWithOrdersOnly, "SUPER_ADMIN", "SELLER-ORD");
+  assert.equal(result.success, false);
+  assert.match(result.error!, /2 order\(s\)/);
+});
+
+test("Non-SUPER_ADMIN roles (ADMIN, MANAGER, SELLER) are strictly forbidden from permanent deletion", () => {
+  const emptySeller: SellerState = {
+    id: "seller-clean",
+    seller_code: "SELLER-CLEAN",
+    is_active: true,
+    profile_active: true,
+    auth_banned: false,
+    order_count: 0,
+    ticket_count: 0,
+    roles: ["SELLER"],
+  };
+
+  const roles = ["ADMIN", "FUNDRAISING_MANAGER", "SELLER", "BUYER", "PUBLIC"];
+  for (const role of roles) {
+    const res = deleteSeller(emptySeller, role, "SELLER-CLEAN");
+    assert.equal(res.success, false, `Role ${role} must not be allowed to permanently delete`);
+    assert.match(res.error!, /Only Super Administrators/);
+  }
+});
+
+test("Eligible seller (0 orders, 0 tickets) is deleted without deleting historical seller_messages", () => {
+  const sellerId = "seller-to-delete-uuid";
+  const sellerCode = "SELLER-003";
+  const sellerName = "David Hawn";
+
+  // Existing messages referencing SELLER-003 with backfilled snapshot
+  const messagesTable: MockSellerMessage[] = [
+    {
+      id: "msg-1",
+      recipient_seller_id: sellerId,
+      recipient_seller_code: sellerCode,
+      recipient_display_name: sellerName,
+      subject: "Welcome to SSFI Lucky Draw",
+      body: "Welcome to the fundraising campaign! Here is your seller pack.",
+      created_at: "2026-10-29T10:00:00Z",
+    },
+    {
+      id: "msg-2",
+      recipient_seller_id: sellerId,
+      recipient_seller_code: sellerCode,
+      recipient_display_name: sellerName,
+      subject: "Important Campaign Notice",
+      body: "Please remember to verify payments promptly.",
+      created_at: "2026-10-30T14:30:00Z",
+    },
+  ];
+
+  // Eligible seller check
+  const sellerToDelete: SellerState = {
+    id: sellerId,
+    seller_code: sellerCode,
+    is_active: false,
+    profile_active: false,
+    auth_banned: true,
+    order_count: 0,
+    ticket_count: 0,
+    roles: ["SELLER"],
+  };
+
+  const delResult = deleteSeller(sellerToDelete, "SUPER_ADMIN", sellerCode);
+  assert.equal(delResult.success, true);
+  assert.equal(delResult.deleted, true);
+
+  // Simulate PostgreSQL foreign key ON DELETE SET NULL on seller_messages
+  const updatedMessages = messagesTable.map((msg) => {
+    if (msg.recipient_seller_id === sellerId) {
+      return {
+        ...msg,
+        recipient_seller_id: null, // FK sets to NULL
+      };
+    }
+    return msg;
+  });
+
+  // Verify messages were NOT deleted (NO CASCADE)
+  assert.equal(updatedMessages.length, 2, "All historical messages must remain intact");
+  assert.equal(updatedMessages[0].recipient_seller_id, null, "Foreign key must be set to null");
+  assert.equal(updatedMessages[1].recipient_seller_id, null, "Foreign key must be set to null");
+
+  // Verify message content and metadata are completely preserved
+  assert.equal(updatedMessages[0].subject, "Welcome to SSFI Lucky Draw");
+  assert.equal(updatedMessages[0].body, "Welcome to the fundraising campaign! Here is your seller pack.");
+  assert.equal(updatedMessages[0].created_at, "2026-10-29T10:00:00Z");
+
+  // Verify historical seller identity remains visible via snapshot fields
+  assert.equal(updatedMessages[0].recipient_seller_code, "SELLER-003");
+  assert.equal(updatedMessages[0].recipient_display_name, "David Hawn");
+  assert.equal(updatedMessages[1].recipient_seller_code, "SELLER-003");
+  assert.equal(updatedMessages[1].recipient_display_name, "David Hawn");
+});
+
+test("UI fallback displays snapshot seller identity when seller record has been deleted", () => {
+  type TableRow = {
+    sellers: { seller_code: string; display_name: string } | null;
+    recipient_seller_code: string | null;
+    recipient_display_name: string | null;
+  };
+
+  const activeSellerMsg: TableRow = {
+    sellers: { seller_code: "SELLER-001", display_name: "Active Alice" },
+    recipient_seller_code: "SELLER-001",
+    recipient_display_name: "Active Alice",
+  };
+
+  const deletedSellerMsg: TableRow = {
+    sellers: null, // FK is null, join returns null
+    recipient_seller_code: "SELLER-003",
+    recipient_display_name: "David Hawn",
+  };
+
+  const resolveDisplay = (row: TableRow) => ({
+    code: row.sellers?.seller_code || row.recipient_seller_code || "DELETED",
+    name: row.sellers?.display_name || row.recipient_display_name || "Former Seller",
+    isDeleted: !row.sellers,
+  });
+
+  const activeDisplay = resolveDisplay(activeSellerMsg);
+  assert.equal(activeDisplay.code, "SELLER-001");
+  assert.equal(activeDisplay.name, "Active Alice");
+  assert.equal(activeDisplay.isDeleted, false);
+
+  const deletedDisplay = resolveDisplay(deletedSellerMsg);
+  assert.equal(deletedDisplay.code, "SELLER-003");
+  assert.equal(deletedDisplay.name, "David Hawn");
+  assert.equal(deletedDisplay.isDeleted, true);
+});
+

@@ -94,6 +94,8 @@ export async function sendAdminSellerMessage(formData: FormData) {
   // 2. Insert message rows for each verified recipient seller
   const recordsToInsert = activeSellers.map((seller) => ({
     recipient_seller_id: seller.id,
+    recipient_seller_code: seller.seller_code,
+    recipient_display_name: seller.display_name,
     sender_profile_id: user.id,
     sender_role: "ADMIN",
     parent_message_id: null,
@@ -301,6 +303,8 @@ export async function sendSellerToAdminMessage(formData: FormData) {
     .from("seller_messages")
     .insert({
       recipient_seller_id: seller.id,
+      recipient_seller_code: seller.seller_code,
+      recipient_display_name: seller.display_name,
       sender_profile_id: user.id,
       sender_role: "SELLER",
       parent_message_id: parsed.data.parentMessageId || null,
@@ -378,7 +382,7 @@ export async function replyAdminToSellerMessage(formData: FormData) {
   // Verify recipient seller exists and is active
   const { data: recipientSeller, error: sellerCheckErr } = await admin
     .from("sellers")
-    .select("id, is_active, seller_code")
+    .select("id, is_active, seller_code, display_name")
     .eq("id", parsed.data.recipientSellerId)
     .maybeSingle();
 
@@ -394,6 +398,8 @@ export async function replyAdminToSellerMessage(formData: FormData) {
     .from("seller_messages")
     .insert({
       recipient_seller_id: parsed.data.recipientSellerId,
+      recipient_seller_code: recipientSeller.seller_code,
+      recipient_display_name: recipientSeller.display_name,
       sender_profile_id: user.id,
       sender_role: "ADMIN",
       parent_message_id: parsed.data.parentMessageId,

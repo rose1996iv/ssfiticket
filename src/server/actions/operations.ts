@@ -181,6 +181,14 @@ export async function createSale(formData: FormData) {
     throw new Error("Unable to create this sale. Please try again.");
   }
 
+    // Trigger automated Order Created customer notification
+  try {
+    const { enqueueOrderCreatedNotification } = await import("@/lib/delivery/outbox");
+    await enqueueOrderCreatedNotification(data);
+  } catch (emailErr) {
+    console.warn("[Seller Order Notification Warning]", emailErr);
+  }
+
   redirect(`/seller/orders/${data}/payment`);
 }
 
@@ -316,6 +324,14 @@ export async function verifyPayment(formData: FormData) {
       await dispatchOrderTicketDeliveries(paymentRecord.order_id, {
         actorUserId: user.id,
       });
+
+      // Trigger automated Customer Transactional Email notifications (Payment Approved & Tickets Issued)
+      const {
+        enqueuePaymentApprovedNotification,
+        enqueueTicketsIssuedNotification,
+      } = await import("@/lib/delivery/outbox");
+      await enqueuePaymentApprovedNotification(paymentRecord.order_id, user.id);
+      await enqueueTicketsIssuedNotification(paymentRecord.order_id, user.id);
     } catch (deliveryErr) {
       console.warn("[Operations Diagnostic] Automated delivery dispatch warning:", deliveryErr);
     }

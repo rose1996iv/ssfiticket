@@ -125,6 +125,9 @@ export async function adminReissueTicketAction(formData: FormData) {
         resend: true,
         actorUserId: user.id,
       });
+
+      const { enqueueTicketsIssuedNotification } = await import("@/lib/delivery/outbox");
+      await enqueueTicketsIssuedNotification(ticket.order_id, user.id);
     } catch (deliveryErr) {
       console.warn("[Ticket Action Diagnostic] Post-reissue delivery dispatch warning:", deliveryErr);
     }
@@ -162,6 +165,15 @@ export async function adminResendDeliveryAction(formData: FormData) {
     resend: true,
     actorUserId: user.id,
   });
+
+  if (!parsed.data.channel || parsed.data.channel === "EMAIL") {
+    try {
+      const { enqueueTicketsIssuedNotification } = await import("@/lib/delivery/outbox");
+      await enqueueTicketsIssuedNotification(parsed.data.orderId, user.id);
+    } catch (err) {
+      console.warn("[Tickets Action] Resend email outbox warning:", err);
+    }
+  }
 
   revalidatePath("/admin/tickets");
   revalidatePath("/admin/orders");

@@ -293,3 +293,378 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
 
   return { subject, html, text };
 }
+
+
+export type OrderCreatedEmailPayload = {
+  orderNumber: string;
+  orderId: string;
+  customerName: string;
+  ticketQuantity: number;
+  totalAmountInr: number;
+  paymentMethod?: string;
+  paymentInstructions?: {
+    upiId: string;
+    accountName: string;
+    instructions: string;
+  };
+  paymentStatus?: string;
+  orderAccessUrl: string;
+  campaignName: string;
+  createdAtIst: string;
+  supportEmail?: string;
+  supportPhone?: string;
+  sellerAttribution?: string | null;
+  isSimulated?: boolean;
+};
+
+/**
+ * Centrally managed Order Received Email Template.
+ * Dispatched automatically when a customer order is successfully created.
+ */
+export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const safeName = escapeHtml(payload.customerName.trim());
+  const safeOrder = escapeHtml(payload.orderNumber);
+  const safeCampaign = escapeHtml(payload.campaignName);
+  const safeDate = escapeHtml(payload.createdAtIst);
+  const safeUrl = escapeHtml(payload.orderAccessUrl);
+  const paymentMethod = escapeHtml(payload.paymentMethod || "Manual UPI");
+  const paymentStatus = escapeHtml(payload.paymentStatus || "PENDING");
+  const upiId = escapeHtml(payload.paymentInstructions?.upiId || "6909251270@ptaxis");
+  const upiName = escapeHtml(payload.paymentInstructions?.accountName || "HLAWN THA DAWT");
+  const supportEmail = escapeHtml(payload.supportEmail?.trim() || "Senthangstudents@gmail.com");
+  const rawSupportPhone =
+    payload.supportPhone && payload.supportPhone.trim() !== "" && payload.supportPhone !== "+91 98765 43210"
+      ? payload.supportPhone.trim()
+      : null;
+  const safeSupportPhone = rawSupportPhone ? escapeHtml(rawSupportPhone) : null;
+
+  const subject = `[SSFI Lucky Draw] Order Received — ${payload.orderNumber}`;
+
+  const text = [
+    `SSFI LUCKY DRAW — ORDER RECEIVED`,
+    `================================`,
+    `Dear ${payload.customerName},`,
+    ``,
+    `Thank you for your order for the ${payload.campaignName}.`,
+    `We have received your booking and are awaiting your UPI payment verification.`,
+    ``,
+    `Order Details:`,
+    `----------------------------------------`,
+    `Order Reference: ${payload.orderNumber}`,
+    `Tickets Requested: ${payload.ticketQuantity}`,
+    `Total Amount: Rs. ${payload.totalAmountInr.toLocaleString("en-IN")}`,
+    `Payment Status: PENDING`,
+    `Payment Method: ${payload.paymentMethod || "Manual UPI"}`,
+    `Order Placed At (IST): ${payload.createdAtIst}`,
+    payload.sellerAttribution ? `Attributed Seller: ${payload.sellerAttribution}` : null,
+    ``,
+    `Payment Instructions:`,
+    `----------------------------------------`,
+    `1. Transfer exact amount (Rs. ${payload.totalAmountInr.toLocaleString("en-IN")}) using any UPI app.`,
+    `   Official UPI ID: ${payload.paymentInstructions?.upiId || "6909251270@ptaxis"}`,
+    `   Beneficiary Name: ${payload.paymentInstructions?.accountName || "HLAWN THA DAWT"}`,
+    `2. Note your 12-digit Bank Reference Number (UTR).`,
+    `3. Submit your UTR on your order tracking page:`,
+    `   ${payload.orderAccessUrl}`,
+    ``,
+    `Once your payment is approved by SSFI finance, your official lucky draw tickets will be registered and delivered to this email address.`,
+    ``,
+    `Support Contact:`,
+    `Email: ${payload.supportEmail || "Senthangstudents@gmail.com"}${rawSupportPhone ? ` | Phone: ${rawSupportPhone}` : ""}`,
+    `Official Website: https://ssfiticket.vercel.app`,
+  ]
+    .filter((l): l is string => l !== null && l !== undefined)
+    .join("\n");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7f3f0; margin: 0; padding: 24px; color: #35110f; -webkit-font-smoothing: antialiased;">
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #eadbcf; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <!-- Header -->
+    <tr>
+      <td style="background-color: #7c1619; padding: 32px 24px; text-align: center; color: #ffffff;">
+        <p style="margin: 0; font-size: 11px; font-weight: bold; letter-spacing: 2px; color: #f3ce75; text-transform: uppercase;">Senthang Students Fellowship India</p>
+        <h1 style="margin: 8px 0 0; font-size: 24px; font-weight: bold; color: #ffffff;">Order Received</h1>
+        <p style="margin: 4px 0 0; font-family: monospace; font-size: 13px; color: #fceeee;">Order: ${safeOrder}</p>
+      </td>
+    </tr>
+
+    <!-- Body -->
+    <tr>
+      <td style="padding: 32px 28px;">
+        <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.5;">Dear <strong>${safeName}</strong>,</p>
+        <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #594541;">
+          Thank you for participating in the <strong>${safeCampaign}</strong>. We have registered your ticket order and are awaiting your UPI payment verification.
+        </p>
+
+        <!-- Order Summary Box -->
+        <table width="100%" style="background-color: #fffaf7; border: 1px solid #f0e7df; border-radius: 12px; padding: 16px; margin-bottom: 24px; font-size: 13px;">
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Order Reference:</td>
+            <td style="font-weight: bold; font-family: monospace; text-align: right; padding-bottom: 8px;">${safeOrder}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Ticket Quantity:</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${payload.ticketQuantity} Ticket${payload.ticketQuantity > 1 ? "s" : ""}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Total Amount:</td>
+            <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">₹${payload.totalAmountInr.toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Payment Status:</td>
+            <td style="text-align: right; padding-bottom: 8px;">
+              <span style="display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: bold; border-radius: 9999px; background-color: #fef3c7; color: #92400e;">
+                ${paymentStatus}
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Payment Method:</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${paymentMethod}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54;">Order Placed At (IST):</td>
+            <td style="font-weight: bold; text-align: right;">${safeDate}</td>
+          </tr>
+          ${
+            payload.sellerAttribution
+              ? `<tr>
+            <td style="color: #705a54; padding-top: 8px;">Attributed Seller:</td>
+            <td style="font-weight: bold; text-align: right; padding-top: 8px;">${escapeHtml(payload.sellerAttribution)}</td>
+          </tr>`
+              : ""
+          }
+        </table>
+
+        <!-- Payment Instructions Box -->
+        <div style="background-color: #fcf9f5; border: 1px solid #ebd9c8; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+          <h3 style="margin: 0 0 12px; font-size: 14px; font-weight: bold; color: #7c1619; text-transform: uppercase; letter-spacing: 0.5px;">
+            Payment Instructions (Manual UPI)
+          </h3>
+          <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #594541;">
+            To confirm your booking, please transfer <strong>₹${payload.totalAmountInr.toLocaleString("en-IN")}</strong> to the official SSFI account:
+          </p>
+          <table width="100%" style="font-size: 13px; margin-bottom: 14px;">
+            <tr>
+              <td style="color: #705a54; padding: 4px 0;">Official UPI ID:</td>
+              <td style="font-weight: bold; font-family: monospace; color: #7c1619; padding: 4px 0;">${upiId}</td>
+            </tr>
+            <tr>
+              <td style="color: #705a54; padding: 4px 0;">Beneficiary Name:</td>
+              <td style="font-weight: bold; padding: 4px 0;">${upiName}</td>
+            </tr>
+          </table>
+          <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #705a54;">
+            After completing payment, please open your order page and submit your <strong>12-digit Bank Reference Number (UTR)</strong> so our finance team can verify your payment.
+          </p>
+        </div>
+
+        <!-- Action Button -->
+        <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 28px auto;">
+          <tr>
+            <td align="center" style="border-radius: 10px; background-color: #7c1619;">
+              <a href="${safeUrl}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 10px;">
+                View Order &amp; Submit UTR &rarr;
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td style="background-color: #fffaf7; border-top: 1px solid #eadbcf; padding: 20px 24px; text-align: center; font-size: 12px; color: #705a54;">
+        <p style="margin: 0 0 4px;"><strong>Senthang Students Fellowship India (SSFI)</strong></p>
+        <p style="margin: 0 0 6px;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
+          safeSupportPhone ? ` | ${safeSupportPhone}` : ""
+        }</p>
+        <p style="margin: 0; font-size: 11px;">
+          <a href="https://www.youtube.com/@SenthangStudentsSSFI" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600;">Official YouTube</a> &bull;
+          <a href="https://www.facebook.com/senthangstudents" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600; margin-left: 6px;">Official Facebook</a>
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return { subject, html, text };
+}
+
+export type PaymentApprovedEmailPayload = {
+  orderNumber: string;
+  orderId: string;
+  customerName: string;
+  ticketQuantity: number;
+  confirmedAmountInr: number;
+  paymentMethod: string;
+  paymentConfirmedAtIst: string;
+  orderAccessUrl: string;
+  campaignName: string;
+  supportEmail?: string;
+  supportPhone?: string;
+  sellerAttribution?: string | null;
+  isSimulated?: boolean;
+};
+
+/**
+ * Centrally managed Payment Approved Email Template.
+ * Dispatched automatically when an administrator successfully verifies payment.
+ */
+export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailPayload): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const safeName = escapeHtml(payload.customerName.trim());
+  const safeOrder = escapeHtml(payload.orderNumber);
+  const safeCampaign = escapeHtml(payload.campaignName);
+  const safeDate = escapeHtml(payload.paymentConfirmedAtIst);
+  const safeUrl = escapeHtml(payload.orderAccessUrl);
+  const paymentMethod = escapeHtml(payload.paymentMethod);
+  const supportEmail = escapeHtml(payload.supportEmail?.trim() || "Senthangstudents@gmail.com");
+  const rawSupportPhone =
+    payload.supportPhone && payload.supportPhone.trim() !== "" && payload.supportPhone !== "+91 98765 43210"
+      ? payload.supportPhone.trim()
+      : null;
+  const safeSupportPhone = rawSupportPhone ? escapeHtml(rawSupportPhone) : null;
+
+  const subject = `[SSFI Lucky Draw] Payment Approved — Order ${payload.orderNumber}`;
+
+  const text = [
+    `SSFI LUCKY DRAW — PAYMENT CONFIRMATION`,
+    `======================================`,
+    `Dear ${payload.customerName},`,
+    ``,
+    `Great news! Your payment for Order ${payload.orderNumber} has been verified and approved by the SSFI finance team.`,
+    ``,
+    `Payment Details:`,
+    `----------------------------------------`,
+    `Order Reference: ${payload.orderNumber}`,
+    `Confirmed Amount: Rs. ${payload.confirmedAmountInr.toLocaleString("en-IN")}`,
+    `Payment Method: ${payload.paymentMethod}`,
+    `Confirmed At (IST): ${payload.paymentConfirmedAtIst}`,
+    `Ticket Quantity: ${payload.ticketQuantity} Ticket${payload.ticketQuantity > 1 ? "s" : ""}`,
+    payload.sellerAttribution ? `Attributed Seller: ${payload.sellerAttribution}` : null,
+    ``,
+    `Your official lucky draw tickets have been generated and issued. You can view, verify, and save your official tickets online:`,
+    `${payload.orderAccessUrl}`,
+    ``,
+    `Support Contact:`,
+    `Email: ${payload.supportEmail || "Senthangstudents@gmail.com"}${rawSupportPhone ? ` | Phone: ${rawSupportPhone}` : ""}`,
+    `Official Website: https://ssfiticket.vercel.app`,
+  ]
+    .filter((l): l is string => l !== null && l !== undefined)
+    .join("\n");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7f3f0; margin: 0; padding: 24px; color: #35110f; -webkit-font-smoothing: antialiased;">
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #eadbcf; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <!-- Header -->
+    <tr>
+      <td style="background-color: #7c1619; padding: 32px 24px; text-align: center; color: #ffffff;">
+        <p style="margin: 0; font-size: 11px; font-weight: bold; letter-spacing: 2px; color: #f3ce75; text-transform: uppercase;">Senthang Students Fellowship India</p>
+        <h1 style="margin: 8px 0 0; font-size: 24px; font-weight: bold; color: #ffffff;">Payment Approved</h1>
+        <p style="margin: 4px 0 0; font-family: monospace; font-size: 13px; color: #fceeee;">Order: ${safeOrder}</p>
+      </td>
+    </tr>
+
+    <!-- Body -->
+    <tr>
+      <td style="padding: 32px 28px;">
+        <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.5;">Dear <strong>${safeName}</strong>,</p>
+        <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #594541;">
+          We are pleased to inform you that your payment for Order <strong>${safeOrder}</strong> has been verified and confirmed by SSFI finance.
+        </p>
+
+        <!-- Payment Confirmation Box -->
+        <table width="100%" style="background-color: #fffaf7; border: 1px solid #f0e7df; border-radius: 12px; padding: 16px; margin-bottom: 24px; font-size: 13px;">
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Campaign:</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${safeCampaign}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Order Reference:</td>
+            <td style="font-weight: bold; font-family: monospace; text-align: right; padding-bottom: 8px;">${safeOrder}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Confirmed Payment Amount:</td>
+            <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">₹${payload.confirmedAmountInr.toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Payment Method:</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${paymentMethod}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Confirmed Timestamp (IST):</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${safeDate}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54;">Tickets Authorized:</td>
+            <td style="font-weight: bold; text-align: right;">${payload.ticketQuantity} Ticket${payload.ticketQuantity > 1 ? "s" : ""}</td>
+          </tr>
+          ${
+            payload.sellerAttribution
+              ? `<tr>
+            <td style="color: #705a54; padding-top: 8px;">Attributed Seller:</td>
+            <td style="font-weight: bold; text-align: right; padding-top: 8px;">${escapeHtml(payload.sellerAttribution)}</td>
+          </tr>`
+              : ""
+          }
+        </table>
+
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin-bottom: 24px; font-size: 13px; color: #166534;">
+          Your lucky draw tickets have been officially issued with unique sequential numbers and verification QR codes.
+        </div>
+
+        <!-- Action Button -->
+        <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 28px auto;">
+          <tr>
+            <td align="center" style="border-radius: 10px; background-color: #7c1619;">
+              <a href="${safeUrl}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 10px;">
+                View Your Issued Tickets &rarr;
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td style="background-color: #fffaf7; border-top: 1px solid #eadbcf; padding: 20px 24px; text-align: center; font-size: 12px; color: #705a54;">
+        <p style="margin: 0 0 4px;"><strong>Senthang Students Fellowship India (SSFI)</strong></p>
+        <p style="margin: 0 0 6px;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
+          safeSupportPhone ? ` | ${safeSupportPhone}` : ""
+        }</p>
+        <p style="margin: 0; font-size: 11px;">
+          <a href="https://www.youtube.com/@SenthangStudentsSSFI" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600;">Official YouTube</a> &bull;
+          <a href="https://www.facebook.com/senthangstudents" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600; margin-left: 6px;">Official Facebook</a>
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return { subject, html, text };
+}

@@ -4,6 +4,7 @@ import { CalendarClock } from "lucide-react";
 import { requireAnyRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { CampaignControlForm } from "@/components/admin/CampaignControlForm";
+import { AdminCustomerEmailCard } from "@/components/admin/AdminCustomerEmailCard";
 import { AdminGmailPreviewTestCard } from "@/components/admin/AdminGmailPreviewTestCard";
 import {
   CampaignAuditTrail,
@@ -31,6 +32,17 @@ export default async function CampaignSettingsPage() {
   if (campaignErr || !campaign) {
     console.error("[Campaign Settings] Campaign lookup error:", campaignErr);
     notFound();
+  }
+
+  // Fetch initial customer email dashboard state safely
+  let customerEmailData = undefined;
+  try {
+    const { getAdminCustomerEmailDashboardData } = await import(
+      "@/server/actions/emailSettings"
+    );
+    customerEmailData = await getAdminCustomerEmailDashboardData();
+  } catch (emailDataErr) {
+    console.warn("[Campaign Settings] Customer email dashboard data warning:", emailDataErr);
   }
 
   // Fetch recent campaign configuration audit logs safely
@@ -71,7 +83,7 @@ export default async function CampaignSettingsPage() {
         <div className="flex items-center gap-2">
           <CalendarClock className="text-[#7c1619]" size={28} />
           <h1 className="text-2xl font-bold tracking-tight text-[#35110f] sm:text-3xl">
-            Campaign Settings & Schedule
+            Campaign Settings &amp; Schedule
           </h1>
         </div>
         <p className="mt-1 text-sm text-[#705a54]">
@@ -82,7 +94,10 @@ export default async function CampaignSettingsPage() {
       {/* Main Campaign Control Form */}
       <CampaignControlForm campaign={campaign} />
 
-      {/* Gmail API Preview Diagnostic Dispatch */}
+      {/* Production Customer Transactional Email Section */}
+      <AdminCustomerEmailCard initialData={customerEmailData} />
+
+      {/* Gmail API Preview Diagnostic Dispatch (Strict Allowlist Preserved) */}
       <AdminGmailPreviewTestCard />
 
       {/* Administrative Audit Log History Card */}

@@ -189,6 +189,14 @@ export async function createPublicCustomerOrder(formData: FormData) {
     throw new Error("Unable to create your order at this time. Please try again.");
   }
 
+    // 4. Trigger automated Order Created customer notification
+  try {
+    const { enqueueOrderCreatedNotification } = await import("@/lib/delivery/outbox");
+    await enqueueOrderCreatedNotification(orderId);
+  } catch (emailErr) {
+    console.warn("[Public Order Notification Warning]", emailErr);
+  }
+
   redirect(`/buy/order/${orderId}`);
 }
 

@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hasCurrentUserRole } from "@/lib/auth/server";
 
 const loginSchema = z.object({
@@ -26,7 +27,7 @@ export async function login(formData: FormData): Promise<LoginResult | void> {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const { data: authData, error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
     if (error.message.toLowerCase().includes("invalid login credentials")) {
@@ -38,18 +39,36 @@ export async function login(formData: FormData): Promise<LoginResult | void> {
     return { error: error.message || "Unable to sign in with those credentials." };
   }
 
-  // 1. Prioritize administrative and fundraising staff roles
-  const isSuperAdmin = await hasCurrentUserRole("SUPER_ADMIN");
-  const isAdmin = await hasCurrentUserRole("ADMIN");
-  const isManager = await hasCurrentUserRole("FUNDRAISING_MANAGER");
+  // 1. Evaluate application roles in parallel
+  const [isSuperAdmin, isAdmin, isManager, isSeller] = await Promise.all([
+    hasCurrentUserRole("SUPER_ADMIN"),
+    hasCurrentUserRole("ADMIN"),
+    hasCurrentUserRole("FUNDRAISING_MANAGER"),
+    hasCurrentUserRole("SELLER"),
+  ]);
 
+  // 2. Prioritize administrative and fundraising staff roles
   if (isSuperAdmin || isAdmin || isManager) {
     redirect("/admin");
   }
 
-  // 2. Check for seller role
-  const isSeller = await hasCurrentUserRole("SELLER");
+  // 3. Handle seller workspace routing
   if (isSeller) {
+    if (authData?.user) {
+      const admin = createSupabaseAdminClient();
+      const { data: sellerRecord } = await admin
+        .from("sellers")
+        .select("id, is_active")
+        .eq("profile_id", authData.user.id)
+        .maybeSingle();
+
+      if (sellerRecord && !sellerRecord.is_active) {
+        await supabase.auth.signOut();
+        return {
+          error: "Your seller account has been deactivated. Please contact an SSFI administrator.",
+        };
+      }
+    }
     redirect("/seller");
   }
 

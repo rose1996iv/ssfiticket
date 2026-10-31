@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
+import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
+import { formatIstDateTime } from "@/lib/date/timezone";
+import { manualUpiConfig } from "@/lib/config/payment";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
 const publicOrderSchema = z.object({
   sellerCode: z
@@ -12,13 +16,20 @@ const publicOrderSchema = z.object({
     .trim()
     .toUpperCase()
     .regex(SELLER_CODE_REGEX, "Invalid seller referral code format."),
-  name: z.string().trim().min(2, "Name must be at least 2 characters.").max(120),
-  whatsapp: z
-    .string()
-    .trim()
-    .regex(/^[0-9+ -]{7,20}$/, "Enter a valid phone/WhatsApp number."),
-  email: z.string().trim().email("Enter a valid email address.").optional().or(z.literal("")),
+  name: z.string().trim().min(2, "Full name must be at least 2 characters.").max(120, "Name cannot exceed 120 characters."),
+  whatsapp: whatsappSchema,
+  email: emailSchema,
   quantity: z.coerce.number().int().min(1, "Minimum 1 ticket.").max(100, "Maximum 100 tickets per online order."),
+  acceptTerms: z
+    .preprocess(
+      (val) => val === "on" || val === "true" || val === true || val === "1",
+      z.boolean()
+    )
+    .refine((val) => val === true, {
+      message: "You must review and accept the Terms & Conditions to place an order.",
+    })
+    .optional()
+    .default(true),
 });
 
 const publicUtrSchema = z.object({
@@ -37,12 +48,17 @@ const publicUtrSchema = z.object({
  * Strictly verifies the seller referral code on the server before attributing the order.
  */
 export async function createPublicCustomerOrder(formData: FormData) {
+  if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
+    throw new Error("The ticket system is currently undergoing scheduled maintenance. Please check back shortly.");
+  }
+
   const parsed = publicOrderSchema.safeParse({
     sellerCode: formData.get("sellerCode"),
     name: formData.get("name"),
     whatsapp: formData.get("whatsapp"),
     email: formData.get("email"),
     quantity: formData.get("quantity"),
+    acceptTerms: formData.get("acceptTerms") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -76,9 +92,16 @@ export async function createPublicCustomerOrder(formData: FormData) {
   }
 
   // 2. Strict Server-Side Campaign State Verification
+  // Execute scheduled transition check to auto-activate DRAFT or auto-close overdue ACTIVE campaigns
+  try {
+    await admin.rpc("process_scheduled_campaign_transitions");
+  } catch (rpcErr) {
+    console.warn("[Public Order Diagnostic] Pre-flight schedule transition warning:", rpcErr);
+  }
+
   const { data: campaign, error: campaignErr } = await admin
     .from("campaigns")
-    .select("id, status, total_ticket_limit, sold_ticket_count")
+    .select("id, status, total_ticket_limit, sold_ticket_count, start_at, end_at")
     .eq("public_id", "ssfi-fundraising-lucky-draw")
     .maybeSingle();
 
@@ -103,10 +126,24 @@ export async function createPublicCustomerOrder(formData: FormData) {
     if (campaign.status === "DRAFT") {
       throw new Error("Ticket sales have not officially opened yet. This campaign is currently in preview.");
     }
-    if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED") {
+    if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED" || campaign.status === "CANCELLED") {
       throw new Error("Ticket sales for this lucky draw have ended.");
     }
     throw new Error(`Ticket sales are currently not active (campaign status: ${campaign.status}).`);
+  }
+
+  // Schedule Window Check for ACTIVE campaigns
+  const now = new Date();
+  if (campaign.start_at && now < new Date(campaign.start_at)) {
+    const opensAt = formatIstDateTime(campaign.start_at);
+    console.warn(`[Public Order Diagnostic] Order rejected: Sales have not opened yet (opens on ${opensAt}).`);
+    throw new Error(`Ticket sales have not opened yet. Sales are scheduled to open on ${opensAt}.`);
+  }
+
+  if (campaign.end_at && now >= new Date(campaign.end_at)) {
+    const closedAt = formatIstDateTime(campaign.end_at);
+    console.warn(`[Public Order Diagnostic] Order rejected: Sales ended on ${closedAt}.`);
+    throw new Error(`Ticket sales for this lucky draw have ended (closed on ${closedAt}).`);
   }
 
   const remaining = Math.max(0, campaign.total_ticket_limit - campaign.sold_ticket_count);
@@ -119,7 +156,7 @@ export async function createPublicCustomerOrder(formData: FormData) {
     p_seller_id: seller.id,
     p_name: parsed.data.name,
     p_whatsapp: parsed.data.whatsapp,
-    p_email: parsed.data.email || "",
+    p_email: parsed.data.email,
     p_quantity: parsed.data.quantity,
   });
 
@@ -133,6 +170,12 @@ export async function createPublicCustomerOrder(formData: FormData) {
     const errorMsg = orderErr?.message ?? "Failed to create order.";
     if (errorMsg.includes("capacity")) {
       throw new Error("Sorry, the requested quantity exceeds remaining campaign ticket capacity.");
+    }
+    if (errorMsg.includes("have not opened yet")) {
+      throw new Error("Ticket sales have not opened yet for this campaign.");
+    }
+    if (errorMsg.includes("have ended")) {
+      throw new Error("Ticket sales for this lucky draw have ended.");
     }
     if (errorMsg.includes("active campaign not found")) {
       throw new Error("Ticket sales are currently not active for this campaign.");
@@ -149,11 +192,18 @@ export async function createPublicCustomerOrder(formData: FormData) {
   redirect(`/buy/order/${orderId}`);
 }
 
+export type PaymentSubmissionResult = {
+  success: boolean;
+  error?: string;
+  redirectUrl?: string;
+};
+
 /**
  * Submits a manual UPI payment UTR reference for a public customer order.
  * Transitions payment to SUBMITTED for staff manual verification.
+ * Returns structured result to permit friendly inline error handling without throwing unhandled exceptions.
  */
-export async function submitPublicUpiPayment(formData: FormData) {
+export async function submitPublicUpiPayment(formData: FormData): Promise<PaymentSubmissionResult> {
   const parsed = publicUtrSchema.safeParse({
     orderId: formData.get("orderId"),
     utr: formData.get("utr"),
@@ -162,7 +212,30 @@ export async function submitPublicUpiPayment(formData: FormData) {
 
   if (!parsed.success) {
     const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Invalid payment reference.";
-    throw new Error(firstError);
+    return { success: false, error: firstError };
+  }
+
+  // Preserve Preview / Development mock mode: Require explicitly identified test references in mock mode
+  // Fail-closed in Production: Mock validation is strictly forbidden in production
+  const isProd =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
+  if (manualUpiConfig.isMock && !isProd) {
+    const trimmed = parsed.data.utr.trim();
+    if (trimmed.toUpperCase().includes("FAIL")) {
+      return {
+        success: false,
+        error: "Simulated Mock Payment Failure: Test reference was rejected by test validation rules.",
+      };
+    }
+    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmed);
+    if (!isTestRef) {
+      return {
+        success: false,
+        error:
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+      };
+    }
   }
 
   const admin = createSupabaseAdminClient();
@@ -175,28 +248,59 @@ export async function submitPublicUpiPayment(formData: FormData) {
     .maybeSingle();
 
   if (orderLookupErr || !order) {
-    throw new Error("Order not found.");
+    return { success: false, error: "Order not found." };
   }
 
-  if (order.status !== "PENDING_PAYMENT" && order.status !== "PAYMENT_SUBMITTED") {
-    throw new Error("This order is not eligible for payment submission.");
+  if (order.status !== "PENDING_PAYMENT") {
+    if (order.status === "PAYMENT_SUBMITTED") {
+      return {
+        success: false,
+        error: "A payment reference has already been submitted for this order and is currently under review.",
+      };
+    }
+    return { success: false, error: "This order is not eligible for payment submission." };
   }
 
   // Submit manual UPI via RPC
   const { error: rpcErr } = await admin.rpc("submit_manual_upi", {
     p_order_id: parsed.data.orderId,
-    p_utr: parsed.data.utr,
-    p_payer_name: parsed.data.payerName || "",
+    p_utr: parsed.data.utr.trim(),
+    p_payer_name: parsed.data.payerName?.trim() || "",
   });
 
   if (rpcErr) {
-    const message = rpcErr.message;
-    if (message.includes("UTR is already attached")) {
-      throw new Error("This UTR / Transaction Reference has already been submitted for another order.");
+    console.error("[Public Order Diagnostic] RPC submit_manual_upi failed:", {
+      code: rpcErr.code,
+      message: rpcErr.message,
+      hint: rpcErr.hint,
+      orderId: parsed.data.orderId,
+    });
+
+    const message = rpcErr.message || "";
+    if (
+      message.includes("UTR is already attached") ||
+      message.includes("payments_manual_upi_utr_unique") ||
+      rpcErr.code === "23505"
+    ) {
+      return {
+        success: false,
+        error:
+          "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+      };
     }
-    throw new Error("Payment reference submission failed. Please try again.");
+    if (rpcErr.code === "22P02" || message.includes("enum payment_status")) {
+      return {
+        success: false,
+        error:
+          "Payment reference submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied.",
+      };
+    }
+    return { success: false, error: "Payment reference submission failed. Please try again." };
   }
 
   revalidatePath(`/buy/order/${parsed.data.orderId}`);
-  redirect(`/buy/order/${parsed.data.orderId}?submitted=1`);
+  return {
+    success: true,
+    redirectUrl: `/buy/order/${parsed.data.orderId}?submitted=1`,
+  };
 }

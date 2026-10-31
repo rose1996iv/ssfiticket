@@ -4,8 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Banknote,
+  CalendarClock,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   QrCode,
   ShoppingBag,
   Ticket,
@@ -28,6 +30,8 @@ const navItems = [
   { href: "/admin/tickets", label: "Issued Tickets", icon: Ticket },
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/sellers", label: "Sellers & QR Codes", icon: QrCode },
+  { href: "/admin/messages", label: "Seller Messaging", icon: MessageSquare },
+  { href: "/admin/campaign-settings", label: "Campaign Settings", icon: CalendarClock },
 ];
 
 export function AdminSidebar({ userEmail, isOpen, onClose }: Props) {

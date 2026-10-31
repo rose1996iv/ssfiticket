@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { AlertCircle, Gift, ShieldAlert, Sparkles, Ticket } from "lucide-react";
+import { Gift, ShieldAlert, Sparkles, Ticket } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getActiveSellerByReferralCode } from "@/lib/validation/referral";
 import { PublicOrderForm } from "@/components/buy/PublicOrderForm";
+import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
+import { evaluateCampaignSchedule } from "@/lib/date/timezone";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
 export const instant = false;
 
@@ -22,6 +25,43 @@ type PageProps = {
 
 export default async function PublicBuyPage({ searchParams }: PageProps) {
   await connection();
+
+  if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
+    return (
+      <main className="min-h-screen bg-[#fffaf7] px-4 py-12 text-[#35110f] sm:px-6 sm:py-16">
+        <div className="mx-auto max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:p-8">
+          <div className="flex items-center gap-3">
+            <Logo size="sm" />
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-[#7c1619]">SSFI Fundraising</p>
+              <p className="text-[11px] text-[#705a54]">Lucky Draw Portal</p>
+            </div>
+          </div>
+          <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <h2 className="text-base font-semibold">Scheduled Maintenance</h2>
+            <p className="mt-1 text-sm leading-6">
+              Online ticket orders are temporarily paused for scheduled maintenance. Please check back shortly.
+            </p>
+          </div>
+          <div className="mt-6 flex flex-col gap-2">
+            <Link
+              href="/"
+              className="inline-flex justify-center rounded-lg bg-[#7c1619] px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-[#601114]"
+            >
+              Return to Homepage
+            </Link>
+            <Link
+              href="/terms"
+              className="inline-flex justify-center rounded-lg border border-[#eadbcf] px-4 py-2.5 text-sm font-semibold text-[#705a54] hover:bg-[#fbf7f4]"
+            >
+              View Lucky Draw Terms
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const query = await searchParams;
   const rawRef = query.ref;
 
@@ -132,16 +172,21 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
     );
   }
 
-  // Case 3: Valid active seller — check campaign status
+  // Case 3: Valid active seller — check campaign status & schedule
   const seller = validation.seller;
   const db = createSupabaseAdminClient();
   const { data: campaign } = await db
     .from("campaigns")
-    .select("id, name, ticket_price_paise, total_ticket_limit, sold_ticket_count, status")
+    .select("id, name, ticket_price_paise, total_ticket_limit, sold_ticket_count, status, start_at, end_at")
     .eq("public_id", "ssfi-fundraising-lucky-draw")
     .maybeSingle();
 
-  const isCampaignActive = campaign && campaign.status === "ACTIVE";
+  const schedule = evaluateCampaignSchedule(
+    campaign?.status ?? "DRAFT",
+    campaign?.start_at,
+    campaign?.end_at
+  );
+  const isSellingOpen = schedule.isSellingOpen;
   const remainingTickets = campaign
     ? Math.max(0, campaign.total_ticket_limit - campaign.sold_ticket_count)
     : 1000;
@@ -164,26 +209,15 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
       </header>
 
       <div className="mx-auto mt-6 max-w-xl px-4 sm:px-0">
-        {/* Campaign Inactive Notice */}
-        {!isCampaignActive && (
-          <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-950 shadow-xs">
-            <div className="flex items-center gap-2 font-bold text-amber-900">
-              <AlertCircle size={20} className="text-amber-700 shrink-0" />
-              <span>
-                Ticket Orders Closed — Campaign {campaign?.status === "PAUSED" ? "Paused" : "Not Yet Launched"}
-              </span>
-            </div>
-            <p className="mt-2 text-xs leading-relaxed text-amber-800">
-              {campaign?.status === "PAUSED"
-                ? "Fundraising ticket sales are temporarily paused. Orders cannot be accepted at this time. Please check back shortly or contact SSFI administrators."
-                : "This fundraising lucky draw campaign is currently in DRAFT status and is not yet open for public ticket purchases. Online orders and UPI payments will be enabled once administrators officially launch the campaign."}
-            </p>
-            <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 font-mono text-[11px] text-amber-900">
-              <p><span className="font-bold">Campaign Status:</span> {campaign?.status ?? "DRAFT"} | <span className="font-bold">Sales Mode:</span> INACTIVE</p>
-              <p className="text-amber-700 mt-0.5">Attributed seller referral ({seller.seller_code}) is validated and ready for launch.</p>
-            </div>
-          </div>
-        )}
+        {/* Live Campaign Schedule & Countdown Card */}
+        <div className="mb-6">
+          <CampaignCountdown
+            status={schedule.scheduleStatus}
+            startAt={campaign?.start_at ?? null}
+            endAt={campaign?.end_at ?? null}
+            variant="customer"
+          />
+        </div>
 
         {/* Prizes Summary Card */}
         <section className="mb-6 rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
@@ -200,7 +234,7 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
             ))}
             <div className="flex items-center justify-center gap-1 rounded-lg border border-dashed border-[#d6a23b] bg-[#fffaf7] p-2 text-[#7c1619]">
               <Sparkles size={14} className="text-[#d6a23b]" />
-              <span className="font-semibold">₹100 / Ticket</span>
+              <span className="font-semibold">₹{ticketPricePaise / 100} / Ticket</span>
             </div>
           </div>
         </section>
@@ -223,8 +257,9 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
             sellerName={seller.display_name}
             unitPricePaise={ticketPricePaise}
             remainingCapacity={remainingTickets}
-            isCampaignActive={Boolean(isCampaignActive)}
-            campaignStatus={campaign?.status ?? "DRAFT"}
+            isCampaignActive={isSellingOpen}
+            campaignStatus={schedule.scheduleStatus}
+            scheduleReason={schedule.description}
           />
         </section>
       </div>

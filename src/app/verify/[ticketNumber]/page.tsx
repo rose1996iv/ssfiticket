@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { ArrowLeft, CheckCircle2, ShieldAlert } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ShieldAlert, XCircle } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/brand/Logo";
+import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
+import { resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
 
 export const instant = false;
 
@@ -18,11 +20,22 @@ export default async function PublicTicketVerificationPage({ params }: PageProps
   const db = createSupabaseAdminClient();
   const { data: ticket } = await db
     .from("tickets")
-    .select("ticket_number, status, issued_at, campaigns(name)")
+    .select("ticket_number, status, issued_at, void_reason, campaigns(name)")
     .eq("ticket_number", cleanNumber)
     .maybeSingle();
 
-  const isValid = ticket && ticket.status === "ISSUED";
+  const isValid = ticket && (ticket.status === "ISSUED" || ticket.status === "ACTIVE");
+  const isVoid = ticket && ticket.status === "VOID";
+
+  let qrDataUrl: string | null = null;
+  if (isValid) {
+    try {
+      const { baseUrl: envBaseUrl } = resolveEnvironmentAppUrl();
+      qrDataUrl = await generateTicketQrDataUrl(ticket.ticket_number, envBaseUrl);
+    } catch {
+      // Non-fatal QR generation fallback
+    }
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#fffaf7] px-4 py-12 sm:px-6">
@@ -48,6 +61,18 @@ export default async function PublicTicketVerificationPage({ params }: PageProps
               <p className="mt-2 font-mono text-3xl font-bold tracking-tight text-[#7c1619]">
                 {ticket.ticket_number}
               </p>
+
+              {qrDataUrl && (
+                <div className="my-4 flex justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={qrDataUrl}
+                    alt={`Verification QR for ${ticket.ticket_number}`}
+                    className="h-32 w-32 rounded-xl border border-green-200 bg-white p-1 shadow-2xs"
+                  />
+                </div>
+              )}
+
               <div className="mt-4 border-t border-green-200/80 pt-3 text-xs text-green-800">
                 <p>Status: <b>Valid & Eligible for Draw</b></p>
                 {ticket.issued_at && (
@@ -65,6 +90,28 @@ export default async function PublicTicketVerificationPage({ params }: PageProps
             <p className="text-xs text-[#705a54] leading-relaxed">
               This ticket is authentic and officially recorded in the Senthang Students Fellowship India
               fundraising registry.
+            </p>
+          </>
+        ) : isVoid ? (
+          <>
+            <div className="mt-4 flex items-center justify-center gap-1.5 text-xs font-bold text-red-700">
+              <XCircle size={16} />
+              <span>Ticket Entry Voided</span>
+            </div>
+
+            <div className="my-6 rounded-2xl border border-red-200 bg-red-50/70 p-6">
+              <p className="text-xs uppercase tracking-wider text-red-900">Voided Ticket Number</p>
+              <p className="mt-2 font-mono text-2xl font-bold text-red-800 line-through">{cleanNumber}</p>
+              <div className="mt-4 border-t border-red-200 pt-3 text-xs text-red-800">
+                <p>Status: <b>Withdrawn / VOID</b></p>
+                {ticket?.void_reason && (
+                  <p className="mt-1 text-[11px]">Reason: {ticket.void_reason}</p>
+                )}
+              </div>
+            </div>
+
+            <p className="text-xs text-[#705a54] leading-relaxed">
+              This ticket entry has been officially voided by SSFI administration and is not eligible for prize drawings.
             </p>
           </>
         ) : (

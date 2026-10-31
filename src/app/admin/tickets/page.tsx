@@ -1,20 +1,21 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { AlertTriangle, ExternalLink, RefreshCw, Ticket } from "lucide-react";
+import {
+  AlertTriangle,
+  Award,
+  Globe,
+  RefreshCw,
+  Ticket,
+  Users,
+} from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
+import { AdminTicketsTable } from "@/components/admin/AdminTicketsTable";
+import { AdminTicketDetail } from "@/components/admin/TicketActionModal";
 
 export const instant = false;
 
-type TicketRow = {
-  id: string;
-  ticket_number: string;
-  status: string;
-  issued_at: string;
-  orders: { order_number: string } | null;
-  customers: { full_name: string; phone: string } | null;
-  sellers: { display_name: string; seller_code: string } | null;
-};
+type TicketRow = AdminTicketDetail;
 
 export default async function AdminTicketsPage() {
   await connection();
@@ -22,10 +23,10 @@ export default async function AdminTicketsPage() {
   const { data, error } = await db
     .from("tickets")
     .select(
-      "id, ticket_number, status, issued_at, orders(order_number), customers(full_name, phone), sellers(display_name, seller_code)"
+      "id, ticket_number, status, issued_at, voided_at, void_reason, admin_notes, original_ticket_id, reissued_ticket_id, orders(id, order_number, status, payments(id, status, utr_reference)), customers(id, full_name, phone), sellers(id, display_name, seller_code)"
     )
     .order("issued_at", { ascending: false })
-    .limit(100);
+    .limit(200);
 
   if (error) {
     console.error("[Admin Tickets Query Error]", {
@@ -73,98 +74,81 @@ export default async function AdminTicketsPage() {
 
   const tickets = (data ?? []) as unknown as TicketRow[];
 
+  // Metric computations
+  const totalTickets = tickets.length;
+  const sellerAttributed = tickets.filter((t) => t.sellers !== null).length;
+  const directOnline = totalTickets - sellerAttributed;
+  const activeTickets = tickets.filter((t) => t.status === "ISSUED" || t.status === "ACTIVE").length;
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[#f0e7df] pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#35110f] sm:text-3xl">
             Issued Lucky Draw Tickets
           </h1>
           <p className="mt-1 text-xs text-[#705a54]">
-            Immutable tickets allocated upon verified manual UPI payment.
+            Immutable, cryptographically verifiable ticket entries allocated upon verified payment.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs font-semibold text-[#705a54]">
-            {tickets.length} tickets listed
+            {totalTickets} tickets listed
           </span>
           <ExportDropdown resource="tickets" resourceName="Tickets" />
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-[#eadbcf] bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b bg-[#fffaf7] text-xs font-semibold uppercase tracking-wider text-[#705a54]">
-              <th className="p-4">Ticket Number</th>
-              <th className="p-4">Customer</th>
-              <th className="p-4">Order Ref</th>
-              <th className="p-4">Seller Attribution</th>
-              <th className="p-4">Issued At</th>
-              <th className="p-4 text-right">Verification</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#f0e7df]">
-            {tickets.map((ticket) => {
-              const issuedDate = new Date(ticket.issued_at).toLocaleString("en-IN", {
-                day: "numeric",
-                month: "short",
-                hour: "2-digit",
-                minute: "2-digit",
-              });
+      {/* Metric Cards */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#705a54]">Total Tickets</span>
+            <div className="rounded-lg bg-[#fffaf7] p-2 text-[#7c1619]">
+              <Ticket size={18} />
+            </div>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-[#7c1619]">{totalTickets}</p>
+          <span className="text-[11px] text-[#705a54]">Allocated numbers</span>
+        </div>
 
-              return (
-                <tr key={ticket.id} className="transition-colors hover:bg-[#fffaf7]/60">
-                  <td className="p-4">
-                    <span className="inline-block rounded-lg bg-[#fceeee] px-2.5 py-1 font-mono text-sm font-bold text-[#7c1619]">
-                      {ticket.ticket_number}
-                    </span>
-                  </td>
-                  <td className="p-4 font-semibold text-[#35110f]">
-                    {ticket.customers?.full_name}
-                  </td>
-                  <td className="p-4 font-mono text-xs text-[#705a54]">
-                    {ticket.orders?.order_number}
-                  </td>
-                  <td className="p-4 text-xs">
-                    <span className="font-medium text-[#35110f]">{ticket.sellers?.display_name ?? "Direct Online"}</span>
-                    {ticket.sellers?.seller_code && (
-                      <span className="block font-mono text-[10px] text-[#705a54]">
-                        {ticket.sellers?.seller_code}
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-4 text-xs text-[#705a54]">{issuedDate}</td>
-                  <td className="p-4 text-right">
-                    <Link
-                      href={`/verify/${ticket.ticket_number}`}
-                      target="_blank"
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#7c1619] hover:underline"
-                    >
-                      <span>Public Audit</span>
-                      <ExternalLink size={12} />
-                    </Link>
-                  </td>
-                </tr>
-              );
-            })}
+        <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#705a54]">Seller Attributed</span>
+            <div className="rounded-lg bg-[#fffaf7] p-2 text-[#7c1619]">
+              <Users size={18} />
+            </div>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-[#35110f]">{sellerAttributed}</p>
+          <span className="text-[11px] text-[#705a54]">Via seller referrals</span>
+        </div>
 
-            {tickets.length === 0 && (
-              <tr>
-                <td className="p-12 text-center" colSpan={6}>
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#fffaf7] text-[#7c1619]">
-                    <Ticket size={28} />
-                  </div>
-                  <h3 className="mt-4 text-base font-bold text-[#35110f]">No Tickets Issued Yet</h3>
-                  <p className="mt-1 text-xs text-[#705a54]">
-                    Tickets are issued automatically once payments are verified by staff.
-                  </p>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#705a54]">Direct Online</span>
+            <div className="rounded-lg bg-blue-50 p-2 text-blue-700">
+              <Globe size={18} />
+            </div>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-blue-800">{directOnline}</p>
+          <span className="text-[11px] text-blue-700 font-medium">Direct public orders</span>
+        </div>
+
+        <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#705a54]">Active In Draw</span>
+            <div className="rounded-lg bg-green-50 p-2 text-green-700">
+              <Award size={18} />
+            </div>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-green-800">{activeTickets}</p>
+          <span className="text-[11px] text-green-700 font-medium">Eligible for prize draw</span>
+        </div>
       </div>
+
+      {/* Tickets Table with QR & Mutation Actions */}
+      <AdminTicketsTable tickets={tickets as unknown as AdminTicketDetail[]} />
     </div>
   );
 }

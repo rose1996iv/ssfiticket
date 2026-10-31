@@ -17,3 +17,51 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ==========================================================================
+   Subtle Animation System & Glitch Typography (SSFI Theme)
+   ========================================================================== */
+
+@keyframes subtleFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-subtle-fade {
+  animation: subtleFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Restrained glitch effect for designated hero/section titles */
+.glitch-title {
+  position: relative;
+  display: inline-block;
+  transition: text-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.glitch-title:hover {
+  text-shadow: 2px 0 rgba(214, 162, 59, 0.8), -2px 0 rgba(164, 31, 35, 0.8);
+  transform: translate(0.5px, -0.5px);
+}
+
+/* Strict accessibility: respects user preference for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .glitch-title:hover {
+    text-shadow: none !important;
+    transform: none !important;
+  }
+}

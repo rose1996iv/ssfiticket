@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, ArrowRight, Loader2, Minus, Plus, ShieldCheck, Ticket } from "lucide-react";
 import { createPublicCustomerOrder } from "@/server/actions/publicOrder";
 
@@ -11,6 +12,7 @@ type Props = {
   remainingCapacity: number;
   isCampaignActive?: boolean;
   campaignStatus?: string;
+  scheduleReason?: string;
 };
 
 export function PublicOrderForm({
@@ -20,6 +22,7 @@ export function PublicOrderForm({
   remainingCapacity,
   isCampaignActive = true,
   campaignStatus = "ACTIVE",
+  scheduleReason,
 }: Props) {
   const [quantity, setQuantity] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -42,7 +45,10 @@ export function PublicOrderForm({
     setErrorMsg(null);
 
     if (!isCampaignActive) {
-      setErrorMsg(`Ticket sales are currently not active (campaign status: ${campaignStatus}). Orders cannot be submitted at this time.`);
+      setErrorMsg(
+        scheduleReason ??
+          `Ticket sales are currently not active (campaign status: ${campaignStatus}). Orders cannot be submitted at this time.`
+      );
       return;
     }
 
@@ -112,6 +118,8 @@ export function PublicOrderForm({
           <input
             id="customer-name"
             name="name"
+            type="text"
+            autoComplete="name"
             required
             minLength={2}
             maxLength={120}
@@ -122,33 +130,39 @@ export function PublicOrderForm({
 
         <div>
           <label htmlFor="customer-whatsapp" className="block text-sm font-semibold text-[#35110f]">
-            Phone / WhatsApp Number <span className="text-red-500">*</span>
+            WhatsApp Number <span className="text-red-500">*</span>
           </label>
           <input
             id="customer-whatsapp"
             name="whatsapp"
             type="tel"
+            autoComplete="tel"
             required
-            pattern="[0-9+ -]{7,20}"
-            placeholder="e.g. +91 98765 43210"
+            pattern="[0-9+ \-()]{7,25}"
+            placeholder="e.g. +91 91234 56789 or international"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />
           <p className="mt-1 text-xs text-[#705a54]">
-            Your ticket numbers and draw updates will be referenced with this number.
+            Must be active on WhatsApp with country calling code. Digital ticket numbers and draw notices are sent here.
           </p>
         </div>
 
         <div>
           <label htmlFor="customer-email" className="block text-sm font-semibold text-[#35110f]">
-            Email Address <span className="text-xs font-normal text-[#705a54]">(Optional)</span>
+            Email Address <span className="text-red-500">*</span>
           </label>
           <input
             id="customer-email"
             name="email"
             type="email"
+            autoComplete="email"
+            required
             placeholder="your.email@example.com"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />
+          <p className="mt-1 text-xs text-[#705a54]">
+            Official ticket confirmation and scannable verification link will be emailed immediately upon payment approval.
+          </p>
         </div>
       </div>
 
@@ -192,6 +206,30 @@ export function PublicOrderForm({
             <p className="text-2xl font-bold text-[#7c1619]">₹{totalAmountInr}</p>
           </div>
         </div>
+      </div>
+
+      {/* Terms & Conditions Agreement Checkbox */}
+      <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs text-[#705a54]">
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            name="acceptTerms"
+            required
+            className="mt-0.5 h-4 w-4 rounded border-[#eadbcf] text-[#7c1619] focus:ring-[#7c1619]"
+          />
+          <span className="leading-relaxed">
+            I have read and agree to the{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-[#7c1619] underline"
+            >
+              Payment Instructions and Terms &amp; Conditions
+            </Link>
+            . I understand that submitting a UTR is pending admin verification before tickets become valid.
+          </span>
+        </label>
       </div>
 
       {/* Submit Button */}

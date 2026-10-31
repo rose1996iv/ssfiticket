@@ -2,6 +2,14 @@ import Link from "next/link";
 import { ArrowRight, Gift, LogIn, QrCode, ShieldCheck, Sparkles, Ticket } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { HeroBackgroundVideo } from "@/components/home/HeroBackgroundVideo";
+import { PurchaseGuideline } from "@/components/home/PurchaseGuideline";
+import { PaymentInstructionsSection } from "@/components/home/PaymentInstructionsSection";
+import { OfficialSellerDirectory } from "@/components/home/OfficialSellerDirectory";
+import { OfficialContactsSection } from "@/components/home/OfficialContactsSection";
+import { OfficialFooter } from "@/components/home/OfficialFooter";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getPublicSellerDirectory } from "@/server/actions/sellerDirectory";
+import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash Giveaway"],
@@ -11,7 +19,26 @@ const prizes = [
   ["5th Prize", "Mini Soundbox Celebration"],
 ] as const;
 
-export default function Home() {
+export default async function Home() {
+  const db = createSupabaseAdminClient();
+
+  const { data: campaign } = await db
+    .from("campaigns")
+    .select("id, name, status, start_at, end_at, ticket_price_paise, total_ticket_limit, sold_ticket_count")
+    .eq("public_id", "ssfi-fundraising-lucky-draw")
+    .maybeSingle();
+
+  const schedule = evaluateCampaignSchedule(
+    campaign?.status ?? "DRAFT",
+    campaign?.start_at,
+    campaign?.end_at
+  );
+  const isCampaignActive = schedule.isSellingOpen;
+  const ticketPriceInr = campaign?.ticket_price_paise
+    ? campaign.ticket_price_paise / 100
+    : 100;
+  const publicSellers = await getPublicSellerDirectory();
+
   return (
     <main className="min-h-screen bg-[#fffaf7] text-[#35110f]">
       {/* Top Navbar */}
@@ -45,18 +72,18 @@ export default function Home() {
         {/* Decorative Gold Accent Ring */}
         <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full border-[32px] border-[#d6a23b]/20 z-1" />
 
-        <div className="relative z-10 mx-auto max-w-5xl">
+        <div className="relative z-10 mx-auto max-w-5xl animate-subtle-fade">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold tracking-widest uppercase text-[#f3ce75] backdrop-blur-xs">
             <Sparkles size={14} />
             <span>Official Fundraising Campaign</span>
           </div>
 
-          <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl drop-shadow-sm">
+          <h1 className="glitch-title max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl drop-shadow-sm">
             Senthang Students Fellowship India
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#f8e9df] drop-shadow-xs">
             Support student fellowship and education initiatives by participating in the official
-            SSFI Fundraising Lucky Draw.
+            SSFI Fundraising Lucky Draw. Ticket sales commence on 1 November 2026, with the grand lucky draw ceremony on 19 December 2026.
           </p>
 
           <div className="mt-9 flex flex-wrap items-center gap-4">
@@ -77,7 +104,7 @@ export default function Home() {
         <article className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:col-span-1">
           <Ticket className="mb-4 text-[#a41f23]" size={24} aria-hidden="true" />
           <p className="text-xs font-bold uppercase tracking-wider text-[#80635b]">Ticket Price</p>
-          <p className="mt-2 text-4xl font-bold text-[#7c1619]">₹100</p>
+          <p className="mt-2 text-4xl font-bold text-[#7c1619]">₹{ticketPriceInr}</p>
           <p className="mt-3 text-xs leading-5 text-[#705a54]">
             Scan any active seller’s QR code to purchase your tickets securely online via manual UPI.
           </p>
@@ -102,8 +129,23 @@ export default function Home() {
         </article>
       </section>
 
+      {/* Step-by-Step Ticket Purchase Guideline */}
+      <PurchaseGuideline
+        isCampaignActive={isCampaignActive}
+        campaignStatusText={schedule.scheduleStatus}
+      />
+
+      {/* Payment Instructions & Important Information Section */}
+      <PaymentInstructionsSection ticketPriceInr={ticketPriceInr} />
+
+      {/* Official Seller Directory */}
+      <OfficialSellerDirectory sellers={publicSellers} />
+
+      {/* Official Contacts & WhatsApp Support */}
+      <OfficialContactsSection />
+
       {/* Security & Verification Notice */}
-      <section className="mx-auto flex max-w-5xl items-start gap-3 px-6 pb-16 text-xs leading-6 text-[#705a54] sm:px-10">
+      <section className="mx-auto flex max-w-5xl items-start gap-3 px-6 py-12 text-xs leading-6 text-[#705a54] sm:px-10">
         <ShieldCheck className="mt-0.5 shrink-0 text-[#a41f23]" size={20} aria-hidden="true" />
         <p>
           All ticket numbers are securely generated by database sequence upon manual staff
@@ -111,6 +153,9 @@ export default function Home() {
           transactions are used without human oversight.
         </p>
       </section>
+
+      {/* Official Footer with Instagram QR */}
+      <OfficialFooter />
     </main>
   );
 }

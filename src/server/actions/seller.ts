@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { requireAnyRole } from "@/lib/auth/server";
+import { requireAnyRole, requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
 
@@ -166,20 +166,41 @@ export async function createSellerAccount(
 
   try {
     // 7. Ensure profile is fully populated with contact information
-    const { error: profileError } = await admin.from("profiles").upsert(
-      {
+    // Note: The handle_new_user() trigger automatically inserts a public.profiles
+    // row upon auth.users creation. We verify the created profile and ensure
+    // any contact information (such as phone) is cleanly synchronized.
+    const { data: profileRow } = await admin
+      .from("profiles")
+      .select("id, phone")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!profileRow) {
+      // Fallback if the handle_new_user database trigger did not create the row
+      const { error: insertError } = await admin.from("profiles").insert({
         id: userId,
         full_name: fullName,
         email,
         phone: phone || null,
         is_active: true,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
+      });
 
-    if (profileError) {
-      throw new Error(`Profile creation failed: ${profileError.message}`);
+      if (insertError) {
+        throw new Error(`Profile creation failed: ${insertError.message}`);
+      }
+    } else if (phone && profileRow.phone !== phone) {
+      // Synchronize phone number if provided and differing from trigger default
+      const { error: updateError } = await admin
+        .from("profiles")
+        .update({
+          phone,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId);
+
+      if (updateError) {
+        console.warn("[Seller Provisioning] Profile phone sync warning:", updateError.message);
+      }
     }
 
     // 8. Retrieve the SELLER role ID
@@ -262,4 +283,285 @@ export async function createSellerAccount(
       error: message,
     };
   }
+}
+
+export type SellerLifecycleResult =
+  | { success: true; message?: string }
+  | { success: false; error: string };
+
+/**
+ * Deactivates an active seller:
+ * - Requires SUPER_ADMIN, ADMIN, or FUNDRAISING_MANAGER.
+ * - Sets public.sellers.is_active = false.
+ * - Sets public.profiles.is_active = false.
+ * - Suspends Auth user (ban_duration: '876000h') to block new logins and invalidate active sessions.
+ * - Records an audit event.
+ * - Preserves all existing orders, payments, tickets, and referral history.
+ */
+export async function deactivateSellerAccount(sellerId: string): Promise<SellerLifecycleResult> {
+  const actor = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error: sellerLookupErr } = await admin
+    .from("sellers")
+    .select("id, profile_id, seller_code, display_name, is_active")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (sellerLookupErr || !seller) {
+    return { success: false, error: "Seller record not found." };
+  }
+
+  if (!seller.is_active) {
+    return { success: false, error: `Seller "${seller.seller_code}" is already inactive.` };
+  }
+
+  // 1. Transactional update to sellers table
+  const { error: sellerUpdateErr } = await admin
+    .from("sellers")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", sellerId);
+
+  if (sellerUpdateErr) {
+    return { success: false, error: `Failed to deactivate seller: ${sellerUpdateErr.message}` };
+  }
+
+  // 2. Update profile table
+  await admin
+    .from("profiles")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", seller.profile_id);
+
+  // 3. Suspend Auth user to invalidate sessions and block sign-in
+  try {
+    await admin.auth.admin.updateUserById(seller.profile_id, {
+      ban_duration: "876000h",
+    });
+  } catch (authBanErr) {
+    console.warn("[Seller Deactivate Warning] Auth ban non-fatal error:", authBanErr);
+  }
+
+  // 4. Audit Log
+  await admin.from("audit_logs").insert({
+    actor_user_id: actor.id,
+    action: "SELLER_DEACTIVATED",
+    entity_type: "seller",
+    entity_id: sellerId,
+    metadata: {
+      seller_code: seller.seller_code,
+      display_name: seller.display_name,
+      reason: "Administrative deactivation",
+    },
+  });
+
+  revalidatePath("/admin/sellers");
+  revalidatePath("/seller");
+
+  return {
+    success: true,
+    message: `Seller ${seller.seller_code} (${seller.display_name}) deactivated successfully.`,
+  };
+}
+
+/**
+ * Reactivates an inactive seller:
+ * - Requires SUPER_ADMIN, ADMIN, or FUNDRAISING_MANAGER.
+ * - Restores public.sellers.is_active = true and public.profiles.is_active = true.
+ * - Unbans the Auth user (ban_duration: 'none').
+ * - Verifies the SELLER role is assigned.
+ * - Records an audit event.
+ */
+export async function reactivateSellerAccount(sellerId: string): Promise<SellerLifecycleResult> {
+  const actor = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error: sellerLookupErr } = await admin
+    .from("sellers")
+    .select("id, profile_id, seller_code, display_name, is_active")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (sellerLookupErr || !seller) {
+    return { success: false, error: "Seller record not found." };
+  }
+
+  if (seller.is_active) {
+    return { success: false, error: `Seller "${seller.seller_code}" is already active.` };
+  }
+
+  // 1. Verify SELLER role is present
+  const { data: roleRow } = await admin
+    .from("roles")
+    .select("id")
+    .eq("name", "SELLER")
+    .single();
+
+  if (roleRow) {
+    const { data: prRow } = await admin
+      .from("profile_roles")
+      .select("role_id")
+      .eq("profile_id", seller.profile_id)
+      .eq("role_id", roleRow.id)
+      .maybeSingle();
+
+    if (!prRow) {
+      await admin.from("profile_roles").insert({
+        profile_id: seller.profile_id,
+        role_id: roleRow.id,
+      });
+    }
+  }
+
+  // 2. Reactivate sellers record
+  const { error: sellerUpdateErr } = await admin
+    .from("sellers")
+    .update({ is_active: true, updated_at: new Date().toISOString() })
+    .eq("id", sellerId);
+
+  if (sellerUpdateErr) {
+    return { success: false, error: `Failed to reactivate seller: ${sellerUpdateErr.message}` };
+  }
+
+  // 3. Reactivate profile record
+  await admin
+    .from("profiles")
+    .update({ is_active: true, updated_at: new Date().toISOString() })
+    .eq("id", seller.profile_id);
+
+  // 4. Lift Auth ban
+  try {
+    await admin.auth.admin.updateUserById(seller.profile_id, {
+      ban_duration: "none",
+    });
+  } catch (authUnbanErr) {
+    console.warn("[Seller Reactivate Warning] Auth unban non-fatal error:", authUnbanErr);
+  }
+
+  // 5. Audit Log
+  await admin.from("audit_logs").insert({
+    actor_user_id: actor.id,
+    action: "SELLER_REACTIVATED",
+    entity_type: "seller",
+    entity_id: sellerId,
+    metadata: {
+      seller_code: seller.seller_code,
+      display_name: seller.display_name,
+    },
+  });
+
+  revalidatePath("/admin/sellers");
+  revalidatePath("/seller");
+
+  return {
+    success: true,
+    message: `Seller ${seller.seller_code} (${seller.display_name}) reactivated successfully.`,
+  };
+}
+
+/**
+ * Permanently deletes a seller record:
+ * - STRICT: SUPER_ADMIN only.
+ * - BLOCKS deletion if seller has any linked historical orders or tickets.
+ * - Requires explicit confirmation matching the seller code.
+ * - Deletes seller, removes SELLER role, and removes user/profile if no other roles exist.
+ * - Records an audit event.
+ */
+export async function permanentlyDeleteSeller(
+  sellerId: string,
+  confirmationCode: string
+): Promise<SellerLifecycleResult> {
+  const actor = await requireRole("SUPER_ADMIN");
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error: sellerLookupErr } = await admin
+    .from("sellers")
+    .select("id, profile_id, seller_code, display_name")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (sellerLookupErr || !seller) {
+    return { success: false, error: "Seller record not found." };
+  }
+
+  if (confirmationCode.trim().toUpperCase() !== seller.seller_code.trim().toUpperCase()) {
+    return {
+      success: false,
+      error: `Confirmation code "${confirmationCode}" does not match required code "${seller.seller_code}".`,
+    };
+  }
+
+  // Check foreign key dependencies
+  const [ordersCheck, ticketsCheck] = await Promise.all([
+    admin.from("orders").select("id", { count: "exact", head: true }).eq("seller_id", sellerId),
+    admin.from("tickets").select("id", { count: "exact", head: true }).eq("seller_id", sellerId),
+  ]);
+
+  const orderCount = ordersCheck.count ?? 0;
+  const ticketCount = ticketsCheck.count ?? 0;
+
+  if (orderCount > 0 || ticketCount > 0) {
+    return {
+      success: false,
+      error: `Permanent deletion blocked: Seller "${seller.seller_code}" has ${orderCount} associated order(s) and ${ticketCount} issued ticket(s). Deleting this record would corrupt historical business attribution. Please use Deactivate instead.`,
+    };
+  }
+
+  // Check if user has other administrative roles
+  const { data: otherRoles } = await admin
+    .from("profile_roles")
+    .select("role_id, roles(name)")
+    .eq("profile_id", seller.profile_id);
+
+  interface RoleRowItem {
+    roles: { name: string } | null;
+  }
+  const hasStaffRole = ((otherRoles || []) as unknown as RoleRowItem[]).some((r) =>
+    r.roles?.name ? ["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"].includes(r.roles.name) : false
+  );
+
+  // 1. Delete seller record
+  const { error: sellerDelErr } = await admin
+    .from("sellers")
+    .delete()
+    .eq("id", sellerId);
+
+  if (sellerDelErr) {
+    return { success: false, error: `Failed to delete seller record: ${sellerDelErr.message}` };
+  }
+
+  // 2. Remove SELLER role
+  const { data: sellerRole } = await admin.from("roles").select("id").eq("name", "SELLER").single();
+  if (sellerRole) {
+    await admin
+      .from("profile_roles")
+      .delete()
+      .eq("profile_id", seller.profile_id)
+      .eq("role_id", sellerRole.id);
+  }
+
+  // 3. If user has no remaining staff roles, remove profile & auth user
+  if (!hasStaffRole) {
+    await admin.from("profiles").delete().eq("id", seller.profile_id);
+    try {
+      await admin.auth.admin.deleteUser(seller.profile_id);
+    } catch (authDelErr) {
+      console.warn("[Seller Delete Warning] Auth deletion non-fatal error:", authDelErr);
+    }
+  }
+
+  // 4. Audit Log
+  await admin.from("audit_logs").insert({
+    actor_user_id: actor.id,
+    action: "SELLER_PERMANENTLY_DELETED",
+    entity_type: "seller",
+    entity_id: sellerId,
+    metadata: {
+      seller_code: seller.seller_code,
+      display_name: seller.display_name,
+      deleted_by: actor.email,
+    },
+  });
+
+  revalidatePath("/admin/sellers");
+  return { success: true, message: `Seller ${seller.seller_code} permanently deleted.` };
 }

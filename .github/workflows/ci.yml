@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - deploy/ssfi-homepage-preview
   pull_request:
     branches:
       - main
+      - deploy/ssfi-homepage-preview
   workflow_dispatch:
 
 permissions:
@@ -28,8 +30,9 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: "https://ci-placeholder.supabase.co"
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "ci-placeholder-publishable-key"
       NEXT_PUBLIC_APP_URL: "https://ssfiticket.vercel.app"
-      NEXT_PUBLIC_SSFI_UPI_ID: "ssfi@ci-test"
-      NEXT_PUBLIC_SSFI_UPI_DISPLAY_NAME: "SSFI Fundraising"
+      NEXT_PUBLIC_SSFI_UPI_ID: "6909251270@ptaxis"
+      NEXT_PUBLIC_SSFI_UPI_DISPLAY_NAME: "HLAWN THA DAWT"
+      SUPABASE_SERVICE_ROLE_KEY: "ci-placeholder-service-role-key"
 
     steps:
       - name: Checkout repository

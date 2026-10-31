@@ -39,6 +39,10 @@ yarn-error.log*
 .env.production
 !.env.example
 
+# database backups (sensitive data)
+backups/
+*.log
+
 # nested scaffold directory
 /ssfi-fundraising-ticket-system/
 

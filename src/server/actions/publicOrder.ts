@@ -8,6 +8,7 @@ import { SELLER_CODE_REGEX } from "@/lib/validation/referral";
 import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { manualUpiConfig } from "@/lib/config/payment";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
 const publicOrderSchema = z.object({
   sellerCode: z
@@ -47,6 +48,10 @@ const publicUtrSchema = z.object({
  * Strictly verifies the seller referral code on the server before attributing the order.
  */
 export async function createPublicCustomerOrder(formData: FormData) {
+  if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
+    throw new Error("The ticket system is currently undergoing scheduled maintenance. Please check back shortly.");
+  }
+
   const parsed = publicOrderSchema.safeParse({
     sellerCode: formData.get("sellerCode"),
     name: formData.get("name"),

@@ -7,6 +7,7 @@ import { getActiveSellerByReferralCode } from "@/lib/validation/referral";
 import { PublicOrderForm } from "@/components/buy/PublicOrderForm";
 import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
 export const instant = false;
 
@@ -24,6 +25,43 @@ type PageProps = {
 
 export default async function PublicBuyPage({ searchParams }: PageProps) {
   await connection();
+
+  if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
+    return (
+      <main className="min-h-screen bg-[#fffaf7] px-4 py-12 text-[#35110f] sm:px-6 sm:py-16">
+        <div className="mx-auto max-w-lg rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm sm:p-8">
+          <div className="flex items-center gap-3">
+            <Logo size="sm" />
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-[#7c1619]">SSFI Fundraising</p>
+              <p className="text-[11px] text-[#705a54]">Lucky Draw Portal</p>
+            </div>
+          </div>
+          <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <h2 className="text-base font-semibold">Scheduled Maintenance</h2>
+            <p className="mt-1 text-sm leading-6">
+              Online ticket orders are temporarily paused for scheduled maintenance. Please check back shortly.
+            </p>
+          </div>
+          <div className="mt-6 flex flex-col gap-2">
+            <Link
+              href="/"
+              className="inline-flex justify-center rounded-lg bg-[#7c1619] px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-[#601114]"
+            >
+              Return to Homepage
+            </Link>
+            <Link
+              href="/terms"
+              className="inline-flex justify-center rounded-lg border border-[#eadbcf] px-4 py-2.5 text-sm font-semibold text-[#705a54] hover:bg-[#fbf7f4]"
+            >
+              View Lucky Draw Terms
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const query = await searchParams;
   const rawRef = query.ref;
 

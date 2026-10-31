@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - deploy/ssfi-homepage-preview
   pull_request:
     branches:
       - main
+      - deploy/ssfi-homepage-preview
   workflow_dispatch:
 
 permissions:

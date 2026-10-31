@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 import {
   ExportFormat,
   ExportResource,
@@ -48,6 +49,13 @@ export async function GET(request: NextRequest) {
   if (staffRpcErr || !isStaff) {
     return NextResponse.json(
       { error: "Forbidden: Administrative role required to export data." },
+      { status: 403 }
+    );
+  }
+
+  if (!isFeatureEnabled("ENABLE_DETAILED_AUDIT_EXPORT")) {
+    return NextResponse.json(
+      { error: "Detailed audit export is currently disabled by system policy." },
       { status: 403 }
     );
   }

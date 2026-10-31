@@ -9,6 +9,7 @@ import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { dispatchOrderTicketDeliveries } from "@/lib/delivery/service";
 import { manualUpiConfig } from "@/lib/config/payment";
+import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
 const saleSchema = z.object({
   name: z.string().trim().min(2, "Full name must be at least 2 characters.").max(120, "Name cannot exceed 120 characters."),
@@ -62,6 +63,10 @@ async function currentSellerId() {
 }
 
 export async function createSale(formData: FormData) {
+  if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
+    throw new Error("The ticket system is currently undergoing scheduled maintenance. Please check back shortly.");
+  }
+
   const parsed = saleSchema.safeParse({
     name: formData.get("name"),
     whatsapp: formData.get("whatsapp"),

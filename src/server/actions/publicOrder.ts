@@ -43,13 +43,26 @@ const publicUtrSchema = z.object({
   payerName: z.string().trim().max(120).optional(),
 });
 
+export type CreatePublicOrderResult = {
+  success: boolean;
+  error?: string;
+  orderId?: string;
+};
+
 /**
  * Creates an order initiated publicly by a customer scanning a seller's referral QR code.
  * Strictly verifies the seller referral code on the server before attributing the order.
+ * Returns structured result to permit friendly inline error handling without throwing unhandled exceptions.
  */
-export async function createPublicCustomerOrder(formData: FormData) {
+export async function createPublicCustomerOrder(formData: FormData): Promise<CreatePublicOrderResult | never> {
+  const correlationId = crypto.randomUUID();
+
   if (isFeatureEnabled("ENABLE_MAINTENANCE_MODE")) {
-    throw new Error("The ticket system is currently undergoing scheduled maintenance. Please check back shortly.");
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Maintenance mode active at stage=preflight`);
+    return {
+      success: false,
+      error: "The ticket system is currently undergoing scheduled maintenance. Please check back shortly.",
+    };
   }
 
   const parsed = publicOrderSchema.safeParse({
@@ -63,7 +76,8 @@ export async function createPublicCustomerOrder(formData: FormData) {
 
   if (!parsed.success) {
     const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Please check the form inputs.";
-    throw new Error(firstError);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Validation failure at stage=input_validation:`, firstError);
+    return { success: false, error: firstError };
   }
 
   const admin = createSupabaseAdminClient();
@@ -76,19 +90,21 @@ export async function createPublicCustomerOrder(formData: FormData) {
     .maybeSingle();
 
   if (sellerErr) {
-    console.error("[Public Order Diagnostic] Seller lookup failed:", {
+    console.error(`[Public Order Diagnostic] [${correlationId}] Seller lookup error at stage=seller_verification:`, {
       code: sellerErr.code,
       message: sellerErr.message,
     });
-    throw new Error("Unable to verify seller referral code at this time.");
+    return { success: false, error: "Unable to verify seller referral code at this time." };
   }
 
   if (!seller) {
-    throw new Error(`Referral code "${parsed.data.sellerCode}" was not found.`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Seller not found at stage=seller_verification for code:`, parsed.data.sellerCode);
+    return { success: false, error: `Referral code "${parsed.data.sellerCode}" was not found.` };
   }
 
   if (!seller.is_active) {
-    throw new Error(`The seller associated with "${parsed.data.sellerCode}" is currently inactive.`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Inactive seller at stage=seller_verification for code:`, parsed.data.sellerCode);
+    return { success: false, error: `The seller associated with "${parsed.data.sellerCode}" is currently inactive.` };
   }
 
   // 2. Strict Server-Side Campaign State Verification
@@ -96,7 +112,7 @@ export async function createPublicCustomerOrder(formData: FormData) {
   try {
     await admin.rpc("process_scheduled_campaign_transitions");
   } catch (rpcErr) {
-    console.warn("[Public Order Diagnostic] Pre-flight schedule transition warning:", rpcErr);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Pre-flight schedule transition warning at stage=campaign_transition:`, rpcErr);
   }
 
   const { data: campaign, error: campaignErr } = await admin
@@ -106,49 +122,53 @@ export async function createPublicCustomerOrder(formData: FormData) {
     .maybeSingle();
 
   if (campaignErr) {
-    console.error("[Public Order Diagnostic] Campaign lookup failed:", {
+    console.error(`[Public Order Diagnostic] [${correlationId}] Campaign lookup error at stage=campaign_verification:`, {
       code: campaignErr.code,
       message: campaignErr.message,
     });
-    throw new Error("Unable to verify fundraising campaign status. Please try again later.");
+    return { success: false, error: "Unable to verify fundraising campaign status. Please try again later." };
   }
 
   if (!campaign) {
-    console.error("[Public Order Diagnostic] Campaign 'ssfi-fundraising-lucky-draw' not found in database.");
-    throw new Error("Fundraising campaign configuration was not found.");
+    console.error(`[Public Order Diagnostic] [${correlationId}] Campaign 'ssfi-fundraising-lucky-draw' not found at stage=campaign_verification`);
+    return { success: false, error: "Fundraising campaign configuration was not found." };
   }
 
   if (campaign.status !== "ACTIVE") {
-    console.warn(`[Public Order Diagnostic] Order rejected: Campaign status is '${campaign.status}' (must be 'ACTIVE').`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Campaign not active at stage=campaign_verification: '${campaign.status}' (must be 'ACTIVE')`);
     if (campaign.status === "PAUSED") {
-      throw new Error("Ticket sales are temporarily paused. Please check back shortly.");
+      return { success: false, error: "Ticket sales are temporarily paused. Please check back shortly." };
     }
     if (campaign.status === "DRAFT") {
-      throw new Error("Ticket sales have not officially opened yet. This campaign is currently in preview.");
+      return { success: false, error: "Ticket sales have not officially opened yet. This campaign is currently in preview." };
     }
     if (campaign.status === "CLOSED" || campaign.status === "ARCHIVED" || campaign.status === "CANCELLED") {
-      throw new Error("Ticket sales for this lucky draw have ended.");
+      return { success: false, error: "Ticket sales for this lucky draw have ended." };
     }
-    throw new Error(`Ticket sales are currently not active (campaign status: ${campaign.status}).`);
+    return { success: false, error: `Ticket sales are currently not active (campaign status: ${campaign.status}).` };
   }
 
   // Schedule Window Check for ACTIVE campaigns
   const now = new Date();
   if (campaign.start_at && now < new Date(campaign.start_at)) {
     const opensAt = formatIstDateTime(campaign.start_at);
-    console.warn(`[Public Order Diagnostic] Order rejected: Sales have not opened yet (opens on ${opensAt}).`);
-    throw new Error(`Ticket sales have not opened yet. Sales are scheduled to open on ${opensAt}.`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Sales not opened yet at stage=schedule_check (opens: ${opensAt})`);
+    return { success: false, error: `Ticket sales have not opened yet. Sales are scheduled to open on ${opensAt}.` };
   }
 
   if (campaign.end_at && now >= new Date(campaign.end_at)) {
     const closedAt = formatIstDateTime(campaign.end_at);
-    console.warn(`[Public Order Diagnostic] Order rejected: Sales ended on ${closedAt}.`);
-    throw new Error(`Ticket sales for this lucky draw have ended (closed on ${closedAt}).`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Sales ended at stage=schedule_check (closed: ${closedAt})`);
+    return { success: false, error: `Ticket sales for this lucky draw have ended (closed on ${closedAt}).` };
   }
 
   const remaining = Math.max(0, campaign.total_ticket_limit - campaign.sold_ticket_count);
   if (parsed.data.quantity > remaining) {
-    throw new Error(`Sorry, the requested quantity (${parsed.data.quantity}) exceeds remaining campaign capacity (${remaining} tickets available).`);
+    console.warn(`[Public Order Diagnostic] [${correlationId}] Capacity exceeded at stage=capacity_check (requested: ${parsed.data.quantity}, remaining: ${remaining})`);
+    return {
+      success: false,
+      error: `Sorry, the requested quantity (${parsed.data.quantity}) exceeds remaining campaign capacity (${remaining} tickets available).`,
+    };
   }
 
   // 3. Execute order creation RPC with verified seller_id and active campaign
@@ -161,7 +181,7 @@ export async function createPublicCustomerOrder(formData: FormData) {
   });
 
   if (orderErr || !orderId) {
-    console.error("[Public Order Diagnostic] RPC create_seller_order failed:", {
+    console.error(`[Public Order Diagnostic] [${correlationId}] RPC create_seller_order error at stage=rpc_order_creation:`, {
       code: orderErr?.code,
       message: orderErr?.message,
       hint: orderErr?.hint,
@@ -169,32 +189,34 @@ export async function createPublicCustomerOrder(formData: FormData) {
 
     const errorMsg = orderErr?.message ?? "Failed to create order.";
     if (errorMsg.includes("capacity")) {
-      throw new Error("Sorry, the requested quantity exceeds remaining campaign ticket capacity.");
+      return { success: false, error: "Sorry, the requested quantity exceeds remaining campaign ticket capacity." };
     }
     if (errorMsg.includes("have not opened yet")) {
-      throw new Error("Ticket sales have not opened yet for this campaign.");
+      return { success: false, error: "Ticket sales have not opened yet for this campaign." };
     }
     if (errorMsg.includes("have ended")) {
-      throw new Error("Ticket sales for this lucky draw have ended.");
+      return { success: false, error: "Ticket sales for this lucky draw have ended." };
     }
     if (errorMsg.includes("active campaign not found")) {
-      throw new Error("Ticket sales are currently not active for this campaign.");
+      return { success: false, error: "Ticket sales are currently not active for this campaign." };
     }
     if (errorMsg.includes("seller is inactive")) {
-      throw new Error("The attributed seller is currently inactive.");
+      return { success: false, error: "The attributed seller is currently inactive." };
     }
     if (orderErr?.code === "42501" || errorMsg.includes("permission denied")) {
-      throw new Error("Order creation failed due to database authorization restrictions.");
+      return { success: false, error: "Order creation failed due to database authorization restrictions." };
     }
-    throw new Error("Unable to create your order at this time. Please try again.");
+    return { success: false, error: "Unable to create your order at this time. Please try again." };
   }
 
-    // 4. Trigger automated Order Created customer notification
+  console.info(`[Public Order Diagnostic] [${correlationId}] Order created successfully at stage=complete: orderId=${orderId}, quantity=${parsed.data.quantity}`);
+
+  // 4. Trigger automated Order Created customer notification
   try {
     const { enqueueOrderCreatedNotification } = await import("@/lib/delivery/outbox");
     await enqueueOrderCreatedNotification(orderId);
   } catch (emailErr) {
-    console.warn("[Public Order Notification Warning]", emailErr);
+    console.warn(`[Public Order Notification Warning] [${correlationId}]`, emailErr);
   }
 
   redirect(`/buy/order/${orderId}`);

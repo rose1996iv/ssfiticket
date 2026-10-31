@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { connection } from "next/server";
+
+export const instant = false;
 import { ArrowRight, Gift, LogIn, QrCode, ShieldCheck, Sparkles, Ticket } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { HeroBackgroundVideo } from "@/components/home/HeroBackgroundVideo";
@@ -20,6 +23,7 @@ const prizes = [
 ] as const;
 
 export default async function Home() {
+  await connection();
   const db = createSupabaseAdminClient();
 
   const { data: campaign } = await db

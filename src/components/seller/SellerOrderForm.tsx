@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, Loader2, Mail, Minus, Phone, Plus, ShieldCheck, Ticket, User } from "lucide-react";
 import { createSale } from "@/server/actions/operations";
+import { isNextRedirectError } from "@/lib/navigation/redirect";
 
 type Props = {
   sellerName: string;
@@ -67,11 +68,10 @@ export function SellerOrderForm({
       await createSale(formData);
     } catch (err: unknown) {
       setIsSubmitting(false);
+      if (isNextRedirectError(err)) {
+        throw err;
+      }
       if (err instanceof Error) {
-        // Next.js redirect() throws a specific NEXT_REDIRECT error which must bubble up
-        if (err.message === "NEXT_REDIRECT" || "digest" in err) {
-          throw err;
-        }
         setErrorMsg(err.message);
       } else {
         setErrorMsg("Failed to create sale. Please try again.");

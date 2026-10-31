@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Eye, EyeOff, HelpCircle, Loader2, Lock, Mail, ShieldAlert } from "lucide-react";
 import { login } from "@/server/actions/auth";
+import { isNextRedirectError } from "@/lib/navigation/redirect";
 import { Logo } from "@/components/brand/Logo";
 
 export function LoginForm() {
@@ -28,7 +29,7 @@ export function LoginForm() {
       }
     } catch (err: unknown) {
       // In Next.js, redirect() throws an internal NEXT_REDIRECT error which must bubble up
-      if (err instanceof Error && (err.message === "NEXT_REDIRECT" || "digest" in err)) {
+      if (isNextRedirectError(err)) {
         throw err;
       }
       setIsSubmitting(false);

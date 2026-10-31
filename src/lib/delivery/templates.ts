@@ -26,7 +26,7 @@ export function resolveDeliveryBaseUrl(payload: DeliveryPayload): string {
       // Safety guard: If ticket payload is marked simulated, strictly forbid production URL
       if (payload.isSimulated && parsedOrigin.includes("ssfiticket.vercel.app")) {
         const env = resolveEnvironmentAppUrl();
-        return env.isProduction ? "https://preview.ssfiticket.internal" : env.baseUrl;
+        return env.baseUrl.includes("ssfiticket.vercel.app") ? "https://preview.ssfiticket.internal" : env.baseUrl;
       }
       return parsedOrigin;
     } catch {
@@ -35,7 +35,7 @@ export function resolveDeliveryBaseUrl(payload: DeliveryPayload): string {
   }
 
   const env = resolveEnvironmentAppUrl();
-  if (payload.isSimulated && env.isProduction) {
+  if (payload.isSimulated && (env.isProduction || env.baseUrl.includes("ssfiticket.vercel.app"))) {
     return "https://preview.ssfiticket.internal";
   }
   return env.baseUrl;

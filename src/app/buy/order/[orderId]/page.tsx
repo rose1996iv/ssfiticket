@@ -29,7 +29,10 @@ type OrderData = {
   total_amount_paise: number;
   status: string;
   created_at: string;
-  customers: { full_name: string; whatsapp_number: string; email?: string | null }[];
+  customers:
+    | { full_name: string; whatsapp_number: string; email?: string | null }[]
+    | { full_name: string; whatsapp_number: string; email?: string | null }
+    | null;
   sellers: { display_name: string; seller_code: string } | null;
   payments: {
     id: string;
@@ -73,8 +76,16 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const deliveries = rawDeliveries as Array<{ channel: string; status: string; sent_at: string | null }>;
 
   const order = data as unknown as OrderData;
-  const payment = order.payments[0];
-  const customer = order.customers[0];
+  const rawPayments = order.payments as unknown;
+  const payment = (Array.isArray(rawPayments) ? rawPayments[0] : rawPayments) as
+    | OrderData["payments"][number]
+    | undefined
+    | null;
+  const rawCustomer = order.customers as unknown;
+  const customer = (Array.isArray(rawCustomer) ? rawCustomer[0] : rawCustomer) as
+    | { full_name?: string; whatsapp_number?: string; email?: string | null }
+    | undefined
+    | null;
   const seller = order.sellers;
   const totalInr = order.total_amount_paise / 100;
 

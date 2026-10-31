@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowRight, Loader2, Minus, Plus, ShieldCheck, Ticket } from "lucide-react";
 import { createPublicCustomerOrder } from "@/server/actions/publicOrder";
+import { isNextRedirectError } from "@/lib/navigation/redirect";
 
 type Props = {
   sellerCode: string;
@@ -60,14 +61,18 @@ export function PublicOrderForm({
     formData.set("sellerCode", sellerCode);
 
     try {
-      await createPublicCustomerOrder(formData);
+      const res = await createPublicCustomerOrder(formData);
+      if (res && !res.success) {
+        setIsSubmitting(false);
+        setErrorMsg(res.error || "Failed to place order. Please try again.");
+        return;
+      }
     } catch (err: unknown) {
+      if (isNextRedirectError(err)) {
+        throw err;
+      }
       setIsSubmitting(false);
       if (err instanceof Error) {
-        // Next.js redirect() throws a specific NEXT_REDIRECT error which should not be caught as failure
-        if (err.message === "NEXT_REDIRECT" || "digest" in err) {
-          throw err;
-        }
         setErrorMsg(err.message);
       } else {
         setErrorMsg("Failed to place order. Please try again.");

@@ -166,44 +166,38 @@ This report documents all code-level remediations executed during the Production
 
 ---
 
-### Remediation 7: Database Preflight IPv6 Root Cause Resolution & Migration Inventory
+### Remediation 7: Database Preflight IPv6 Root Cause Resolution & Migration Preflight Standards
 
 - **Risk Level**: **HIGH (P1 Operational / Migration Safety)**
 - **Problem Identified**:
   - Earlier attempts to execute `supabase migration list --linked` or `supabase db push --dry-run` failed with:
     `DbConfigIpv6Error: IPv6 is not supported on your current network`
   - Root Cause: Supabase CLI direct database connections attempt to resolve direct PostgreSQL port 5432 over IPv6. On local development workstations without native IPv6 routing, the connection is refused. In contrast, the HTTPS PostgREST / Admin API client operates seamlessly over IPv4.
-  - Previous instructions inappropriately advised the owner to execute raw SQL in the Supabase SQL editor, which bypasses migration tracking and corrupts `supabase_migrations.schema_migrations`.
+  - Earlier reports mistakenly suggested using the pooler port 6543 (which is the Transaction Pooler, intended for short-lived client traffic, and does not support session-level features or multi-statement DDL migrations) and assumed which migrations were pending.
 - **Remediation Details**:
-  - Reconciled all 11 local migration files and 3 auxiliary scripts in `supabase/migrations/`:
-    1. `202610270001_phase2_core.sql`
-    2. `202610270002_phase3_operations.sql`
-    3. `202610280001_phase4_seller_referrals.sql`
-    4. `202610290001_phase5_campaign_schedule.sql`
-    5. `202610290002_phase6_seller_messages.sql`
-    6. `202610290003_phase7_campaign_auto_scheduler.sql`
-    7. `202610290004_phase8_ticket_lifecycle_and_delivery.sql`
-    8. `202610290005_audit_logs_service_role_permission.sql`
-    9. `202610290006_fix_status_transition_triggers.sql`
-    10. `202610290007_bidirectional_seller_messages.sql`
-    11. `202610300001_p0_security_remediation.sql`
-  - Formulated the official Supabase CLI migration workflow using the Supabase IPv4 connection pooler (`aws-0-ap-south-1.pooler.supabase.com:6543`) or `supabase db push --db-url` ensuring that migration records are correctly tracked in `supabase_migrations.schema_migrations` without manual SQL editing.
-- **Verification**: Documented in `PRODUCTION_MIGRATION_PREFLIGHT.md`.
+  - Clarified database connection standards based on official Supabase documentation:
+    1. **Direct Connection**: Preferred for database migrations and administration when direct IPv6/IPv4 connectivity is available.
+    2. **Session Pooler (Port 5432)**: Uses Port 5432, supports IPv4, preserves session state and prepared statements, and is compatible with schema migrations and administrative commands.
+    3. **Transaction Pooler (Port 6543)**: Intended for short-lived client queries; does NOT support session-level features or multi-statement DDL migrations.
+    4. **Connection String Guidance**: Never guess or construct pooler hosts based on project region. The owner must copy the exact Session Pooler connection string (Port 5432) from the Supabase Dashboard.
+  - Documented that because CLI commands failed due to IPv6 routing, **remote migration history is NOT verified**, and the **exact set of pending Production migrations is NOT established**. The owner must perform a read-only audit using the Session Pooler before executing any migrations.
+- **Verification**: Formally documented in `PRODUCTION_MIGRATION_PREFLIGHT.md`.
 
 ---
 
-### Remediation 8: Ticket Allocation Atomicity, Sequence Monotonicity & Rollback Proof
+### Remediation 8: Ticket Allocation Atomicity, Sequence Monotonicity & Rollback Audit
 
 - **Risk Level**: **CRITICAL (P0 Data Integrity)**
 - **Problem Identified**: Requirement to mathematically prove ticket issuance integrity, concurrent order protection, rollback behavior, and gap handling.
-- **Audit & Proof Details**:
+- **Audit & Architectural Distinctions**:
   - In `supabase/migrations/202610270001_phase2_core.sql` and `202610300001_p0_security_remediation.sql`:
-    1. **Concurrency Protection**: Row-level locking via `SELECT * FROM orders WHERE id = ... FOR UPDATE` prevents double verification of the same order. Campaign row locking via `SELECT * FROM campaigns WHERE id = ... FOR UPDATE` serializes capacity decrements across concurrent orders.
-    2. **Idempotency Guard**: `IF v_order.status IN ('PAYMENT_VERIFIED', 'TICKETS_ISSUED') THEN RETURN;` prevents redundant ticket minting.
-    3. **Capacity Enforcement**: `IF v_campaign.sold_ticket_count + v_order.ticket_quantity > v_campaign.total_ticket_capacity THEN RAISE EXCEPTION 'Capacity exceeded';` ensures hard limits are never breached.
-    4. **Atomic Sequence Generation**: Tickets are minted inside a single transaction using `nextval('ssfi_ticket_number_sequence')`.
-    5. **Gap & Rollback Behavior**: In PostgreSQL, sequences strictly monotonically increase. If a transaction aborts, sequence values do not roll back (by PostgreSQL engine design to prevent locking/deadlock across concurrent transactions). However, during normal execution, `nextval` is only called *after* all payment, actor, and capacity assertions pass, guaranteeing gapless allocation during standard operation. If an abort occurs, duplicate prevention remains absolute due to the database constraint `UNIQUE(ticket_number)`.
-- **Verification**: Verified against database definitions and transaction isolation rules.
+    1. **Atomic Ticket Issuance**: All database mutations (verifying payment, decrementing campaign capacity, creating ticket rows, and updating order status) execute inside a single PostgreSQL function (`verify_payment_and_issue`) within an atomic ACID transaction (`BEGIN ... COMMIT`).
+    2. **Duplicate Ticket Prevention**: Absolute duplicate prevention is strictly enforced by unique database constraints: `PRIMARY KEY (id)`, `UNIQUE(ticket_number)`, and `UNIQUE(order_id, ticket_number)`.
+    3. **Capacity Enforcement**: Campaign capacity is strictly enforced under row-level lock (`SELECT * FROM campaigns WHERE id = ... FOR UPDATE`), preventing overselling.
+    4. **Sequence Monotonicity**: Sequence values minted via `nextval('ssfi_ticket_number_sequence')` are strictly monotonically increasing.
+    5. **Gapless Numbering (Not Guaranteed by PostgreSQL Sequences)**: Standard PostgreSQL sequence values consumed by `nextval()` are **never rolled back or reclaimed** when a transaction aborts. Therefore, a standard PostgreSQL sequence **cannot guarantee gapless ticket numbering**. If an error, timeout, or constraint violation causes a transaction to abort after `nextval()` is called, that sequence number is permanently skipped.
+    6. **Architectural Path for Gapless Numbering**: If strict gapless numbering is a confirmed business requirement, an architectural redesign using a transactional counter table/row (e.g., `campaign_counters` row locked with `SELECT current_counter FROM campaign_counters WHERE campaign_id = ... FOR UPDATE` in a serializable transaction) is required. **This architectural change is NOT implemented in the current release to avoid heavy lock contention, and must NOT be applied without explicit owner approval.** The current implementation maintains atomic issuance, capacity limits, and duplicate prevention.
+- **Verification**: Verified against PostgreSQL system catalog behaviors and transaction isolation mechanics.
 
 ---
 

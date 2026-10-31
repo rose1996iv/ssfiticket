@@ -1,7 +1,7 @@
 # SSFI Fundraising Ticket System — Production Release Checklist
 
-**Document Version:** 1.5.0<br/>
-**Audit Phase:** Final Pre-Production Release Gate Corrections<br/>
+**Document Version:** 1.6.0<br/>
+**Audit Phase:** Final Release Report & Architecture Corrections<br/>
 **Evaluation Date:** 2026-10-31  
 **Target Launch Window:** Ticket Sales Start November 1, 2026 | Draw Ceremony December 19, 2026  
 **Status Legend:**
@@ -22,8 +22,8 @@
 | **Vercel Project** | `ssfiticket` | `[ DONE ]` | Linked to GitHub `rose1996iv/ssfiticket` |
 | **Vercel Deployment Status** | `READY` (Completed) | `[ DONE ]` | Verified across automated builds |
 | **Exact Preview Domain** | `https://ssfiticket-git-deploy-ssfi-homepage-051907-rose1996ivs-projects.vercel.app` | `[ DONE ]` | Verified 200 OK (Resolved from GitHub check-run metadata) |
-| **Target Database** | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | `[ DONE ]` | RLS, functions, and synthetic records verified |
-| **Production Database** | `ssfiticket` (`fohpqheglxhfdecadhzw`) | `[ UNTOUCHED ]` | Strictly read-only / protected |
+| **Target Database** | `ssfiticketdev` (`jiyuiydzsfydjklosvvq`) | `[ PARTIAL ]` | Schema & synthetic records verified via PostgREST; remote migration history unverified by CLI |
+| **Production Database** | `ssfiticket` (`fohpqheglxhfdecadhzw`) | `[ UNTOUCHED ]` | Strictly read-only / protected; remote migration history UNVERIFIED |
 
 ---
 
@@ -32,13 +32,13 @@
 | Area | Scope & Key Remediations | Pre-Audit | Post-Audit | Status |
 | :--- | :--- | :---: | :---: | :---: |
 | **1. Payment Processing** | Payee `HLAWN THA DAWT`, UPI `6909251270@ptaxis`, `/upi_qr.jpeg`. Enforced `isMockPaymentMode()` fail-closed guard in Production (`VERCEL_ENV === "production"`). Server actions reject test references unconditionally in production. | Mock enabled in preview | Production fail-closed | `[ DONE ]` |
-| **2. Ticket Issuance & DB** | Atomic RPC `verify_payment_and_issue` mints 6-digit tickets from `ssfi_ticket_number_sequence` (`SSFI-000001` format), decrements campaign capacity under row locks (`FOR UPDATE`), enforces RLS least privilege, and writes immutable audit logs. | Operational | Atomic & verified | `[ DONE ]` |
-| **3. Customer Email Delivery** | Direct Google OAuth 2.0 Gmail REST API (`Senthangstudents@gmail.com`). Fail-closed in Production. Suppressed simulation banner in Production. Polished multi-ticket rendering and confirmed draw date (19 Dec 2026). Status labeled "API Accepted". | Preview gate active | Production fail-closed | `[ DONE ]` |
+| **2. Ticket Issuance & DB** | Atomic RPC `verify_payment_and_issue` mints 6-digit tickets from `ssfi_ticket_number_sequence` (`SSFI-000001` format), decrements campaign capacity under row locks (`FOR UPDATE`), enforces RLS least privilege, and writes immutable audit logs. Duplicate prevention guaranteed by unique constraints; sequence monotonicity guaranteed. Gapless numbering is not guaranteed by PostgreSQL sequences (requires transactional counter row if gapless is strictly needed). | Operational | Atomic & verified | `[ DONE ]` |
+| **3. Customer Email Delivery** | Direct Google OAuth 2.0 Gmail REST API (`Senthangstudents@gmail.com`). Fail-closed in Production code. Suppressed simulation banner in Production. Polished multi-ticket rendering and confirmed draw date (19 Dec 2026). Status labeled "API Accepted". Production Gmail OAuth credentials in Vercel settings remain UNVERIFIED. | Preview gate active | Production fail-closed | `[ PENDING OWNER CHECK ]` |
 | **4. WhatsApp Distribution** | 100% Free wa.me Click-to-Chat with direct ticket verification URLs. Enforced supported enum `status = "SENT"` with `metadata.manual_send_confirmed = true` and `metadata.whatsapp_action = "MANUALLY_CONFIRMED"`. Added duplicate guard and `TICKETS_ISSUED` order check. UI updated to "Open WhatsApp Chat (Free)", "Confirm Manually Sent", "Click-to-Chat Prepared", and Email "API Accepted". | Working via wa.me | Enum & semantics hardened | `[ DONE ]` |
 | **5. QR Code Verification** | Created public verification index portal `/verify` (`src/app/verify/page.tsx`). Validates `/verify/[ticketNumber]` in real time without exposing customer PII. | Single route only | Portal complete | `[ DONE ]` |
 | **6. Admin & Seller Ops** | Full RBAC (`SUPER_ADMIN`, `ADMIN`, `FUNDRAISING_MANAGER`, `SELLER`). Seller messaging immutability trigger verified. CSV/Excel exports protected with formula injection sanitization. | Active | Verified passing | `[ DONE ]` |
 | **7. Campaign Schedule & Cron** | Campaign launch 1 Nov 2026 00:00 IST; Draw date 19 Dec 2026. On-demand pre-flight synchronization inside order creation guarantees transitions on Vercel Hobby plan. Evaluated `schedule.scheduleStatus` passed to `CampaignCountdown`. Cron secured with `CRON_SECRET`. | Redundant scheduler | Fully validated | `[ DONE ]` |
-| **8. Environment Config** | Complete inventory and segregation of Preview (`jiyuiydzsfydjklosvvq`) vs Production (`fohpqheglxhfdecadhzw`) environment variables documented in `PRODUCTION_READINESS_AUDIT.md`. | Verified | Fully documented | `[ DONE ]` |
+| **8. Environment Config** | Complete inventory and segregation of Preview (`jiyuiydzsfydjklosvvq`) vs Production (`fohpqheglxhfdecadhzw`) environment variables documented. Production Vercel variables and remote Supabase migration history remain UNVERIFIED. | Verified | Fully documented | `[ PENDING OWNER CHECK ]` |
 
 ---
 
@@ -102,10 +102,16 @@ Captured across 3 viewports:
 
 When the project owner officially approves merging into `main`:
 
-1. **Step 1 — Production Database Schema Migration (Manual via Supabase Dashboard)**:
+1. **Step 1 — Audit Remote Production Database Migrations via Session Pooler**:
    - Target Project: `fohpqheglxhfdecadhzw`
-   - Navigate to Supabase SQL Editor.
-   - Execute the 9 migration scripts in exact numerical order as specified in `PRODUCTION_MIGRATION_PREFLIGHT.md`.
+   - Obtain the exact Session Pooler connection string (Port 5432) from the Supabase Dashboard:
+     `Project Settings > Database > Connection Pooling > Mode: Session > Port: 5432`.
+   - Run read-only preflight:
+     `npx supabase migration list --db-url "<SESSION_POOLER_URI_PORT_5432>"`
+   - Take a manual database backup snapshot in the Supabase Dashboard.
+   - Apply unapplied migrations using the official CLI:
+     `npx supabase db push --db-url "<SESSION_POOLER_URI_PORT_5432>"`
+   - Do NOT blindly copy and paste raw SQL into the SQL editor without tracking history.
 2. **Step 2 — Verify Production Vercel Environment Variables**:
    - Verify `NEXT_PUBLIC_SUPABASE_URL` = `https://fohpqheglxhfdecadhzw.supabase.co`.
    - Verify `NEXT_PUBLIC_APP_URL` = `https://ssfiticket.vercel.app`.

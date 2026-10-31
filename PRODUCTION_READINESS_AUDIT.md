@@ -56,10 +56,14 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 ### 2.1 Atomic Ticket Number Assignment & Concurrency Protection
 - **Sequence**: Database sequence `ssfi_ticket_number_sequence` with `maxvalue 999999`.
 - **Formatting**: 6-digit padded string formatted as `SSFI-000001` through `SSFI-999999`.
-- **Atomicity & Row Locks**: Executed inside `verify_payment_and_issue` PostgreSQL function within a single ACID transaction. The order is locked via `SELECT * FROM orders WHERE id = ... FOR UPDATE`, and the campaign is locked via `SELECT * FROM campaigns WHERE id = ... FOR UPDATE`, serializing capacity decrements and ticket issuance across concurrent operations.
-- **Idempotency Guard**: `v_order.status NOT IN ('PAYMENT_VERIFIED')` ensures an order cannot be verified or have tickets minted multiple times.
-- **Capacity Decrement**: Campaign `sold_ticket_count` is atomically incremented by ticket quantity under row lock; orders exceeding remaining capacity are strictly rejected with an exception.
-- **Gap & Rollback Behavior**: Sequence values strictly monotonically increase. In PostgreSQL, sequences do not roll back upon transaction abort to prevent deadlocks across concurrent connections. However, during normal operations, `nextval` is only invoked after all payment, actor, and capacity assertions have passed, guaranteeing gapless allocation during standard operation. In the event of an abort, duplicate allocation is mathematically impossible due to the database constraint `UNIQUE(ticket_number)`.
+- **Core Semantic Distinctions**:
+  1. **Atomic Ticket Issuance**: All database operations (payment verification, capacity decrement, ticket row creation, and order status transition) execute inside a single PostgreSQL function (`verify_payment_and_issue`) within an atomic ACID transaction.
+  2. **Duplicate Ticket Prevention**: Guaranteed unconditionally by database constraints: `PRIMARY KEY (id)`, `UNIQUE(ticket_number)`, and `UNIQUE(order_id, ticket_number)`.
+  3. **Capacity Enforcement**: Hard campaign capacity limits are enforced under row-level lock (`SELECT * FROM campaigns WHERE id = ... FOR UPDATE`). Any order that would exceed remaining capacity is strictly aborted.
+  4. **Sequence Monotonicity**: Numbers minted via `nextval('ssfi_ticket_number_sequence')` are strictly monotonically increasing.
+  5. **Gapless Numbering (Not Guaranteed by PostgreSQL Sequences)**: Standard PostgreSQL sequence values consumed by `nextval()` are **never rolled back or reclaimed** when a transaction aborts. Therefore, a standard PostgreSQL sequence **cannot guarantee gapless ticket numbering**. If an error, timeout, or constraint failure aborts a transaction after `nextval()` has been called, that sequence number is permanently skipped.
+- **Architectural Requirement for Strict Gapless Numbering**:
+  If strict, gapless numbering is confirmed as a mandatory business requirement, an architectural redesign using a dedicated transactional counter table (e.g., `campaign_counters` row locked with `SELECT current_counter FROM campaign_counters WHERE campaign_id = ... FOR UPDATE` in a serializable transaction) is required. **This architectural change is NOT implemented in the current release to prevent lock contention, and must NOT be applied without explicit owner approval.** The current release safely enforces atomic issuance, capacity limits, and duplicate prevention.
 
 ### 2.2 Security & Access Controls (RLS)
 - **Least Privilege Grants**:
@@ -78,10 +82,17 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 - **MIME Formatting**: RFC 2822 multipart/alternative (plain-text and rich HTML) encoded with RFC 4648 Base64URL without padding.
 
 ### 3.2 Environment Isolation & Safety Gates
-| Environment | Configuration Required | Real Email Behavior | Failsafe / Fallback |
-|---|---|---|---|
-| **Vercel Preview** | `GMAIL_PREVIEW_REAL_SEND_ENABLED=true` + `GMAIL_PREVIEW_ALLOWED_RECIPIENT=<staff_email>` | Transmits ONLY to configured allowlist recipient | Safely simulated dry-run if recipient does not match |
-| **Vercel Production** | `GMAIL_API_CLIENT_ID`, `GMAIL_API_CLIENT_SECRET`, `GMAIL_API_REFRESH_TOKEN` | Transmits live confirmation email to real customer | Returns `FAILED` status without breaking ticket issuance |
+
+> [!IMPORTANT]
+> **Production Gmail OAuth2 Status**: `[ UNVERIFIED ]` (Pending Owner Verification in Vercel Production Settings)
+> - In code, the Gmail REST provider and production fail-closed logic are verified.
+> - However, the actual Vercel Production environment variables have not been directly audited, and real customer emails have not been dispatched (and must not be dispatched during testing).
+> - Production Gmail integration cannot be claimed as operationally verified until the owner confirms live credentials in the Vercel dashboard.
+
+| Environment | Configuration Required | Real Email Behavior | Failsafe / Fallback | Operational Status |
+|---|---|---|---|---|
+| **Vercel Preview** | `GMAIL_PREVIEW_REAL_SEND_ENABLED=true` + `GMAIL_PREVIEW_ALLOWED_RECIPIENT=<staff_email>` | Transmits ONLY to configured allowlist recipient | Safely simulated dry-run if recipient does not match | **Verified** |
+| **Vercel Production** | `GMAIL_API_CLIENT_ID`, `GMAIL_API_CLIENT_SECRET`, `GMAIL_API_REFRESH_TOKEN` | Transmits live confirmation email to real customer | Returns `FAILED` status without breaking ticket issuance | **UNVERIFIED** (Awaiting Owner Check) |
 
 ### 3.3 Email Template Specifications
 - **Subject**: `[SSFI Lucky Draw] Official Ticket Confirmation — Order <order_number>`
@@ -186,13 +197,38 @@ The SSFI Lucky Draw fundraising platform has undergone an exhaustive, full-stack
 | Audit Domain | Pre-Audit Status | Post-Remediation Status | Verdict |
 |---|---|---|---|
 | 1. Payment Processing | Operational (Mock active in preview) | Hardened fail-closed in production | **READY** |
-| 2. Ticket Issuance & DB Integrity | Atomic & Verified | Verified (0 gaps, 0 duplicates) | **READY** |
-| 3. Customer Email Delivery | Gmail API implemented | Fail-closed in prod, multi-ticket polish | **READY** |
-| 4. WhatsApp Distribution | wa.me click-to-chat active | Enum compatibility hardened | **READY** |
+| 2. Ticket Issuance & DB Integrity | Operational | Atomic issuance & unique constraints verified (gapless requires transactional counter) | **READY** |
+| 3. Customer Email Delivery | Gmail API implemented | Fail-closed in code & preview; Production OAuth config UNVERIFIED | **PENDING OWNER CHECK** |
+| 4. WhatsApp Distribution | wa.me click-to-chat active | Enum & delivery semantics hardened | **READY** |
 | 5. QR Code Verification | Individual ticket route only | Added `/verify` public portal | **READY** |
 | 6. Admin & Seller Operations | Full RBAC & CSV sanitization | Verified & passing tests | **READY** |
-| 7. Campaign Schedule & Cron | Aligned to 1 Nov 2026 | On-demand + cron redundancy | **READY** |
-| 8. Environment Configuration | Dual project separation | Fully documented & verified | **READY** |
+| 7. Campaign Schedule & Cron | Aligned to 1 Nov 2026 | On-demand + countdown synchronization | **READY** |
+| 8. Environment Configuration | Dual project separation | Preview config verified; Production Vercel variables UNVERIFIED | **PENDING OWNER CHECK** |
 
-**OVERALL READINESS STATUS: PRODUCTION RELEASE CANDIDATE READY FOR OWNER SIGN-OFF**
+---
+
+### Categorical Status Separation:
+1. **Verified Preview Application**:
+   - Preview deployment live at: [https://ssfiticket-git-deploy-ssfi-homepage-051907-rose1996ivs-projects.vercel.app](https://ssfiticket-git-deploy-ssfi-homepage-051907-rose1996ivs-projects.vercel.app).
+   - Core routes verified with HTTP 200 OK: `/`, `/verify`, `/buy?ref=SELLER-002`, `/terms`.
+   - Campaign countdown correctly displays UPCOMING / Opening Soon counting down to 1 November 2026, 00:00 IST.
+2. **Verified Local Implementation**:
+   - 210 of 210 unit and integration tests passing (`node --test`).
+   - TypeScript compiler (`tsc --noEmit`) passes with 0 errors.
+   - ESLint passes with 0 warnings or errors.
+   - Next.js Turbopack production compilation succeeds cleanly across all 30 routes.
+3. **Unverified Remote Database Migration History**:
+   - CLI direct commands failed with `DbConfigIpv6Error` due to local workstation IPv6 network routing limitations.
+   - The remote migration history of `supabase_migrations.schema_migrations` on Production (`fohpqheglxhfdecadhzw`) and Preview is NOT verified by CLI.
+   - The exact set of pending Production migrations is NOT established. Owner must run read-only preflight using the Session Pooler (Port 5432).
+4. **Unverified Production Environment Variables**:
+   - Vercel Production environment variables (`GMAIL_API_*`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`) have not been audited in the live Vercel dashboard.
+5. **Remaining Owner Actions**:
+   - Establish remote database connectivity using the exact Session Pooler URI (Port 5432) from the Supabase Dashboard.
+   - Audit Production migration history against the 11 local files.
+   - Take a manual database backup snapshot in the Supabase Dashboard.
+   - Confirm Production environment variables in the Vercel Dashboard.
+   - Approve final merge of `deploy/ssfi-homepage-preview` into `main`.
+
+**OVERALL READINESS STATUS: READY FOR OWNER'S FINAL PRODUCTION CHECK**
 

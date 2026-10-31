@@ -142,7 +142,7 @@ export function OrderDeliveryCard({
                       : "bg-amber-100 text-amber-800"
                   }`}
                 >
-                  {formatDeliveryStatusLabel(whatsappDelivery.status, "WHATSAPP")}
+                  {formatDeliveryStatusLabel(whatsappDelivery.status, "WHATSAPP", whatsappDelivery.metadata)}
                 </span>
               ) : (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">
@@ -225,7 +225,7 @@ export function OrderDeliveryCard({
                       : "bg-amber-100 text-amber-800"
                   }`}
                 >
-                  {formatDeliveryStatusLabel(emailDelivery.status, "EMAIL")}
+                  {formatDeliveryStatusLabel(emailDelivery.status, "EMAIL", emailDelivery.metadata)}
                 </span>
               ) : (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">
@@ -330,7 +330,7 @@ export function OrderDeliveryCard({
 
             <div className="mt-3 flex items-center justify-between text-xs text-[#705a54]">
               <span>Recipient: <b className="font-mono text-[#35110f]">{previewItem.recipient}</b></span>
-              <span>Status: <b className="font-semibold text-[#7c1619]">{formatDeliveryStatusLabel(previewItem.status, previewItem.channel)}</b> ({previewItem.provider})</span>
+              <span>Status: <b className="font-semibold text-[#7c1619]">{formatDeliveryStatusLabel(previewItem.status, previewItem.channel, previewItem.metadata)}</b> ({previewItem.provider})</span>
             </div>
 
             <div className="mt-4 flex-1 overflow-y-auto rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs font-mono text-[#35110f] whitespace-pre-wrap leading-relaxed select-text">

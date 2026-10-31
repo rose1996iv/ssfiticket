@@ -134,11 +134,26 @@ export async function recordWhatsAppOpenedAction(orderId: string) {
     });
 
     // Update ticket_deliveries record if present
+    // Store link opened state in metadata and timestamp to ensure full PostgreSQL enum compatibility
+    const { data: existingDelivery } = await admin
+      .from("ticket_deliveries")
+      .select("metadata")
+      .eq("order_id", orderId)
+      .eq("channel", "WHATSAPP")
+      .maybeSingle();
+
+    const currentMetadata = (existingDelivery?.metadata as Record<string, unknown>) || {};
+
     await admin
       .from("ticket_deliveries")
       .update({
-        status: "WHATSAPP_LINK_OPENED",
         last_attempt_at: new Date().toISOString(),
+        metadata: {
+          ...currentMetadata,
+          whatsapp_action: "WHATSAPP_LINK_OPENED",
+          opened_at: new Date().toISOString(),
+          opened_by: user?.email || "staff",
+        },
       })
       .eq("order_id", orderId)
       .eq("channel", "WHATSAPP");
@@ -173,13 +188,28 @@ export async function recordWhatsAppManuallySentAction(orderId: string) {
       },
     });
 
-    // Update ticket_deliveries to MANUALLY_SENT
+    // Update ticket_deliveries to DELIVERED (valid PostgreSQL enum) with full manual confirmation metadata
+    const { data: existingDelivery } = await admin
+      .from("ticket_deliveries")
+      .select("metadata")
+      .eq("order_id", orderId)
+      .eq("channel", "WHATSAPP")
+      .maybeSingle();
+
+    const currentMetadata = (existingDelivery?.metadata as Record<string, unknown>) || {};
+
     await admin
       .from("ticket_deliveries")
       .update({
-        status: "MANUALLY_SENT",
+        status: "DELIVERED",
         sent_at: new Date().toISOString(),
         last_attempt_at: new Date().toISOString(),
+        metadata: {
+          ...currentMetadata,
+          whatsapp_action: "MANUALLY_SENT",
+          confirmed_at: new Date().toISOString(),
+          confirmed_by: user?.email || "staff",
+        },
       })
       .eq("order_id", orderId)
       .eq("channel", "WHATSAPP");

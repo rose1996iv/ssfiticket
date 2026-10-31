@@ -177,13 +177,18 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
     })
     .join("");
 
-  const simulationBanner = payload.isSimulated
-    ? `
+  const isProduction =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
+
+  const simulationBanner =
+    !isProduction && payload.isSimulated
+      ? `
       <div style="background-color: #fef3c7; border: 1px solid #f59e0b; color: #92400e; padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-bottom: 20px; text-align: center;">
         <strong>Development Mode Notice:</strong> This email was simulated via the local test provider. No real email was dispatched.
       </div>
     `
-    : ``;
+      : ``;
 
   const html = `<!DOCTYPE html>
 <html lang="en">

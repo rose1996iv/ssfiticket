@@ -196,7 +196,11 @@ export async function submitManualUpi(formData: FormData): Promise<{
   }
 
   // Preview / Development mock mode validation
-  if (manualUpiConfig.isMock) {
+  // Fail-closed in Production: Mock validation is strictly forbidden in production
+  const isProd =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
+  if (manualUpiConfig.isMock && !isProd) {
     const trimmed = parsed.data.utr.trim();
     if (trimmed.toUpperCase().includes("FAIL")) {
       return {

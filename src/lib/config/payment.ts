@@ -10,6 +10,14 @@
  */
 
 export function isMockPaymentMode(): boolean {
+  // Absolute Production Fail-Safe: NEVER allow mock payments in production under any circumstances
+  if (
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "production"
+  ) {
+    return false;
+  }
+
   // Explicit override takes highest precedence (allows testing live or mock locally)
   if (process.env.NEXT_PUBLIC_MOCK_PAYMENTS === "false" || process.env.MOCK_PAYMENTS === "false") {
     return false;

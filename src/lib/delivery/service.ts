@@ -75,7 +75,10 @@ export async function dispatchOrderTicketDeliveries(
   const isVercelPreview =
     process.env.VERCEL_ENV === "preview" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-  const isDev = process.env.NODE_ENV !== "production" || isVercelPreview;
+  const isProduction =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
+  const isDev = !isProduction && (process.env.NODE_ENV !== "production" || isVercelPreview);
   const hasLiveWhatsApp = Boolean(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
   const hasGmailApi = isGmailApiConfigured();
   const hasLiveEmail = Boolean(process.env.RESEND_API_KEY || hasGmailApi);
@@ -94,7 +97,7 @@ export async function dispatchOrderTicketDeliveries(
     sellerAttribution: seller ? `${seller.display_name} (${seller.seller_code})` : null,
     supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
     supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
-    isSimulated: isDev || !hasLiveEmail,
+    isSimulated: !isProduction && (isDev || !hasLiveEmail),
   };
 
   // Deduping: Fetch existing delivery records to prevent duplicate sends on retries

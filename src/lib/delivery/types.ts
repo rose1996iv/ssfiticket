@@ -58,8 +58,15 @@ export interface DeliveryProvider {
  */
 export function formatDeliveryStatusLabel(
   status: DeliveryStatus | string,
-  channel?: DeliveryChannel
+  channel?: DeliveryChannel,
+  metadata?: Record<string, unknown>
 ): string {
+  if (metadata?.whatsapp_action === "MANUALLY_SENT") {
+    return "Manually Confirmed Sent";
+  }
+  if (metadata?.whatsapp_action === "WHATSAPP_LINK_OPENED" && status !== "DELIVERED") {
+    return "WhatsApp Link Opened";
+  }
   switch (status) {
     case "PENDING":
       return channel === "EMAIL" ? "Email Queued" : "Prepared";
@@ -70,7 +77,7 @@ export function formatDeliveryStatusLabel(
     case "SENT":
       return "Provider/API Accepted";
     case "DELIVERED":
-      return "Delivery Confirmed";
+      return channel === "WHATSAPP" ? "Manually Confirmed Sent" : "Delivery Confirmed";
     case "FAILED":
       return "Failed";
     case "SIMULATED":

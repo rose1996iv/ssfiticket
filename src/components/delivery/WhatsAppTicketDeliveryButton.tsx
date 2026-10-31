@@ -80,7 +80,7 @@ export function WhatsAppTicketDeliveryButton({
       ? "px-5 py-3 text-sm gap-2.5 font-bold"
       : "px-4 py-2.5 text-xs gap-2 font-semibold";
 
-  const isManuallySent = status === "MANUALLY_SENT";
+  const isManuallySent = status === "MANUALLY_SENT" || status === "DELIVERED";
   const isLinkOpened = status === "WHATSAPP_LINK_OPENED";
 
   return (

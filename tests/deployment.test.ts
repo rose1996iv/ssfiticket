@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveDeploymentId, isValidFlightRouterState } from "../src/lib/config/deployment.ts";
+import { resolveDeploymentId } from "../src/lib/config/deployment.ts";
 
 describe("Next.js Deployment ID & Version Skew Protection", () => {
   it("prefers VERCEL_DEPLOYMENT_ID and strips 'dpl_' prefix", () => {
@@ -110,39 +110,5 @@ describe("Next.js Deployment ID & Version Skew Protection", () => {
     assert.ok(idA);
     assert.ok(idB);
     assert.notEqual(idA, idB);
-  });
-
-  it("validates well-formed FlightRouterState header", () => {
-    const validTree = encodeURIComponent(
-      JSON.stringify(["", { children: ["buy", {}] }, null, null, true])
-    );
-    assert.equal(isValidFlightRouterState(validTree), true);
-  });
-
-  it("rejects malformed URI encoding in next-router-state-tree", () => {
-    const malformedUri = "%E0%A4%A"; // Invalid UTF-8 sequence for decodeURIComponent
-    assert.equal(isValidFlightRouterState(malformedUri), false);
-  });
-
-  it("rejects invalid JSON in next-router-state-tree", () => {
-    const invalidJson = encodeURIComponent("{unclosed_json: true");
-    assert.equal(isValidFlightRouterState(invalidJson), false);
-  });
-
-  it("rejects non-array or truncated state in next-router-state-tree", () => {
-    const nonArray = encodeURIComponent(JSON.stringify({ notAnArray: true }));
-    assert.equal(isValidFlightRouterState(nonArray), false);
-
-    const emptyArray = encodeURIComponent(JSON.stringify([]));
-    assert.equal(isValidFlightRouterState(emptyArray), false);
-
-    const oneElem = encodeURIComponent(JSON.stringify(["root"]));
-    assert.equal(isValidFlightRouterState(oneElem), false);
-  });
-
-  it("rejects null, undefined, or empty router state headers", () => {
-    assert.equal(isValidFlightRouterState(null), false);
-    assert.equal(isValidFlightRouterState(undefined), false);
-    assert.equal(isValidFlightRouterState(""), false);
   });
 });

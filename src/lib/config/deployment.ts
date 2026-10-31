@@ -50,22 +50,3 @@ export function resolveDeploymentId(env: Record<string, string | undefined> = pr
 
   return id;
 }
-
-/**
- * Validates the raw 'next-router-state-tree' header.
- * Returns true if the header is valid decodeable JSON representing a FlightRouterState array.
- * Returns false if the header is malformed, corrupted, or not an array.
- */
-export function isValidFlightRouterState(header: string | null | undefined): boolean {
-  if (!header || typeof header !== "string") {
-    return false;
-  }
-  try {
-    const decoded = decodeURIComponent(header);
-    const parsed = JSON.parse(decoded);
-    // FlightRouterState must be an array with at least 2 elements [segment, parallelRoutes, ...]
-    return Array.isArray(parsed) && parsed.length >= 2;
-  } catch {
-    return false;
-  }
-}

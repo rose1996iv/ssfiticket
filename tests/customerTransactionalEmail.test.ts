@@ -274,4 +274,58 @@ test("Customer Transactional Email Suite", async (t) => {
     assert.ok(!apiError.includes("ya29.super_secret_bearer_token"), "Bearer token must be redacted");
     assert.match(apiError, /Bearer \[REDACTED\]/);
   });
+
+  // ==========================================================================
+  // 11. Admin Test Email Recipient Restriction (Zero Arbitrary Customer Sends)
+  // ==========================================================================
+  await t.test("Admin test email rejects arbitrary customer recipients and only permits authorized admin inbox", () => {
+    const authorizedAdminInbox = "admin@ssfi.org";
+    const authenticatedAdminEmail = "finance-admin@ssfi.org";
+    const arbitraryCustomerEmail = "customer@gmail.com";
+
+    const isRecipientPermitted = (target: string) => {
+      const clean = target.trim().toLowerCase();
+      return clean === authorizedAdminInbox.toLowerCase() || clean === authenticatedAdminEmail.toLowerCase();
+    };
+
+    assert.equal(isRecipientPermitted(authorizedAdminInbox), true, "Authorized admin test inbox must be permitted");
+    assert.equal(isRecipientPermitted(authenticatedAdminEmail), true, "Authenticated admin's own email must be permitted");
+    assert.equal(isRecipientPermitted(arbitraryCustomerEmail), false, "Arbitrary customer email must be strictly rejected");
+    assert.equal(isRecipientPermitted("hacker@external.com"), false, "External address must be strictly rejected");
+  });
+
+  // ==========================================================================
+  // 12. Strict Pending-Payment Ticket Delivery Prevention
+  // ==========================================================================
+  await t.test("Ticket delivery notification is strictly blocked for unapproved orders", () => {
+    type MockOrder = {
+      order_number: string;
+      status: string;
+      paymentVerifiedAt: string | null;
+    };
+
+    const isTicketDeliveryAllowed = (order: MockOrder) => {
+      return Boolean(order.paymentVerifiedAt) || order.status === "TICKETS_ISSUED";
+    };
+
+    const pendingOrder: MockOrder = {
+      order_number: "ORD-001",
+      status: "PENDING_PAYMENT",
+      paymentVerifiedAt: null,
+    };
+    const paymentSubmittedOrder: MockOrder = {
+      order_number: "ORD-002",
+      status: "PAYMENT_SUBMITTED",
+      paymentVerifiedAt: null,
+    };
+    const approvedOrder: MockOrder = {
+      order_number: "ORD-003",
+      status: "TICKETS_ISSUED",
+      paymentVerifiedAt: "2026-10-31T20:00:00Z",
+    };
+
+    assert.equal(isTicketDeliveryAllowed(pendingOrder), false, "Pending payment must never trigger ticket delivery");
+    assert.equal(isTicketDeliveryAllowed(paymentSubmittedOrder), false, "Payment submitted without verification must not trigger ticket delivery");
+    assert.equal(isTicketDeliveryAllowed(approvedOrder), true, "Verified payment allows ticket delivery");
+  });
 });

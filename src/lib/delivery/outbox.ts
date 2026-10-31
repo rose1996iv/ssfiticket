@@ -938,6 +938,7 @@ export async function enqueueTicketsIssuedNotification(
     .select(`
       id,
       order_number,
+      status,
       total_amount_paise,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
@@ -957,6 +958,15 @@ export async function enqueueTicketsIssuedNotification(
   const seller = Array.isArray(order.sellers) ? order.sellers[0] : order.sellers;
   const campaign = Array.isArray(order.campaigns) ? order.campaigns[0] : order.campaigns;
   const payment = Array.isArray(order.payments) ? order.payments[0] : order.payments;
+
+  // Strict guard: Never send ticket delivery before payment approval
+  const isPaymentApproved = Boolean(payment?.verified_at) || order.status === "TICKETS_ISSUED";
+  if (!isPaymentApproved) {
+    console.warn(
+      `[Email Outbox] Strict Guard: Blocking TICKETS_ISSUED notification. Order ${order.order_number} has not been approved (Status: ${order.status}).`
+    );
+    return;
+  }
   const rawTickets = (order.tickets as unknown as Array<{ id: string; ticket_number: string; status: string; issued_at: string }>) || [];
 
   const activeTickets = rawTickets.filter((t) => t.status === "ISSUED" || t.status === "ACTIVE");

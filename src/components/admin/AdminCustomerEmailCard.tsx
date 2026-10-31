@@ -40,7 +40,7 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
   const [gateActionError, setGateActionError] = useState<string | null>(null);
 
   // Admin Test Email State
-  const [testEmailInput, setTestEmailInput] = useState("");
+  const [testEmailInput, setTestEmailInput] = useState(initialData?.authorizedAdminInbox || "");
   const [testEmailResult, setTestEmailResult] = useState<{
     success: boolean;
     message: string;
@@ -129,13 +129,14 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
 
   const handleSendTestEmail = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!testEmailInput.trim()) return;
+    const destination = testEmailInput.trim() || data?.authorizedAdminInbox;
+    if (!destination) return;
 
     setIsSendingTest(true);
     setTestEmailResult(null);
 
     try {
-      const res = await triggerAdminCustomerTestEmail(testEmailInput.trim());
+      const res = await triggerAdminCustomerTestEmail(destination);
       setTestEmailResult({
         success: res.success,
         message: res.message,
@@ -386,21 +387,27 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
           Admin Test Email (Official Service Verification)
         </span>
         <p className="mt-1 text-xs text-[#705a54]">
-          Send an official verification email to an administrator inbox to confirm Gmail API OAuth authorization and RFC 2822 formatting.
+          Send an official verification email to the authorized administrator inbox to confirm Gmail API OAuth authorization and RFC 2822 formatting.
         </p>
+
+        {data?.authorizedAdminInbox && (
+          <p className="mt-2 text-2xs text-[#705a54]">
+            Authorized Admin Inbox: <strong className="font-mono text-[#7c1619]">{data.authorizedAdminInbox}</strong>
+            <span className="ml-2 font-normal text-gray-500">(Arbitrary customer addresses are strictly blocked)</span>
+          </p>
+        )}
 
         <form onSubmit={handleSendTestEmail} className="mt-3 flex flex-wrap items-center gap-2">
           <input
             type="email"
             value={testEmailInput}
             onChange={(e) => setTestEmailInput(e.target.value)}
-            placeholder="admin@ssfi.org"
-            required
+            placeholder={data?.authorizedAdminInbox || "admin@ssfi.org"}
             className="flex-1 min-w-[240px] rounded-lg border border-[#e8d6c5] bg-white px-3.5 py-2 text-xs text-[#35110f] placeholder:text-gray-400 focus:border-[#7c1619] focus:outline-hidden"
           />
           <button
             type="submit"
-            disabled={isSendingTest || !testEmailInput.trim()}
+            disabled={isSendingTest || (!testEmailInput.trim() && !data?.authorizedAdminInbox)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-[#7c1619] px-4 py-2 text-xs font-bold text-white shadow-2xs hover:bg-[#631013] disabled:opacity-50"
           >
             <Send size={13} className={isSendingTest ? "animate-spin" : ""} />

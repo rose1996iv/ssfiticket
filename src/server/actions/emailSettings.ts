@@ -25,6 +25,7 @@ export type AdminCustomerEmailDashboardData = {
   environment: string;
   senderAddress: string;
   isOAuthConfigured: boolean;
+  authorizedAdminInbox?: string;
   settings: CustomerEmailSettings;
   metrics: CustomerEmailMetrics;
   recentLogs: CustomerEmailLogItem[];
@@ -35,7 +36,7 @@ export type AdminCustomerEmailDashboardData = {
  * Restricted to verified SUPER_ADMIN and ADMIN roles.
  */
 export async function getAdminCustomerEmailDashboardData(): Promise<AdminCustomerEmailDashboardData> {
-  await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+  const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
 
   const environment =
     process.env.VERCEL_ENV ||
@@ -49,10 +50,16 @@ export async function getAdminCustomerEmailDashboardData(): Promise<AdminCustome
   const metrics = await getCustomerEmailMetrics();
   const recentLogs = await getRecentCustomerEmailLogs(15);
 
+  const authorizedAdminInbox =
+    process.env.GMAIL_ADMIN_TEST_RECIPIENT?.trim() ||
+    process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT?.trim() ||
+    user.email;
+
   return {
     environment,
     senderAddress: config.senderAddress,
     isOAuthConfigured,
+    authorizedAdminInbox: authorizedAdminInbox || undefined,
     settings,
     metrics,
     recentLogs,
@@ -104,13 +111,47 @@ export async function retryAdminCustomerEmailJob(
 
 /**
  * Triggers an official administrative test email for customer service verification.
+ * Strictly restricted to authorized admin test inboxes. Disallows arbitrary customer recipients.
  */
 export async function triggerAdminCustomerTestEmail(
-  targetEmail: string
+  targetEmail?: string
 ): Promise<{ success: boolean; message: string; jobId?: string; error?: string }> {
   const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
 
-  const result = await executeAdminCustomerTestEmail(user.id, targetEmail);
+  const authorizedInbox =
+    process.env.GMAIL_ADMIN_TEST_RECIPIENT?.trim() ||
+    process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT?.trim() ||
+    user.email;
+
+  const destination = targetEmail?.trim() || authorizedInbox;
+
+  if (!destination) {
+    return {
+      success: false,
+      message: "No authorized admin test inbox is configured or detected.",
+      error: "MISSING_AUTHORIZED_ADMIN_INBOX",
+    };
+  }
+
+  // Security guard: ensure recipient matches authorized admin inbox or the authenticated admin's own email.
+  // Arbitrary customer or external addresses are strictly prohibited.
+  const cleanTarget = destination.toLowerCase();
+  const cleanAuthorized = authorizedInbox?.toLowerCase();
+  const cleanUserEmail = user.email?.toLowerCase();
+
+  const isAuthorized =
+    (cleanAuthorized && cleanTarget === cleanAuthorized) ||
+    (cleanUserEmail && cleanTarget === cleanUserEmail);
+
+  if (!isAuthorized) {
+    return {
+      success: false,
+      message: `Disallowed recipient: Administrative test emails may only be dispatched to the verified admin test inbox (${authorizedInbox}). Arbitrary customer recipients are strictly prohibited.`,
+      error: "ARBITRARY_RECIPIENT_PROHIBITED",
+    };
+  }
+
+  const result = await executeAdminCustomerTestEmail(user.id, destination);
   revalidatePath("/admin/campaign-settings");
   return result;
 }

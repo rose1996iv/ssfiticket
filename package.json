@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/referral.test.ts tests/youtube.test.ts tests/export.test.ts tests/seller.test.ts tests/publicOrder.test.ts tests/sellerLifecycle.test.ts tests/exportReliability.test.ts tests/roleRouting.test.ts tests/sellerOrder.test.ts tests/campaignSettings.test.ts tests/sellerMessaging.test.ts tests/campaignScheduler.test.ts tests/purchaseAndDeliveryFlow.test.ts tests/campaignAuditLogs.test.ts tests/mandatoryContactsAndDelivery.test.ts tests/productionReadiness.test.ts tests/featureFlags.test.ts tests/customerTransactionalEmail.test.ts"
+    "test": "node --test tests/referral.test.ts tests/youtube.test.ts tests/export.test.ts tests/seller.test.ts tests/publicOrder.test.ts tests/sellerLifecycle.test.ts tests/exportReliability.test.ts tests/roleRouting.test.ts tests/sellerOrder.test.ts tests/campaignSettings.test.ts tests/sellerMessaging.test.ts tests/campaignScheduler.test.ts tests/purchaseAndDeliveryFlow.test.ts tests/campaignAuditLogs.test.ts tests/mandatoryContactsAndDelivery.test.ts tests/productionReadiness.test.ts tests/featureFlags.test.ts tests/customerTransactionalEmail.test.ts tests/deployment.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -31,6 +31,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "playwright": "^1.64.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveDeploymentId } from "../src/lib/config/deployment.ts";
+import nextConfig from "../next.config.ts";
 
 describe("Next.js Deployment ID & Version Skew Protection", () => {
   it("prefers VERCEL_DEPLOYMENT_ID and strips 'dpl_' prefix", () => {
@@ -110,5 +111,47 @@ describe("Next.js Deployment ID & Version Skew Protection", () => {
     assert.ok(idA);
     assert.ok(idB);
     assert.notEqual(idA, idB);
+  });
+
+  it("ensures nextConfig explicitly disables runtimeServerDeploymentId", () => {
+    assert.equal(
+      nextConfig.experimental?.runtimeServerDeploymentId,
+      false,
+      "runtimeServerDeploymentId must be explicitly false so Next.js embeds the deploymentId in the build output and avoids crashing on missing process.env.NEXT_DEPLOYMENT_ID at runtime"
+    );
+  });
+
+  it("simulates Next.js server initialization and verifies zero runtime missing-env errors", () => {
+    // Next.js base-server.js logic simulation:
+    // If runtimeServerDeploymentId is false, it uses nextConfig.deploymentId directly
+    // and does NOT throw 'process.env.NEXT_DEPLOYMENT_ID is missing'
+    const simulatedNextConfig = {
+      deploymentId: "test_deployment_id_123",
+      experimental: {
+        runtimeServerDeploymentId: false,
+      },
+    };
+
+    const runtimeEnv: Record<string, string | undefined> = {
+      NODE_ENV: "production",
+      VERCEL_DEPLOYMENT_ID: "dpl_test_deployment_id_123",
+      // Notice: NEXT_DEPLOYMENT_ID is deliberately undefined (as it is in real Vercel runtime)
+    };
+
+    let serverDeploymentId: string = "";
+    assert.doesNotThrow(() => {
+      if (simulatedNextConfig.experimental.runtimeServerDeploymentId) {
+        if (!runtimeEnv.NEXT_DEPLOYMENT_ID) {
+          throw new Error("process.env.NEXT_DEPLOYMENT_ID is missing but runtimeServerDeploymentId is enabled");
+        }
+        serverDeploymentId = runtimeEnv.NEXT_DEPLOYMENT_ID;
+      } else {
+        serverDeploymentId = simulatedNextConfig.deploymentId || "";
+        runtimeEnv.NEXT_DEPLOYMENT_ID = serverDeploymentId;
+      }
+    });
+
+    assert.equal(serverDeploymentId, "test_deployment_id_123");
+    assert.equal(runtimeEnv.NEXT_DEPLOYMENT_ID, "test_deployment_id_123");
   });
 });

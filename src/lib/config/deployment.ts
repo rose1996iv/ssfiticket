@@ -2,7 +2,7 @@
  * Next.js Deployment ID & Version Skew Protection
  *
  * Rules:
- * 1. Prefer VERCEL_DEPLOYMENT_ID (available at build time and runtime on Vercel).
+ * 1. Prefer VERCEL_DEPLOYMENT_ID (system-provided by Vercel at build time and runtime).
  * 2. Fall back to VERCEL_GIT_COMMIT_SHA, GITHUB_SHA, or NEXT_DEPLOYMENT_ID.
  * 3. Validation:
  *    - Must NOT begin with 'dpl_'.
@@ -17,13 +17,13 @@ export function resolveDeploymentId(env: Record<string, string | undefined> = pr
     return undefined;
   }
 
-  // 1. Prefer Vercel system deployment ID
+  // 1. Prefer Vercel system-provided deployment ID
   const raw =
     env.VERCEL_DEPLOYMENT_ID ||
-    env.NEXT_DEPLOYMENT_ID ||
     env.VERCEL_GIT_COMMIT_SHA ||
     env.GITHUB_SHA ||
-    env.GIT_COMMIT_SHA;
+    env.GIT_COMMIT_SHA ||
+    env.NEXT_DEPLOYMENT_ID;
 
   if (!raw || raw.trim() === "") {
     return env.NODE_ENV === "production" ? "local-prod-build" : undefined;

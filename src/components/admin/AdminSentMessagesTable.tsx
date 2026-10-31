@@ -37,7 +37,9 @@ export type SentMessageItem = {
   archived_at: string | null;
   sender_role?: "ADMIN" | "SELLER";
   parent_message_id?: string | null;
-  recipient_seller_id?: string;
+  recipient_seller_id?: string | null;
+  recipient_seller_code?: string | null;
+  recipient_display_name?: string | null;
   sellers: { seller_code: string; display_name: string } | null;
   profiles: { full_name: string; email: string } | null;
 };
@@ -62,10 +64,12 @@ export function AdminSentMessagesTable({ messages }: Props) {
   const [replySuccess, setReplySuccess] = useState<string | null>(null);
 
   const filtered = messages.filter((m) => {
+    const sellerCode = m.sellers?.seller_code || m.recipient_seller_code || "";
+    const sellerName = m.sellers?.display_name || m.recipient_display_name || "";
     const matchSearch =
       m.subject.toLowerCase().includes(search.toLowerCase()) ||
-      m.sellers?.seller_code.toLowerCase().includes(search.toLowerCase()) ||
-      m.sellers?.display_name.toLowerCase().includes(search.toLowerCase());
+      sellerCode.toLowerCase().includes(search.toLowerCase()) ||
+      sellerName.toLowerCase().includes(search.toLowerCase());
 
     if (!matchSearch) return false;
 
@@ -239,10 +243,17 @@ export function AdminSentMessagesTable({ messages }: Props) {
                             <span>Staff Notice</span>
                           </span>
                         )}
-                        <span className="font-bold text-[#35110f]">{msg.sellers?.display_name}</span>
-                        <span className="rounded-md bg-[#fceeee] px-2 py-0.5 font-mono text-[10px] font-bold text-[#a41f23]">
-                          {msg.sellers?.seller_code}
+                        <span className="font-bold text-[#35110f]">
+                          {msg.sellers?.display_name || msg.recipient_display_name || "Former Seller"}
                         </span>
+                        <span className="rounded-md bg-[#fceeee] px-2 py-0.5 font-mono text-[10px] font-bold text-[#a41f23]">
+                          {msg.sellers?.seller_code || msg.recipient_seller_code || "DELETED"}
+                        </span>
+                        {!msg.recipient_seller_id && (
+                          <span className="rounded-md bg-gray-100 border border-gray-200 px-1.5 py-0.5 font-sans text-[10px] text-gray-600">
+                            Deleted
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="py-3">
@@ -302,7 +313,8 @@ export function AdminSentMessagesTable({ messages }: Props) {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-[#fceeee] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#a41f23]">
-                    {selectedMessage.sellers?.seller_code} · {selectedMessage.sellers?.display_name}
+                    {selectedMessage.sellers?.seller_code || selectedMessage.recipient_seller_code || "DELETED"} · {selectedMessage.sellers?.display_name || selectedMessage.recipient_display_name || "Former Seller"}
+                    {!selectedMessage.recipient_seller_id && " (Deleted)"}
                   </span>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-[#705a54]">
                     Conversation Thread ({activeThread.length} message{activeThread.length > 1 ? "s" : ""})
@@ -345,7 +357,7 @@ export function AdminSentMessagesTable({ messages }: Props) {
                           <>
                             <User size={14} className="text-emerald-700 shrink-0" />
                             <span className="font-bold text-emerald-900">
-                              {threadMsg.sellers?.display_name || "Seller"} ({threadMsg.sellers?.seller_code || "SELLER"})
+                              {threadMsg.sellers?.display_name || threadMsg.recipient_display_name || "Seller"} ({threadMsg.sellers?.seller_code || threadMsg.recipient_seller_code || "SELLER"})
                             </span>
                             <span className="rounded-full bg-emerald-100 px-2 py-0.2 font-mono text-[9px] font-bold text-emerald-800">
                               {idx === 0 ? "Original Inquiry" : "Seller Reply"}
@@ -398,7 +410,7 @@ export function AdminSentMessagesTable({ messages }: Props) {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-[#7c1619] flex items-center gap-1.5">
                       <Reply size={14} />
-                      <span>Reply to {selectedMessage.sellers?.display_name}</span>
+                      <span>Reply to {selectedMessage.sellers?.display_name || selectedMessage.recipient_display_name || "Seller"}</span>
                     </span>
                     <button
                       type="button"
@@ -454,6 +466,10 @@ export function AdminSentMessagesTable({ messages }: Props) {
                   <Reply size={14} />
                   <span>Reply to Thread</span>
                 </button>
+              ) : !selectedMessage.recipient_seller_id ? (
+                <span className="text-2xs text-[#705a54] italic">
+                  Seller account was permanently deleted. Historical thread is preserved in read-only mode.
+                </span>
               ) : (
                 <div />
               )}

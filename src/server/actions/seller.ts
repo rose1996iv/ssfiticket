@@ -519,17 +519,35 @@ export async function permanentlyDeleteSeller(
     r.roles?.name ? ["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"].includes(r.roles.name) : false
   );
 
-  // 1. Delete seller record
+  // 1. Ensure historical messages have identity snapshots populated before FK is set to NULL
+  try {
+    await admin
+      .from("seller_messages")
+      .update({
+        recipient_seller_code: seller.seller_code,
+        recipient_display_name: seller.display_name,
+      })
+      .eq("recipient_seller_id", sellerId)
+      .or("recipient_seller_code.is.null,recipient_display_name.is.null");
+  } catch (snapshotErr) {
+    console.warn("[Seller Delete Warning] Snapshot pre-fill warning:", snapshotErr);
+  }
+
+  // 2. Delete seller record (FK automatically sets recipient_seller_id = NULL on seller_messages without deleting history)
   const { error: sellerDelErr } = await admin
     .from("sellers")
     .delete()
     .eq("id", sellerId);
 
   if (sellerDelErr) {
-    return { success: false, error: `Failed to delete seller record: ${sellerDelErr.message}` };
+    let friendlyError = sellerDelErr.message;
+    if (sellerDelErr.code === "23503" || sellerDelErr.message.includes("foreign key")) {
+      friendlyError = `Cannot delete seller: Dependent database records exist (${sellerDelErr.message}).`;
+    }
+    return { success: false, error: `Failed to delete seller record: ${friendlyError}` };
   }
 
-  // 2. Remove SELLER role
+  // 3. Remove SELLER role
   const { data: sellerRole } = await admin.from("roles").select("id").eq("name", "SELLER").single();
   if (sellerRole) {
     await admin
@@ -539,7 +557,7 @@ export async function permanentlyDeleteSeller(
       .eq("role_id", sellerRole.id);
   }
 
-  // 3. If user has no remaining staff roles, remove profile & auth user
+  // 4. If user has no remaining staff roles, remove profile & auth user
   if (!hasStaffRole) {
     await admin.from("profiles").delete().eq("id", seller.profile_id);
     try {
@@ -549,7 +567,7 @@ export async function permanentlyDeleteSeller(
     }
   }
 
-  // 4. Audit Log
+  // 5. Audit Log
   await admin.from("audit_logs").insert({
     actor_user_id: actor.id,
     action: "SELLER_PERMANENTLY_DELETED",
@@ -563,5 +581,7 @@ export async function permanentlyDeleteSeller(
   });
 
   revalidatePath("/admin/sellers");
+  revalidatePath("/admin/messages");
+  revalidatePath("/admin");
   return { success: true, message: `Seller ${seller.seller_code} permanently deleted.` };
 }

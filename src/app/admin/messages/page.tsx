@@ -33,7 +33,7 @@ export default async function AdminMessagesPage() {
   const { data: rawMessages = [] } = await db
     .from("seller_messages")
     .select(
-      "id, subject, body, created_at, read_at, archived_at, sender_role, parent_message_id, recipient_seller_id, sellers(seller_code, display_name), profiles(full_name, email)"
+      "id, subject, body, created_at, read_at, archived_at, sender_role, parent_message_id, recipient_seller_id, recipient_seller_code, recipient_display_name, sellers(seller_code, display_name), profiles(full_name, email)"
     )
     .order("created_at", { ascending: false })
     .limit(100);

@@ -38,6 +38,7 @@ type Props = {
   customerWhatsapp?: string | null;
   paymentStatus?: string;
   utrReference?: string | null;
+  payerName?: string | null;
   submittedAt?: string | null;
   orderStatus: string;
   canManageRecovery: boolean;
@@ -54,6 +55,7 @@ export function AdminPaymentRecoveryCard({
   customerWhatsapp = null,
   paymentStatus = "PENDING",
   utrReference = null,
+  payerName = null,
   submittedAt = null,
   orderStatus,
   canManageRecovery,
@@ -69,10 +71,11 @@ export function AdminPaymentRecoveryCard({
   const isIssued = orderStatus === "TICKETS_ISSUED" || paymentStatus === "VERIFIED";
   const isCancelled = orderStatus === "CANCELLED" || orderStatus === "REFUNDED";
 
+  const missingPayer = !payerName || !payerName.trim();
   const missingUtr = !utrReference || !utrReference.trim();
   const missingEmail = !customerEmail || !customerEmail.trim();
   const missingWhatsapp = !customerWhatsapp || !customerWhatsapp.trim();
-  const hasMissingDetails = missingUtr || missingEmail || missingWhatsapp;
+  const hasMissingDetails = missingPayer || missingUtr || missingEmail || missingWhatsapp;
 
   const handleGenerateLink = async () => {
     setLoading(true);
@@ -183,8 +186,15 @@ export function AdminPaymentRecoveryCard({
         )}
       </div>
 
-      {/* Details Status Breakdown */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+      {/* Details Status Breakdown (4 Mandatory Fields) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+        <div className={`rounded-xl border p-3 ${missingPayer ? "border-amber-200 bg-amber-50/60" : "border-[#eadbcf] bg-[#fffaf7]"}`}>
+          <span className="text-[10px] uppercase font-bold text-[#705a54]">Payer Name</span>
+          <p className={`mt-0.5 font-medium truncate ${missingPayer ? "text-amber-800 font-bold" : "text-[#35110f] font-bold"}`}>
+            {payerName || "MISSING / NOT SUBMITTED"}
+          </p>
+        </div>
+
         <div className={`rounded-xl border p-3 ${missingUtr ? "border-amber-200 bg-amber-50/60" : "border-[#eadbcf] bg-[#fffaf7]"}`}>
           <span className="text-[10px] uppercase font-bold text-[#705a54]">UTR Reference</span>
           <p className={`mt-0.5 font-mono font-bold ${missingUtr ? "text-amber-800" : "text-[#7c1619]"}`}>

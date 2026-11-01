@@ -33,12 +33,21 @@ const paymentCompletionSchema = z.object({
   utr: z
     .string()
     .trim()
-    .min(6, "UTR / Reference must be at least 6 characters.")
-    .max(64, "UTR cannot exceed 64 characters.")
-    .regex(/^[A-Za-z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens."),
+    .transform((val) => val.replace(/\s+/g, "").toUpperCase())
+    .pipe(
+      z
+        .string()
+        .min(6, "UTR / Transaction Reference must be at least 6 characters.")
+        .max(32, "UTR cannot exceed 32 characters.")
+        .regex(/^[A-Z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens.")
+    ),
   email: emailSchema,
   whatsapp: whatsappSchema,
-  payerName: z.string().trim().max(120).optional(),
+  payerName: z
+    .string()
+    .trim()
+    .min(2, "Payer name must be at least 2 characters.")
+    .max(120, "Payer name cannot exceed 120 characters."),
 });
 
 export type GenerateRecoveryLinkResult = {
@@ -278,14 +287,19 @@ export async function submitPaymentCompletion(
   formData: FormData
 ): Promise<SubmitPaymentCompletionResult> {
   const rawToken = formData.get("token") ? String(formData.get("token")).trim() : undefined;
+  const rawOrderId = formData.get("orderId");
+  const rawUtr = formData.get("utr");
+  const rawEmail = formData.get("email");
+  const rawWhatsapp = formData.get("whatsapp");
+  const rawPayerName = formData.get("payerName");
 
   const parsed = paymentCompletionSchema.safeParse({
-    orderId: formData.get("orderId"),
+    orderId: typeof rawOrderId === "string" ? rawOrderId : undefined,
     token: rawToken,
-    utr: formData.get("utr"),
-    email: formData.get("email"),
-    whatsapp: formData.get("whatsapp"),
-    payerName: formData.get("payerName"),
+    utr: typeof rawUtr === "string" ? rawUtr : undefined,
+    email: typeof rawEmail === "string" ? rawEmail : undefined,
+    whatsapp: typeof rawWhatsapp === "string" ? rawWhatsapp : undefined,
+    payerName: typeof rawPayerName === "string" ? rawPayerName : undefined,
   });
 
   if (!parsed.success) {
@@ -334,10 +348,10 @@ export async function submitPaymentCompletion(
   // Call atomic RPC
   const { data, error } = await admin.rpc("submit_payment_details_completion", {
     p_order_id: orderId,
-    p_utr: utr.trim(),
-    p_email: email.trim().toLowerCase(),
-    p_whatsapp: whatsapp.trim(),
-    p_payer_name: payerName?.trim() || null,
+    p_utr: utr,
+    p_email: email,
+    p_whatsapp: whatsapp,
+    p_payer_name: payerName,
     p_token_hash: tokenHash,
   });
 

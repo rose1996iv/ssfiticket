@@ -13,6 +13,7 @@ import { OfficialFooter } from "@/components/home/OfficialFooter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getPublicSellerDirectory } from "@/server/actions/sellerDirectory";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
+import { manualUpiConfig } from "@/lib/config/payment";
 
 const prizes = [
   ["1st Prize", "₹10,000 Cash Giveaway"],
@@ -140,7 +141,11 @@ export default async function Home() {
       />
 
       {/* Payment Instructions & Important Information Section */}
-      <PaymentInstructionsSection ticketPriceInr={ticketPriceInr} />
+      <PaymentInstructionsSection
+        ticketPriceInr={ticketPriceInr}
+        payeeName={manualUpiConfig.displayName}
+        upiId={manualUpiConfig.upiId}
+      />
 
       {/* Official Seller Directory */}
       <OfficialSellerDirectory sellers={publicSellers} />

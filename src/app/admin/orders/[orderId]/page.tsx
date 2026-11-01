@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { ArrowLeft, Clock, ExternalLink, Ticket } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, ExternalLink, Ticket } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hasAnyCurrentUserRole } from "@/lib/auth/server";
 import { getOrderRecoveryStatus } from "@/server/actions/paymentRecovery";
@@ -76,6 +76,13 @@ export default async function AdminOrderDetailPage({
     }
   }
 
+  const isDetailsComplete = Boolean(
+    payment?.payer_name &&
+    payment?.utr_reference &&
+    order.customers?.email &&
+    (order.customers?.whatsapp_number || order.customers?.phone)
+  );
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
@@ -149,27 +156,51 @@ export default async function AdminOrderDetailPage({
 
           {/* Payment Status & Submission Info */}
           <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-5">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">Payment Status</span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">Payment Status</span>
+              {isDetailsComplete ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                  <CheckCircle2 size={11} />
+                  <span>Details Complete</span>
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                  Details Incomplete
+                </span>
+              )}
+            </div>
             <p className="mt-1 font-mono text-base font-bold text-[#35110f]">
               {payment?.status ?? "PENDING"}
             </p>
-            {payment?.utr_reference ? (
-              <p className="mt-1 text-xs text-[#705a54]">
-                UTR: <b className="font-mono text-[#7c1619]">{payment.utr_reference}</b>
+
+            <div className="mt-2 space-y-1 text-xs text-[#705a54]">
+              <p>
+                Payer:{" "}
+                {payment?.payer_name ? (
+                  <b className="text-[#35110f]">{payment.payer_name}</b>
+                ) : (
+                  <span className="text-amber-800 font-semibold">Not provided</span>
+                )}
               </p>
-            ) : (
-              <p className="mt-1 text-xs font-semibold text-amber-800">
-                UTR: Not submitted yet
+              <p>
+                UTR:{" "}
+                {payment?.utr_reference ? (
+                  <b className="font-mono text-[#7c1619]">{payment.utr_reference}</b>
+                ) : (
+                  <span className="text-amber-800 font-semibold">Not submitted</span>
+                )}
               </p>
-            )}
+            </div>
+
             {payment?.submitted_at && (
-              <p className="text-[11px] text-[#705a54] flex items-center gap-1 mt-0.5">
+              <p className="text-[11px] text-[#705a54] flex items-center gap-1 mt-2">
                 <Clock size={11} />
                 <span>
                   Submitted: {new Date(payment.submitted_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
                 </span>
               </p>
             )}
+
             {payment && payment.status === "SUBMITTED" && (
               <div className="mt-3">
                 <Link
@@ -244,6 +275,7 @@ export default async function AdminOrderDetailPage({
         customerWhatsapp={order.customers?.whatsapp_number}
         paymentStatus={payment?.status ?? "PENDING"}
         utrReference={payment?.utr_reference}
+        payerName={payment?.payer_name}
         submittedAt={payment?.submitted_at}
         orderStatus={order.status}
         canManageRecovery={canManageRecovery}

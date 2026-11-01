@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { ArrowLeft, ExternalLink, Ticket } from "lucide-react";
+import { ArrowLeft, Clock, ExternalLink, Ticket } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { hasAnyCurrentUserRole } from "@/lib/auth/server";
+import { getOrderRecoveryStatus } from "@/server/actions/paymentRecovery";
 import { OrderDeliveryCard, DeliveryItem } from "@/components/admin/OrderDeliveryCard";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
+import { AdminPaymentRecoveryCard } from "@/components/admin/AdminPaymentRecoveryCard";
 
 export const instant = false;
 
@@ -15,7 +18,7 @@ type OrderDetail = {
   total_amount_paise: number;
   status: string;
   created_at: string;
-  customers: { full_name: string; phone: string; email: string | null } | null;
+  customers: { full_name: string; phone: string; whatsapp_number: string | null; email: string | null } | null;
   sellers: { display_name: string; seller_code: string } | null;
   payments: {
     id: string;
@@ -23,6 +26,8 @@ type OrderDetail = {
     utr_reference: string | null;
     payer_name: string | null;
     rejection_reason: string | null;
+    submitted_at: string | null;
+    verified_at: string | null;
   }[];
   tickets: {
     id: string;
@@ -44,7 +49,7 @@ export default async function AdminOrderDetailPage({
   const { data } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason), tickets(id, ticket_number, status, void_reason)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(id, ticket_number, status, void_reason)"
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -59,6 +64,17 @@ export default async function AdminOrderDetailPage({
 
   const payment = order.payments[0];
   const deliveries = rawDeliveries as unknown as DeliveryItem[];
+
+  // RBAC: Check whether user can generate and revoke recovery links
+  const canManageRecovery = await hasAnyCurrentUserRole(["SUPER_ADMIN", "ADMIN"]);
+  let initialTokenStatus = { hasToken: false, active: false };
+  if (canManageRecovery) {
+    try {
+      initialTokenStatus = await getOrderRecoveryStatus(order.id);
+    } catch (e) {
+      console.warn("[Admin Order Details] Failed to fetch recovery token status:", e);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -100,10 +116,13 @@ export default async function AdminOrderDetailPage({
           <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-5">
             <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">Customer</span>
             <p className="mt-1 text-base font-bold text-[#35110f]">{order.customers?.full_name}</p>
-            <p className="mt-1 text-xs text-[#705a54]">{order.customers?.phone}</p>
-            {order.customers?.email && (
-              <p className="text-xs text-[#705a54]">{order.customers.email}</p>
-            )}
+            <p className="mt-1 font-mono text-xs text-[#705a54]">Phone: {order.customers?.phone}</p>
+            <p className="font-mono text-xs text-[#705a54]">
+              WhatsApp: {order.customers?.whatsapp_number || <span className="text-amber-800 font-semibold">Not set</span>}
+            </p>
+            <p className="text-xs text-[#705a54]">
+              Email: {order.customers?.email || <span className="text-amber-800 font-semibold">Not set</span>}
+            </p>
           </div>
 
           {/* Seller */}
@@ -128,15 +147,27 @@ export default async function AdminOrderDetailPage({
             <p className="text-xs text-[#705a54]">Total Amount: ₹{order.total_amount_paise / 100}</p>
           </div>
 
-          {/* Payment Status */}
+          {/* Payment Status & Submission Info */}
           <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-5">
             <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">Payment Status</span>
             <p className="mt-1 font-mono text-base font-bold text-[#35110f]">
               {payment?.status ?? "PENDING"}
             </p>
-            {payment?.utr_reference && (
+            {payment?.utr_reference ? (
               <p className="mt-1 text-xs text-[#705a54]">
                 UTR: <b className="font-mono text-[#7c1619]">{payment.utr_reference}</b>
+              </p>
+            ) : (
+              <p className="mt-1 text-xs font-semibold text-amber-800">
+                UTR: Not submitted yet
+              </p>
+            )}
+            {payment?.submitted_at && (
+              <p className="text-[11px] text-[#705a54] flex items-center gap-1 mt-0.5">
+                <Clock size={11} />
+                <span>
+                  Submitted: {new Date(payment.submitted_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                </span>
               </p>
             )}
             {payment && payment.status === "SUBMITTED" && (
@@ -145,7 +176,7 @@ export default async function AdminOrderDetailPage({
                   href={`/admin/payments/${payment.id}`}
                   className="inline-flex items-center gap-1 text-xs font-bold text-[#7c1619] underline"
                 >
-                  <span>Review & Verify Payment</span>
+                  <span>Review &amp; Verify Payment</span>
                   <ExternalLink size={12} />
                 </Link>
               </div>
@@ -201,6 +232,23 @@ export default async function AdminOrderDetailPage({
           )}
         </div>
       </div>
+
+      {/* Admin Payment Recovery Card (Part C & Part E) */}
+      <AdminPaymentRecoveryCard
+        orderId={order.id}
+        orderNumber={order.order_number}
+        quantity={order.quantity}
+        totalAmountInr={order.total_amount_paise / 100}
+        customerPhone={order.customers?.phone ?? ""}
+        customerEmail={order.customers?.email}
+        customerWhatsapp={order.customers?.whatsapp_number}
+        paymentStatus={payment?.status ?? "PENDING"}
+        utrReference={payment?.utr_reference}
+        submittedAt={payment?.submitted_at}
+        orderStatus={order.status}
+        canManageRecovery={canManageRecovery}
+        initialTokenStatus={initialTokenStatus}
+      />
 
       {/* Free WhatsApp Ticket Dispatch Card */}
       {order.tickets.length > 0 && order.customers?.phone && (

@@ -6,7 +6,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
-  ShieldCheck,
+  RefreshCw,
   Ticket,
   XCircle,
 } from "lucide-react";
@@ -16,8 +16,8 @@ import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
 import { buildUpiPaymentUri, generateUpiQrDataUrl } from "@/lib/payment/upi";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/brand/Logo";
-import { PublicUpiPaymentForm } from "@/components/payment/PublicUpiPaymentForm";
-import { UpiPaymentBox } from "@/components/payment/UpiPaymentBox";
+import { CustomerPaymentJourney } from "@/components/payment/CustomerPaymentJourney";
+import { PaymentDetailsForm } from "@/components/payment/PaymentDetailsForm";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
 export const instant = false;
@@ -30,14 +30,15 @@ type OrderData = {
   status: string;
   created_at: string;
   customers:
-    | { full_name: string; whatsapp_number: string; email?: string | null }[]
-    | { full_name: string; whatsapp_number: string; email?: string | null }
+    | { full_name: string; phone?: string; whatsapp_number: string; email?: string | null }[]
+    | { full_name: string; phone?: string; whatsapp_number: string; email?: string | null }
     | null;
   sellers: { display_name: string; seller_code: string } | null;
   payments: {
     id: string;
     status: string;
     utr_reference: string | null;
+    payer_name?: string | null;
     rejection_reason: string | null;
     submitted_at: string | null;
     verified_at: string | null;
@@ -59,7 +60,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -83,7 +84,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
     | null;
   const rawCustomer = order.customers as unknown;
   const customer = (Array.isArray(rawCustomer) ? rawCustomer[0] : rawCustomer) as
-    | { full_name?: string; whatsapp_number?: string; email?: string | null }
+    | { full_name?: string; phone?: string; whatsapp_number?: string; email?: string | null }
     | undefined
     | null;
   const seller = order.sellers;
@@ -150,11 +151,11 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-green-900 shadow-xs">
             <div className="flex items-center gap-2 font-bold">
               <CheckCircle2 size={18} className="text-green-600" />
-              <span>Payment Reference Submitted!</span>
+              <span>Payment Details Received!</span>
             </div>
             <p className="mt-1 text-xs text-green-800 leading-relaxed">
-              Your payment reference has been recorded and is currently awaiting manual review by
-              SSFI staff. Save this page URL to check your ticket issuance status.
+              Your payment reference and contact details have been safely registered and are currently awaiting
+              verification by SSFI administrators. Save this page to check your ticket issuance status.
             </p>
           </div>
         )}
@@ -195,7 +196,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </div>
             <div>
               <dt className="text-xs text-[#705a54]">Phone / WhatsApp</dt>
-              <dd className="font-mono text-xs">{customer?.whatsapp_number}</dd>
+              <dd className="font-mono text-xs">{customer?.whatsapp_number || customer?.phone}</dd>
             </div>
             <div>
               <dt className="text-xs text-[#705a54]">Quantity</dt>
@@ -338,23 +339,49 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           </div>
         )}
 
-        {/* Payment Review in Progress */}
+        {/* Payment Review in Progress (Submitted & Awaiting Verification) */}
         {isSubmitted && !isIssued && (
-          <div className="rounded-2xl border border-blue-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-2 text-blue-800">
-              <Clock size={20} />
-              <h2 className="text-base font-bold">Verification In Progress</h2>
+          <div className="rounded-2xl border border-blue-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-blue-900">
+              <Clock size={20} className="text-blue-700" />
+              <h2 className="text-base font-bold">Payment details received. Awaiting Admin Verification.</h2>
             </div>
-            <p className="mt-2 text-xs text-[#705a54] leading-relaxed">
-              We received your submitted transaction reference:
-            </p>
-            <p className="mt-1 font-mono text-sm font-bold text-[#35110f]">
-              {payment?.utr_reference}
-            </p>
-            <p className="mt-3 text-xs text-[#705a54] leading-relaxed">
-              Our fundraising administrators verify incoming bank transfers against the bank statement.
-              Once confirmed, your tickets and verification QR codes will automatically appear on this page.
-            </p>
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-xs text-blue-950 space-y-2">
+              <p className="font-semibold text-blue-900">Submitted Transaction Reference:</p>
+              <p className="font-mono text-base font-bold text-[#7c1619]">{payment?.utr_reference}</p>
+              {payment?.submitted_at && (
+                <p className="text-[11px] text-blue-800">
+                  Registered: {new Date(payment.submitted_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                </p>
+              )}
+              <p className="mt-2 text-[11px] leading-relaxed text-blue-900">
+                Our organizers will manually inspect bank credit records against your UTR. Once confirmed,
+                your lucky draw tickets will appear here and be dispatched to <b>{customer?.whatsapp_number || customer?.phone}</b>.
+              </p>
+            </div>
+
+            {/* Reopening & Correcting Details while unverified */}
+            <div className="pt-2 border-t border-[#f0e7df]">
+              <details className="group text-xs">
+                <summary className="font-semibold text-[#7c1619] cursor-pointer hover:underline flex items-center gap-1.5 py-1">
+                  <RefreshCw size={13} />
+                  <span>Need to correct your submitted UTR or contact info? Click here</span>
+                </summary>
+                <div className="mt-4 pt-3 border-t border-[#f0e7df]">
+                  <PaymentDetailsForm
+                    orderId={order.id}
+                    orderNumber={order.order_number}
+                    initialUtr={payment?.utr_reference ?? ""}
+                    initialEmail={customer?.email ?? ""}
+                    suggestedPhone={customer?.phone ?? customer?.whatsapp_number ?? ""}
+                    initialWhatsapp={customer?.whatsapp_number ?? ""}
+                    initialPayerName={payment?.payer_name ?? ""}
+                    isReopening={true}
+                    isMock={manualUpiConfig.isMock}
+                  />
+                </div>
+              </details>
+            </div>
           </div>
         )}
 
@@ -374,60 +401,31 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
           </div>
         )}
 
-        {/* Payment Instructions & Official UPI Options (Pending or Rejected) */}
+        {/* Part A: Customer Payment Journey & Part B: Details Form (Pending or Rejected) */}
         {(isPending || isRejected) && (
-          <div className="rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-2 font-bold text-[#7c1619]">
-              <ShieldCheck size={20} />
-              <h2 className="text-lg">Payment Instructions</h2>
-            </div>
-            <p className="mt-1 text-xs text-[#705a54]">
-              Pay via any UPI application (Google Pay, PhonePe, Paytm, BHIM, or Mobile Banking).
-            </p>
-
-            {/* Interactive UPI Payment Box with Intent Launch & Dynamic Order QR */}
-            <div className="my-5">
-              <UpiPaymentBox
-                orderNumber={order.order_number}
-                payeeName={manualUpiConfig.displayName}
-                upiId={manualUpiConfig.upiId}
-                amountInr={totalInr}
-                upiIntentUri={upiIntentUri}
-                dynamicQrDataUrl={dynamicQrDataUrl}
-                staticQrImagePath={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-                isMock={manualUpiConfig.isMock}
-              />
-            </div>
-
-            {/* Payment Summary Details */}
-            <div className="my-5 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[#705a54]">Order Number</span>
-                <span className="font-mono font-bold text-[#35110f]">{order.order_number}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
-                <span className="text-xs text-[#705a54]">Payee Name</span>
-                <span className="font-bold text-[#35110f]">{manualUpiConfig.displayName}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
-                <span className="text-xs text-[#705a54]">UPI ID</span>
-                <span className="font-mono font-bold text-[#7c1619]">{manualUpiConfig.upiId}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
-                <span className="text-xs text-[#705a54]">Amount Due</span>
-                <span className="text-base font-bold text-[#7c1619]">
-                  ₹{totalInr.toFixed(2)} {manualUpiConfig.currency}
-                </span>
-              </div>
-              <div className="mt-2 flex items-center justify-between border-t border-[#f0e7df] pt-2">
-                <span className="text-xs text-[#705a54]">Support &amp; Inquiries</span>
-                <span className="text-xs font-medium text-[#35110f]">{manualUpiConfig.supportEmail}</span>
-              </div>
-            </div>
-
-            {/* UTR Form with Simulated Test Controls */}
-            <PublicUpiPaymentForm orderId={order.id} isMock={manualUpiConfig.isMock} />
-          </div>
+          <CustomerPaymentJourney
+            orderNumber={order.order_number}
+            payeeName={manualUpiConfig.displayName}
+            upiId={manualUpiConfig.upiId}
+            amountInr={totalInr}
+            upiIntentUri={upiIntentUri}
+            dynamicQrDataUrl={dynamicQrDataUrl}
+            staticQrImagePath={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
+            isMock={manualUpiConfig.isMock}
+            isReopening={false}
+          >
+            <PaymentDetailsForm
+              orderId={order.id}
+              orderNumber={order.order_number}
+              initialUtr={payment?.utr_reference ?? ""}
+              initialEmail={customer?.email ?? ""}
+              suggestedPhone={customer?.phone ?? customer?.whatsapp_number ?? ""}
+              initialWhatsapp={customer?.whatsapp_number ?? ""}
+              initialPayerName={payment?.payer_name ?? ""}
+              isReopening={false}
+              isMock={manualUpiConfig.isMock}
+            />
+          </CustomerPaymentJourney>
         )}
 
         {/* Back Link */}

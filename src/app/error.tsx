@@ -10,27 +10,49 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // If the error is due to chunk failure or stale router tree from a deployment update,
-    // a single automatic full reload self-heals the mobile client.
-    const message = error?.message || "";
-    const isChunkOrVersionError =
-      message.includes("Loading chunk") ||
-      message.includes("Failed to fetch dynamically imported module") ||
-      message.includes("router state") ||
-      error?.digest?.includes("NEXT_ROUTER_PREFETCH");
+    // If an unhandled error reaches the global error boundary,
+    // execute a single automatic full reload with cache-busting to self-heal
+    // stale mobile browser client tabs, version skew, chunk load failures, or BFCache traps.
+    if (typeof window !== "undefined") {
+      const message = error?.message || "";
+      const isChunkOrVersionError =
+        message.includes("Loading chunk") ||
+        message.includes("Failed to fetch dynamically imported module") ||
+        message.includes("router state") ||
+        message.includes("Server Components render") ||
+        Boolean(error?.digest);
 
-    if (isChunkOrVersionError && typeof window !== "undefined") {
-      const reloadedKey = `_reloaded_${error?.digest || message}`;
-      if (!sessionStorage.getItem(reloadedKey)) {
-        sessionStorage.setItem(reloadedKey, "1");
-        window.location.reload();
+      if (isChunkOrVersionError) {
+        const reloadKey = `_err_rec_${window.location.pathname}_${error?.digest || "stale"}`;
+        try {
+          if (!sessionStorage.getItem(reloadKey)) {
+            sessionStorage.setItem(reloadKey, "1");
+            const url = new URL(window.location.href);
+            url.searchParams.set("_r", Date.now().toString());
+            window.location.replace(url.toString());
+          }
+        } catch {
+          // If sessionStorage access is restricted in private/incognito mode
+          try {
+            window.location.reload();
+          } catch {
+            // Ignore if reload blocked
+          }
+        }
       }
     }
   }, [error]);
 
   function handleHardReload() {
     if (typeof window !== "undefined") {
-      window.location.href = window.location.href;
+      try {
+        // Bust mobile browser BFCache and intermediate CDN/proxy caches
+        const url = new URL(window.location.href);
+        url.searchParams.set("_r", Date.now().toString());
+        window.location.replace(url.toString());
+      } catch {
+        window.location.reload();
+      }
     } else {
       reset();
     }

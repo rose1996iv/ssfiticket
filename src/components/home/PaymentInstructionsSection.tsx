@@ -9,13 +9,71 @@ import {
   ShieldCheck,
   Smartphone,
   Ticket,
+  UserCheck,
 } from "lucide-react";
 
 type Props = {
   ticketPriceInr?: number;
+  payeeName: string;
+  upiId: string;
 };
 
-export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
+const PAYMENT_STEPS = [
+  {
+    step: 1,
+    title: "Select Tickets & Create Order",
+    desc: "Select your ticket quantity and create your order. The total payable amount is calculated server-side based strictly on the campaign unit price.",
+    icon: Ticket,
+  },
+  {
+    step: 2,
+    title: "Open Order Confirmation Page",
+    desc: "Open your order confirmation page showing your unique Order Number (e.g. ORD-2026-XXXXXX) and payment status.",
+    icon: FileCheck2,
+  },
+  {
+    step: 3,
+    title: "Choose Payment Method & Pay",
+    desc: "Pay using the official SSFI UPI ID or QR code displayed by the system in Google Pay, PhonePe, Paytm, BHIM, or any UPI app.",
+    icon: Smartphone,
+  },
+  {
+    step: 4,
+    title: "Verify Payment Details & Return",
+    desc: "Verify Payment Details in your app before confirming. After transferring money, return to your order page.",
+    icon: ArrowRight,
+  },
+  {
+    step: 5,
+    title: 'Tap "I Have Completed Payment"',
+    desc: "Tap the green \"I Have Completed Payment\" button to open the mandatory details submission form.",
+    icon: CheckCircle2,
+  },
+  {
+    step: 6,
+    title: "Submit Reference (UTR) & Details",
+    desc: "Enter your payment details and submit. Submitting a UTR does not automatically confirm payment receipt; it submits your transfer for review.",
+    icon: UserCheck,
+  },
+  {
+    step: 7,
+    title: "Wait for SSFI Admin Verification",
+    desc: "Wait for the SSFI Admin to verify the payment. Payment Review &amp; Ticket Issuance requires cross-referencing incoming bank credits.",
+    icon: Clock,
+  },
+  {
+    step: 8,
+    title: "Receive Verified Tickets",
+    desc: "Receive your ticket after successful verification. Tickets are valid only after successful payment verification and are delivered to WhatsApp & Email.",
+    icon: ShieldCheck,
+  },
+];
+
+export function PaymentInstructionsSection({
+  ticketPriceInr = 100,
+  payeeName,
+  upiId,
+}: Props) {
   return (
     <section
       id="payment-instructions"
@@ -33,7 +91,7 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
             id="payment-instructions-heading"
             className="glitch-title mt-3 text-3xl font-bold tracking-tight text-[#35110f] sm:text-4xl"
           >
-            Payment Instructions &amp; Important Information
+            How to Complete Your Ticket Payment
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-[#705a54]">
             Please read these guidelines carefully before purchasing your lucky draw tickets.
@@ -42,134 +100,171 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
           </p>
         </div>
 
-        {/* Part A: How to Buy Tickets and Pay (Numbered Steps) */}
+        {/* 8-Step Customer Payment Process */}
         <div className="mt-12">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-[#a41f23]">
-            How to Buy Tickets and Pay — 5 Simple Steps
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[#a41f23]">
+              How to Complete Your Ticket Payment — 8 Simple Steps
+            </h3>
+            <span className="text-xs font-semibold text-[#7c1619]">
+              ₹{ticketPriceInr} / ticket
+            </span>
+          </div>
 
-          <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Step 1 */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white shadow-xs">
-                    1
-                  </span>
-                  <Ticket className="text-[#a41f23]" size={22} aria-hidden="true" />
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {PAYMENT_STEPS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.step}
+                  className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-5 shadow-xs transition hover:border-[#d6a23b]"
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#7c1619] font-mono text-xs font-bold text-white shadow-xs">
+                        {item.step}
+                      </span>
+                      <Icon className="text-[#a41f23]" size={20} aria-hidden="true" />
+                    </div>
+                    <h4 className="mt-3 text-sm font-bold text-[#35110f]">
+                      Step {item.step}: {item.title}
+                    </h4>
+                    <p className="mt-1.5 text-xs leading-5 text-[#705a54]">
+                      {item.desc}
+                    </p>
+                  </div>
                 </div>
-                <h4 className="mt-4 text-base font-bold text-[#35110f]">Select Tickets</h4>
-                <p className="mt-2 text-xs leading-5 text-[#705a54]">
-                  Choose your desired ticket quantity. The total payable amount is calculated
-                  server-side based strictly on the campaign unit price (₹{ticketPriceInr} per ticket).
-                  Client-supplied prices or discounts are never accepted.
-                </p>
-              </div>
-              <div className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] font-medium text-[#7c1619]">
-                Authoritative server pricing: ₹{ticketPriceInr} / ticket
-              </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Official Account Details */}
+        <div className="mt-8 rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#a41f23]">
+                Official Beneficiary Details
+              </span>
+              <h4 className="text-base font-bold text-[#35110f] mt-1">
+                Authorized SSFI Bank &amp; UPI Account
+              </h4>
+              <p className="text-xs text-[#705a54] mt-0.5">
+                Always verify the payee name (<b className="text-[#35110f]">{payeeName}</b>) and UPI ID before paying.
+              </p>
             </div>
-
-            {/* Step 2 */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white shadow-xs">
-                    2
-                  </span>
-                  <Smartphone className="text-[#a41f23]" size={22} aria-hidden="true" />
-                </div>
-                <h4 className="mt-4 text-base font-bold text-[#35110f]">Choose Payment Method</h4>
-                <p className="mt-2 text-xs leading-5 text-[#705a54]">
-                  Pay using any supported UPI mobile application (Google Pay, PhonePe, Paytm, BHIM, Cred)
-                  or scan the order-specific dynamic QR code.
-                </p>
-                <div className="mt-3 rounded-xl border border-[#eadbcf] bg-white p-3 font-mono text-[11px] text-[#35110f] space-y-1">
-                  <p><span className="font-semibold text-[#705a54]">Payee:</span> HLAWN THA DAWT</p>
-                  <p><span className="font-semibold text-[#705a54]">UPI ID:</span> 6909251270@ptaxis</p>
-                  <p><span className="font-semibold text-[#705a54]">Currency:</span> INR (₹)</p>
-                </div>
+            <div className="flex flex-wrap gap-2.5 sm:shrink-0">
+              <div className="rounded-xl border border-[#eadbcf] bg-white px-4 py-2.5 font-mono text-xs text-[#35110f]">
+                <span className="block text-[10px] uppercase font-bold text-[#705a54]">Payee Name</span>
+                <span className="font-bold text-[#7c1619]">{payeeName}</span>
               </div>
-              <div className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] text-[#705a54]">
-                App compatibility depends on your device and installed UPI apps.
+              <div className="rounded-xl border border-[#eadbcf] bg-white px-4 py-2.5 font-mono text-xs text-[#35110f]">
+                <span className="block text-[10px] uppercase font-bold text-[#705a54]">UPI ID</span>
+                <span className="font-bold text-[#7c1619]">{upiId}</span>
               </div>
-            </div>
-
-            {/* Step 3 */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white shadow-xs">
-                    3
-                  </span>
-                  <CheckCircle2 className="text-[#a41f23]" size={22} aria-hidden="true" />
-                </div>
-                <h4 className="mt-4 text-base font-bold text-[#35110f]">Verify Payment Details</h4>
-                <p className="mt-2 text-xs leading-5 text-[#705a54]">
-                  Before confirming the transfer in your bank or UPI application, verify that the
-                  payee name (<b className="text-[#35110f]">HLAWN THA DAWT</b>), UPI ID, and
-                  amount match your order summary exactly.
-                </p>
-              </div>
-              <div className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] text-[#705a54]">
-                The dynamic payment QR embeds the exact server-calculated amount.
-              </div>
-            </div>
-
-            {/* Step 4 */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white shadow-xs">
-                    4
-                  </span>
-                  <FileCheck2 className="text-[#a41f23]" size={22} aria-hidden="true" />
-                </div>
-                <h4 className="mt-4 text-base font-bold text-[#35110f]">Submit Reference (UTR)</h4>
-                <p className="mt-2 text-xs leading-5 text-[#705a54]">
-                  After the transfer succeeds, return to your order confirmation page and enter the
-                  12-digit bank reference (UTR).
-                </p>
-                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 p-2.5 text-[11px] text-amber-950">
-                  <b>Important:</b> Submitting a UTR does not automatically confirm payment receipt.
-                  It submits your transfer for review by the finance committee.
-                </div>
-              </div>
-              <div className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] text-[#705a54]">
-                Reference numbers can be found in your UPI app receipt.
-              </div>
-            </div>
-
-            {/* Step 5 */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs sm:col-span-2 lg:col-span-2">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white shadow-xs">
-                    5
-                  </span>
-                  <ShieldCheck className="text-[#a41f23]" size={22} aria-hidden="true" />
-                </div>
-                <h4 className="mt-4 text-base font-bold text-[#35110f]">Payment Review &amp; Ticket Issuance</h4>
-                <p className="mt-2 text-xs leading-5 text-[#705a54]">
-                  SSFI administration cross-references incoming bank statements with submitted UTRs.
-                  Tickets become valid <b>only after successful payment verification</b> and atomic database allocation.
-                  Official ticket numbers (SSFI-XXXXXX) with scannable verification QR codes are then unlocked
-                  and delivered to your WhatsApp and email.
-                </p>
-                <p className="mt-2 text-[11px] text-[#80635b]">
-                  Tickets are never issued, and scannable verification QR codes are never displayed,
-                  for pending, unverified, or rejected payments.
-                </p>
-              </div>
-              <div className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] font-semibold text-emerald-800">
-                ✓ Every verified ticket receives a tamper-proof verification URL at ssfiticket.vercel.app/verify/[ticketNumber]
+              <div className="rounded-xl border border-[#eadbcf] bg-white px-4 py-2.5 font-mono text-xs text-[#35110f]">
+                <span className="block text-[10px] uppercase font-bold text-[#705a54]">Currency</span>
+                <span className="font-bold text-[#7c1619]">INR</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Part B: Payment Safety Warning */}
-        <div className="mt-10 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-950 shadow-xs">
+        {/* Dedicated Mandatory Payment Details Callout */}
+        <div className="mt-8 rounded-2xl border-2 border-[#d6a23b]/50 bg-[#fffdfa] p-6 shadow-xs">
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-[#d6a23b]/20 p-2.5 text-[#35110f] shrink-0">
+              <FileCheck2 size={24} />
+            </div>
+            <div className="space-y-3 w-full">
+              <div>
+                <h4 className="text-base font-bold text-[#35110f]">
+                  Mandatory Payment Details Required
+                </h4>
+                <p className="mt-1 text-xs text-[#705a54] leading-relaxed">
+                  After completing your UPI transfer, you must submit all four required details on your order page:
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-[#eadbcf] bg-white p-3.5">
+                  <p className="font-mono text-xs font-bold text-[#7c1619]">
+                    1. Payer Name
+                  </p>
+                  <p className="mt-0.5 text-xs text-[#705a54]">
+                    Name on bank or UPI account (helps administrators reconcile incoming credit quickly).
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#eadbcf] bg-white p-3.5">
+                  <p className="font-mono text-xs font-bold text-[#7c1619]">
+                    2. UTR / Transaction Reference
+                  </p>
+                  <p className="mt-0.5 text-xs text-[#705a54]">
+                    12-digit UPI reference number from your Google Pay, PhonePe, Paytm, or bank receipt.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#eadbcf] bg-white p-3.5">
+                  <p className="font-mono text-xs font-bold text-[#7c1619]">
+                    3. Customer Email Address
+                  </p>
+                  <p className="mt-0.5 text-xs text-[#705a54]">
+                    Where tickets and payment receipts are sent upon verification.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#eadbcf] bg-white p-3.5">
+                  <p className="font-mono text-xs font-bold text-[#7c1619]">
+                    4. WhatsApp Contact Number
+                  </p>
+                  <p className="mt-0.5 text-xs text-[#705a54]">
+                    For direct ticket delivery and verification contact.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#7c1619]/20 bg-[#fceeee]/70 p-3.5 text-xs font-semibold text-[#7c1619]">
+                ⚠️ All four fields are strictly mandatory. Orders without complete payment details cannot enter Admin Verification.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Prominent Customer Notices (7 Points) */}
+        <div className="mt-8 rounded-2xl border border-amber-300 bg-amber-50/90 p-6 text-amber-950 shadow-xs">
+          <div className="flex items-start gap-3.5">
+            <ShieldAlert className="mt-1 text-amber-700 shrink-0" size={24} aria-hidden="true" />
+            <div className="space-y-2.5">
+              <h4 className="text-base font-bold text-amber-950">
+                Important Customer Notices — Please Read Carefully
+              </h4>
+              <ul className="list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-amber-900">
+                <li>
+                  <b>Pay only to official SSFI details:</b> Pay only to the official SSFI UPI ID shown on the website (<b>{upiId}</b>, Payee: <b>{payeeName}</b>).
+                </li>
+                <li>
+                  <b>No automatic completion:</b> Opening a UPI app or returning from UPI does not mean payment is completed.
+                </li>
+                <li>
+                  <b>No immediate issuance:</b> Submitting details does not issue tickets immediately.
+                </li>
+                <li>
+                  <b>Bank credit verification:</b> Tickets are issued only after Admin checks actual bank credit.
+                </li>
+                <li>
+                  <b>Avoid delays:</b> Incomplete details delay ticket issuance.
+                </li>
+                <li>
+                  <b>Keep proof of payment:</b> Keep your bank SMS or UPI transaction screenshot until tickets are issued.
+                </li>
+                <li>
+                  <b>Avoid duplicate payments:</b> Avoid duplicate payments for the same order.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* Payment Safety Warning — Before You Pay */}
+        <div className="mt-8 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-950 shadow-xs">
           <div className="flex items-start gap-3.5">
             <ShieldAlert className="mt-1 text-amber-700 shrink-0" size={24} aria-hidden="true" />
             <div className="space-y-2">
@@ -178,8 +273,8 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
               </h4>
               <ul className="list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-amber-900">
                 <li>
-                  <b>Verify recipient details:</b> Always verify the recipient name (<b>HLAWN THA DAWT</b>),
-                  UPI ID (<b>6909251270@ptaxis</b>), and payable amount in your UPI app before entering your UPI PIN.
+                  <b>Verify recipient details:</b> Always verify the recipient name (<b>{payeeName}</b>),
+                  UPI ID (<b>{upiId}</b>), and payable amount in your UPI app before entering your UPI PIN.
                 </li>
                 <li>
                   <b>Pay only to official details:</b> Only transfer funds to the verified SSFI payment details
@@ -198,9 +293,9 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
           </div>
         </div>
 
-        {/* Part C: Important Note & Part D: Support Information */}
-        <div className="mt-6 grid gap-6 sm:grid-cols-2">
-          {/* Important Note */}
+        {/* Important Note & Support Information */}
+        <div className="mt-8 grid gap-6 sm:grid-cols-2">
+          {/* Important Note: Under Review */}
           <div className="rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
             <div className="flex items-start gap-3">
               <Clock className="mt-0.5 text-[#a41f23] shrink-0" size={20} aria-hidden="true" />
@@ -219,14 +314,14 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
           </div>
 
           {/* Support Information */}
-          <div className="rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs flex flex-col justify-between">
+          <div className="flex flex-col justify-between rounded-2xl border border-[#eadbcf] bg-[#fffaf7] p-6 shadow-xs">
             <div className="flex items-start gap-3">
               <Mail className="mt-0.5 text-[#7c1619] shrink-0" size={20} aria-hidden="true" />
               <div>
                 <h4 className="text-sm font-bold text-[#35110f]">Official Support &amp; Enquiries</h4>
                 <p className="mt-2 text-xs leading-5 text-[#705a54]">
                   For questions about payment verification, UTR submissions, or ticket issuance,
-                  please contact our designated support channel:
+                  contact our finance team:
                 </p>
                 <div className="mt-3">
                   <a
@@ -240,13 +335,13 @@ export function PaymentInstructionsSection({ ticketPriceInr = 100 }: Props) {
               </div>
             </div>
             <p className="mt-4 border-t border-[#f0e7df] pt-3 text-[11px] text-[#80635b]">
-              Include your Order Number (e.g. SSFI-ORD-2026-XXXXXX) in your email for prompt assistance.
+              Include your Order Number in your email for prompt assistance.
             </p>
           </div>
         </div>
 
-        {/* Part E: Link to Terms & Conditions */}
-        <div className="mt-10 flex flex-col items-center justify-between gap-4 rounded-2xl border border-[#eadbcf] bg-[#fefbf9] p-6 text-center sm:flex-row sm:text-left">
+        {/* Link to Terms & Conditions */}
+        <div className="mt-8 flex flex-col items-center justify-between gap-4 rounded-2xl border border-[#eadbcf] bg-[#fefbf9] p-6 text-center sm:flex-row sm:text-left">
           <div>
             <h4 className="text-sm font-bold text-[#35110f]">
               Full Payment Terms &amp; Conditions

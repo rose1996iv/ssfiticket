@@ -28,12 +28,21 @@ const paymentDetailsSchema = z.object({
   utr: z
     .string()
     .trim()
-    .min(6, "UTR / Reference must be at least 6 characters.")
-    .max(64, "UTR cannot exceed 64 characters.")
-    .regex(/^[A-Za-z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens."),
+    .transform((val) => val.replace(/\s+/g, "").toUpperCase())
+    .pipe(
+      z
+        .string()
+        .min(6, "UTR / Transaction Reference must be at least 6 characters.")
+        .max(32, "UTR cannot exceed 32 characters.")
+        .regex(/^[A-Z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens.")
+    ),
   email: emailSchema,
   whatsapp: whatsappSchema,
-  payerName: z.string().trim().max(120).optional(),
+  payerName: z
+    .string()
+    .trim()
+    .min(2, "Payer name must be at least 2 characters.")
+    .max(120, "Payer name cannot exceed 120 characters."),
 });
 
 type OrderModel = {
@@ -259,12 +268,16 @@ class SimulatedDb {
     payerName?: string;
     tokenHash?: string;
   }) {
-    const trimmedUtr = params.utr.trim();
+    const cleanUtr = params.utr.replace(/\s+/g, "").toUpperCase();
     const trimmedEmail = params.email.trim().toLowerCase();
     const trimmedWhatsapp = params.whatsapp.trim();
+    const trimmedPayer = (params.payerName ?? "").trim();
 
-    if (trimmedUtr.length < 6) {
+    if (cleanUtr.length < 6) {
       throw new Error("UTR / Reference must be at least 6 characters.");
+    }
+    if (cleanUtr.length > 32) {
+      throw new Error("UTR cannot exceed 32 characters.");
     }
 
     const order = this.orders.get(params.orderId);
@@ -302,7 +315,7 @@ class SimulatedDb {
 
     // Duplicate UTR check across different payments
     for (const p of this.payments.values()) {
-      if (p.id !== payment.id && p.utr_reference === trimmedUtr) {
+      if (p.id !== payment.id && p.utr_reference === cleanUtr) {
         throw new Error("This Transaction ID / UTR has already been submitted for another order.");
       }
     }
@@ -317,8 +330,8 @@ class SimulatedDb {
     // Update payment
     const now = new Date();
     payment.status = "SUBMITTED";
-    payment.utr_reference = trimmedUtr;
-    payment.payer_name = params.payerName?.trim() || null;
+    payment.utr_reference = cleanUtr;
+    payment.payer_name = trimmedPayer || null;
     payment.submitted_at = now.toISOString();
     payment.rejection_reason = null;
 
@@ -343,9 +356,10 @@ class SimulatedDb {
       entity_id: order.id,
       metadata: {
         order_number: order.order_number,
-        utr: trimmedUtr,
+        utr: cleanUtr,
         email: trimmedEmail,
         whatsapp: trimmedWhatsapp,
+        payer_name: trimmedPayer,
         reopened: wasSubmitted,
         is_recovery: Boolean(params.tokenHash),
       },
@@ -467,17 +481,57 @@ test("Suite 1: Cryptographic Token Security & Hashing Integrity", async (t) => {
   });
 });
 
-test("Suite 2: Customer Input Validation (UTR, Email, WhatsApp)", async (t) => {
+test("Suite 2: Customer Input Validation (Payer Name, UTR, Email, WhatsApp)", async (t) => {
   const validPayload = {
     orderId: "e24c02b9-d48c-4fc1-bd58-f02878bdfdcf",
+    payerName: "John Doe",
     utr: "428172918291",
     email: "customer@example.com",
     whatsapp: "+918810366357",
   };
 
-  await t.test("valid payload parses cleanly", () => {
+  await t.test("valid payload parses cleanly with all 4 mandatory fields", () => {
     const res = paymentDetailsSchema.safeParse(validPayload);
     assert.equal(res.success, true);
+  });
+
+  await t.test("missing or empty Payer Name is strictly rejected", () => {
+    const noPayer = paymentDetailsSchema.safeParse({ ...validPayload, payerName: "" });
+    assert.equal(noPayer.success, false);
+    if (!noPayer.success) {
+      assert.equal(noPayer.error.issues[0]?.message, "Payer name must be at least 2 characters.");
+    }
+
+    const whitespacePayer = paymentDetailsSchema.safeParse({ ...validPayload, payerName: "   " });
+    assert.equal(whitespacePayer.success, false);
+    if (!whitespacePayer.success) {
+      assert.equal(whitespacePayer.error.issues[0]?.message, "Payer name must be at least 2 characters.");
+    }
+
+    const shortPayer = paymentDetailsSchema.safeParse({ ...validPayload, payerName: "A" });
+    assert.equal(shortPayer.success, false);
+    if (!shortPayer.success) {
+      assert.equal(shortPayer.error.issues[0]?.message, "Payer name must be at least 2 characters.");
+    }
+
+    const omittedPayer = paymentDetailsSchema.safeParse({
+      orderId: validPayload.orderId,
+      utr: validPayload.utr,
+      email: validPayload.email,
+      whatsapp: validPayload.whatsapp,
+    });
+    assert.equal(omittedPayer.success, false);
+  });
+
+  await t.test("Payer Name exceeding 120 characters is rejected", () => {
+    const longPayer = paymentDetailsSchema.safeParse({
+      ...validPayload,
+      payerName: "A".repeat(121),
+    });
+    assert.equal(longPayer.success, false);
+    if (!longPayer.success) {
+      assert.equal(longPayer.error.issues[0]?.message, "Payer name cannot exceed 120 characters.");
+    }
   });
 
   await t.test("missing or short UTR is rejected", () => {
@@ -486,6 +540,25 @@ test("Suite 2: Customer Input Validation (UTR, Email, WhatsApp)", async (t) => {
 
     const shortUtr = paymentDetailsSchema.safeParse({ ...validPayload, utr: "12345" });
     assert.equal(shortUtr.success, false);
+  });
+
+  await t.test("UTR with internal spaces is normalized and uppercased", () => {
+    const res = paymentDetailsSchema.safeParse({
+      ...validPayload,
+      utr: " 4281 7291 8291 ",
+    });
+    assert.equal(res.success, true);
+    if (res.success) {
+      assert.equal(res.data.utr, "428172918291");
+    }
+  });
+
+  await t.test("UTR exceeding 32 characters is rejected", () => {
+    const longUtr = paymentDetailsSchema.safeParse({
+      ...validPayload,
+      utr: "A".repeat(33),
+    });
+    assert.equal(longUtr.success, false);
   });
 
   await t.test("UTR with invalid characters is rejected", () => {
@@ -609,6 +682,7 @@ test("Suite 4: Customer Details Submission & Verification State (Part B & D)", a
     const payment = db.payments.get(paymentId);
     assert.equal(payment?.status, "SUBMITTED");
     assert.equal(payment?.utr_reference, "428172918291");
+    assert.equal(payment?.payer_name, "Test Buyer");
     assert.ok(payment?.submitted_at !== null);
 
     const customer = db.customers.get(customerId);
@@ -642,6 +716,7 @@ test("Suite 4: Customer Details Submission & Verification State (Part B & D)", a
 
     const payment = db.payments.get(paymentId);
     assert.equal(payment?.utr_reference, "428172918999");
+    assert.equal(payment?.payer_name, "Updated Name");
 
     const customer = db.customers.get(customerId);
     assert.equal(customer?.email, "corrected-buyer@example.com");
@@ -675,6 +750,7 @@ test("Suite 4: Customer Details Submission & Verification State (Part B & D)", a
           utr: "428172918999", // already used above
           email: "second@example.com",
           whatsapp: "+919999999999",
+          payerName: "Second Buyer",
         });
       },
       /already been submitted for another order/,
@@ -771,7 +847,7 @@ test("Suite 5: Admin Recovery Link Generation & RBAC Security (Part C & E)", asy
     const expHash = hashRecoveryToken(expToken);
 
     // Generate link with negative expiry to simulate expiration
-    const res = db.createPaymentRecoveryLink(orderId, expHash, adminId, ["ADMIN"], -1);
+    db.createPaymentRecoveryLink(orderId, expHash, adminId, ["ADMIN"], -1);
     const lookup = db.lookupPaymentRecoveryToken(expHash);
     assert.equal(lookup.valid, false);
     assert.equal(lookup.status, "EXPIRED");
@@ -798,7 +874,7 @@ test("Suite 5: Admin Recovery Link Generation & RBAC Security (Part C & E)", asy
   });
 });
 
-test("Suite 6: Admin Payment Verification & Transactional Ticket Issuance Flow", async (t) => {
+test("Suite 6: Admin Payment Verification & Transactional Ticket Issuance Flow", async () => {
   const db = new SimulatedDb();
   const customerId = crypto.randomUUID();
   const orderId = crypto.randomUUID();
@@ -828,6 +904,7 @@ test("Suite 6: Admin Payment Verification & Transactional Ticket Issuance Flow",
     utr: "987654321012",
     email: "final@example.com",
     whatsapp: "+918810366357",
+    payerName: "Final Buyer",
   });
 
   const payment = Array.from(db.payments.values()).find((p) => p.order_id === orderId)!;
@@ -906,7 +983,7 @@ test("Suite 7: Free WhatsApp Share Link & Audit Trail Integrity (Part F & G)", a
   });
 });
 
-test("Suite 8: Final Requirement — Target Order ORD-2026-000003 Recovery Compatibility", async (t) => {
+test("Suite 8: Final Requirement — Target Order ORD-2026-000003 Recovery Compatibility", async () => {
   const db = new SimulatedDb();
 
   // Recreate ORD-2026-000003 matching production state

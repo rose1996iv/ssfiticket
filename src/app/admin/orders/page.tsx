@@ -37,6 +37,7 @@ type OrderRow = {
     id: string;
     status: string;
     utr_reference: string | null;
+    payer_name: string | null;
     amount_paise: number;
   }[];
   tickets: {
@@ -52,7 +53,7 @@ export default async function AdminOrdersPage() {
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers(id, display_name, seller_code), payments(id, status, utr_reference, amount_paise), tickets(id, ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers(id, display_name, seller_code), payments(id, status, utr_reference, payer_name, amount_paise), tickets(id, ticket_number, status)"
     )
     .order("created_at", { ascending: false })
     .limit(100);
@@ -107,11 +108,17 @@ export default async function AdminOrdersPage() {
   const totalOrders = orders.length;
   const totalRevenuePaise = orders.reduce((sum, o) => {
     // Only count verified payments or tickets issued orders
-    const isPaid = o.status === "TICKETS_ISSUED" || o.status === "PAYMENT_VERIFIED" || o.payments.some((p) => p.status === "VERIFIED");
+    const isPaid =
+      o.status === "TICKETS_ISSUED" ||
+      o.status === "PAYMENT_VERIFIED" ||
+      o.payments.some((p) => p.status === "VERIFIED");
     return isPaid ? sum + o.total_amount_paise : sum;
   }, 0);
   const totalTicketsIssued = orders.reduce((sum, o) => sum + (o.tickets?.length ?? 0), 0);
-  const pendingOrders = orders.filter((o) => o.status === "PAYMENT_SUBMITTED" || o.payments.some((p) => p.status === "SUBMITTED")).length;
+  const pendingOrders = orders.filter(
+    (o) =>
+      o.status === "PAYMENT_SUBMITTED" || o.payments.some((p) => p.status === "SUBMITTED")
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -191,9 +198,9 @@ export default async function AdminOrdersPage() {
               <th className="p-4">Date</th>
               <th className="p-4">Customer</th>
               <th className="p-4">Seller Attribution</th>
-              <th className="p-4">Size & Amount</th>
+              <th className="p-4">Size &amp; Amount</th>
               <th className="p-4">Order Status</th>
-              <th className="p-4">Payment & UTR</th>
+              <th className="p-4">Payment &amp; UTR</th>
               <th className="p-4">Tickets</th>
               <th className="p-4 text-right">Details</th>
             </tr>
@@ -208,6 +215,10 @@ export default async function AdminOrdersPage() {
 
               const primaryPayment = order.payments?.[0];
               const ticketCount = order.tickets?.length ?? 0;
+              const isDetailsMissing =
+                primaryPayment &&
+                !primaryPayment.utr_reference &&
+                primaryPayment.status !== "VERIFIED";
 
               return (
                 <tr key={order.id} className="transition-colors hover:bg-[#fffaf7]/60">
@@ -281,25 +292,37 @@ export default async function AdminOrdersPage() {
                   <td className="p-4">
                     {primaryPayment ? (
                       <div className="space-y-1">
-                        <span
-                          className={`inline-block rounded-full px-2 py-0.2 text-[10px] font-bold ${
-                            primaryPayment.status === "VERIFIED"
-                              ? "bg-green-100 text-green-800"
-                              : primaryPayment.status === "SUBMITTED"
-                              ? "bg-amber-100 text-amber-800"
-                              : primaryPayment.status === "REJECTED"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
-                          {primaryPayment.status}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={`inline-block rounded-full px-2 py-0.2 text-[10px] font-bold ${
+                              primaryPayment.status === "VERIFIED"
+                                ? "bg-green-100 text-green-800"
+                                : primaryPayment.status === "SUBMITTED"
+                                ? "bg-amber-100 text-amber-800"
+                                : primaryPayment.status === "REJECTED"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {primaryPayment.status}
+                          </span>
+                          {isDetailsMissing && (
+                            <span className="inline-block rounded-full bg-red-100 px-1.5 py-0.2 text-[9px] font-bold text-red-800">
+                              Details Missing
+                            </span>
+                          )}
+                        </div>
                         {primaryPayment.utr_reference ? (
                           <p className="font-mono text-xs font-semibold text-[#35110f]" title="Bank Reference / UTR">
                             UTR: {primaryPayment.utr_reference}
                           </p>
                         ) : (
-                          <p className="text-[11px] text-[#705a54] italic">No UTR yet</p>
+                          <p className="text-[11px] text-red-600 italic">No UTR yet</p>
+                        )}
+                        {primaryPayment.payer_name && (
+                          <p className="text-[11px] text-[#705a54]" title="Bank / UPI Payer Name">
+                            Payer: <span className="font-medium text-[#35110f]">{primaryPayment.payer_name}</span>
+                          </p>
                         )}
                       </div>
                     ) : (

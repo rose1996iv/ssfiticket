@@ -7,13 +7,16 @@ import {
   CheckCircle2,
   Clock,
   FlaskConical,
+  HelpCircle,
   Loader2,
   Mail,
   MessageCircle,
   RefreshCw,
+  User,
 } from "lucide-react";
 import { submitPaymentCompletion } from "@/server/actions/paymentRecovery";
 import { validateWhatsAppDigits } from "@/lib/validation/contact";
+import { manualUpiConfig } from "@/lib/config/payment";
 
 type Props = {
   orderId: string;
@@ -29,6 +32,20 @@ type Props = {
   onSuccess?: () => void;
 };
 
+type FieldErrors = {
+  payerName?: string;
+  utr?: string;
+  email?: string;
+  whatsapp?: string;
+};
+
+type SubmittedSnapshot = {
+  payerName: string;
+  utr: string;
+  email: string;
+  whatsapp: string;
+};
+
 export function PaymentDetailsForm({
   orderId,
   orderNumber,
@@ -42,71 +59,89 @@ export function PaymentDetailsForm({
   isMock = false,
   onSuccess,
 }: Props) {
+  const [payerName, setPayerName] = useState(initialPayerName);
   const [utr, setUtr] = useState(initialUtr);
   const [email, setEmail] = useState(initialEmail);
-  const [payerName, setPayerName] = useState(initialPayerName);
 
   // WhatsApp contact logic: prefill from existing phone if available
-  const defaultUsesSuggested = Boolean(suggestedPhone && (!initialWhatsapp || initialWhatsapp === suggestedPhone));
+  const defaultUsesSuggested = Boolean(
+    suggestedPhone && (!initialWhatsapp || initialWhatsapp === suggestedPhone)
+  );
   const [useSuggestedPhone, setUseSuggestedPhone] = useState(defaultUsesSuggested);
   const [customWhatsapp, setCustomWhatsapp] = useState(
     initialWhatsapp && initialWhatsapp !== suggestedPhone ? initialWhatsapp : ""
   );
 
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [submittedSnapshot, setSubmittedSnapshot] = useState<SubmittedSnapshot | null>(null);
 
   const activeWhatsapp = useSuggestedPhone ? suggestedPhone : customWhatsapp;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
+    setGeneralError(null);
+    setFieldErrors({});
 
-    const trimmedUtr = utr.trim().toUpperCase();
-    const trimmedEmail = email.trim();
+    const trimmedPayerName = payerName.trim();
+    const cleanUtr = utr.replace(/\s+/g, "").toUpperCase();
+    const trimmedEmail = email.trim().toLowerCase();
     const trimmedWhatsapp = activeWhatsapp.trim();
 
-    // Client-side validations
-    if (!trimmedUtr) {
-      setErrorMessage("Please enter your UPI reference / UTR number.");
-      return;
-    }
-    if (trimmedUtr.length < 6) {
-      setErrorMessage("UTR / Transaction Reference must be at least 6 characters.");
-      return;
+    const errors: FieldErrors = {};
+
+    // 1. Payer Name: Trimmed, non-empty, 2-120 chars
+    if (!trimmedPayerName) {
+      errors.payerName = "Payer name must be at least 2 characters.";
+    } else if (trimmedPayerName.length < 2) {
+      errors.payerName = "Payer name must be at least 2 characters.";
+    } else if (trimmedPayerName.length > 120) {
+      errors.payerName = "Payer name cannot exceed 120 characters.";
     }
 
+    // 2. UTR: Trimmed, uppercase, non-empty, 6-32 chars, alphanumeric
+    if (!cleanUtr) {
+      errors.utr = "UTR / Transaction Reference is required.";
+    } else if (cleanUtr.length < 6) {
+      errors.utr = "UTR / Reference must be at least 6 characters.";
+    } else if (cleanUtr.length > 32) {
+      errors.utr = "UTR cannot exceed 32 characters.";
+    } else if (!/^[A-Z0-9-]+$/.test(cleanUtr)) {
+      errors.utr = "UTR must only contain alphanumeric characters or hyphens.";
+    }
+
+    // 3. Customer Email: Valid format, trimmed, lowercase
     if (!trimmedEmail) {
-      setErrorMessage("Please enter your email address to receive your order receipt.");
-      return;
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmedEmail)) {
-      setErrorMessage("Please enter a valid email address (e.g. name@example.com).");
-      return;
+      errors.email = "Email address is required.";
+    } else {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(trimmedEmail)) {
+        errors.email = "Please enter a valid email address (e.g. name@example.com).";
+      }
     }
 
+    // 4. WhatsApp: International E.164, 7-15 digits
     if (!trimmedWhatsapp) {
-      setErrorMessage("Please provide an active WhatsApp contact number for ticket delivery.");
-      return;
-    }
-    if (!validateWhatsAppDigits(trimmedWhatsapp)) {
-      setErrorMessage(
-        "WhatsApp number must be a valid international phone number containing between 7 and 15 digits (e.g. +91 9876543210)."
-      );
-      return;
+      errors.whatsapp = "WhatsApp number is required.";
+    } else if (!validateWhatsAppDigits(trimmedWhatsapp)) {
+      errors.whatsapp =
+        "WhatsApp number must contain between 7 and 15 digits (e.g. +91 9876543210).";
     }
 
     // Mock mode guard on client
-    if (isMock) {
-      const isTest = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmedUtr);
+    if (isMock && cleanUtr) {
+      const isTest = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(cleanUtr);
       if (!isTest) {
-        setErrorMessage(
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678)."
-        );
-        return;
+        errors.utr =
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).";
       }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setGeneralError("Please correct the errors in the required fields below.");
+      return;
     }
 
     setLoading(true);
@@ -114,72 +149,117 @@ export function PaymentDetailsForm({
     const formData = new FormData();
     formData.set("orderId", orderId);
     if (token) formData.set("token", token);
-    formData.set("utr", trimmedUtr);
+    formData.set("payerName", trimmedPayerName);
+    formData.set("utr", cleanUtr);
     formData.set("email", trimmedEmail);
     formData.set("whatsapp", trimmedWhatsapp);
-    if (payerName.trim()) {
-      formData.set("payerName", payerName.trim());
-    }
 
     try {
       const res = await submitPaymentCompletion(formData);
       if (!res.success) {
-        setErrorMessage(res.error || "Payment details submission failed. Please try again.");
+        setGeneralError(res.error || "Payment details submission failed. Please try again.");
         setLoading(false);
         return;
       }
 
-      setSubmitted(true);
+      setSubmittedSnapshot({
+        payerName: trimmedPayerName,
+        utr: cleanUtr,
+        email: trimmedEmail,
+        whatsapp: trimmedWhatsapp,
+      });
       setLoading(false);
       if (onSuccess) onSuccess();
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setErrorMessage(err.message);
+        setGeneralError(err.message);
       } else {
-        setErrorMessage("An unexpected network error occurred. Please retry.");
+        setGeneralError("An unexpected network error occurred. Please retry.");
       }
       setLoading(false);
     }
   };
 
-  if (submitted) {
+  // Read-only confirmation view upon successful submission
+  if (submittedSnapshot) {
     return (
       <div
         role="alert"
         aria-live="polite"
-        className="rounded-2xl border border-emerald-300 bg-emerald-50/80 p-6 text-[#143e27] shadow-sm animate-in fade-in zoom-in-95 duration-200"
+        className="rounded-2xl border border-emerald-300 bg-emerald-50/90 p-6 text-[#143e27] shadow-sm animate-in fade-in zoom-in-95 duration-200"
       >
         <div className="flex items-start gap-3.5">
-          <div className="rounded-full bg-emerald-100 p-2 text-emerald-800 shrink-0">
-            <CheckCircle2 size={24} />
+          <div className="rounded-full bg-emerald-100 p-2.5 text-emerald-800 shrink-0">
+            <CheckCircle2 size={26} />
           </div>
-          <div className="space-y-2">
-            <h3 className="font-mono text-lg font-bold text-emerald-950">
-              Payment details received. Awaiting Admin Verification.
-            </h3>
-            <p className="text-xs leading-relaxed text-emerald-900">
-              Thank you! Your transaction reference <b className="font-mono text-emerald-950">{utr.trim().toUpperCase()}</b> and
-              contact details have been safely registered for order{" "}
-              <b className="font-mono text-emerald-950">{orderNumber}</b>.
-            </p>
-            <div className="rounded-xl border border-emerald-200 bg-white/70 p-3.5 text-xs text-emerald-950 space-y-1">
-              <p className="font-semibold flex items-center gap-1.5">
-                <Clock size={14} className="text-emerald-700" />
-                <span>What happens next?</span>
-              </p>
-              <p className="text-[11px] text-emerald-800">
-                Our organizers will manually inspect bank credit records against your submitted UTR reference. Once confirmed,
-                your tickets will be generated and dispatched directly to <b>{activeWhatsapp}</b> and <b>{email}</b>.
+          <div className="space-y-3 w-full">
+            <div>
+              <h3 className="font-mono text-lg font-bold text-emerald-950">
+                Payment details received. Awaiting Admin Verification.
+              </h3>
+              <p className="mt-1 text-xs leading-relaxed text-emerald-900">
+                Thank you! Your payment reference and customer details have been securely recorded for order{" "}
+                <b className="font-mono text-emerald-950">{orderNumber}</b>.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setSubmitted(false)}
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 underline hover:text-emerald-950"
-            >
-              <RefreshCw size={12} />
-              <span>Need to correct details? Edit submission</span>
-            </button>
+
+            {/* Read-only snapshot of submitted details */}
+            <div className="rounded-xl border border-emerald-200 bg-white/90 p-4 text-xs text-emerald-950 space-y-2.5">
+              <span className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider">
+                Submitted Payment Record
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[10px] font-semibold text-emerald-800">Payer Name:</span>
+                  <p className="font-bold text-[#35110f]">{submittedSnapshot.payerName}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold text-emerald-800">UTR / Reference:</span>
+                  <p className="font-mono font-bold text-[#7c1619]">{submittedSnapshot.utr}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold text-emerald-800">Customer Email:</span>
+                  <p className="font-medium text-[#35110f]">{submittedSnapshot.email}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold text-emerald-800">WhatsApp Contact:</span>
+                  <p className="font-mono font-bold text-[#35110f]">{submittedSnapshot.whatsapp}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Verification next steps callout */}
+            <div className="rounded-xl border border-emerald-200 bg-white/70 p-3.5 text-xs text-emerald-950 space-y-1.5">
+              <p className="font-semibold flex items-center gap-1.5 text-emerald-900">
+                <Clock size={15} className="text-emerald-700" />
+                <span>What happens next?</span>
+              </p>
+              <p className="text-[11px] leading-relaxed text-emerald-800">
+                SSFI administrators will manually inspect incoming bank statements against your submitted UTR reference.
+                Tickets are issued strictly after human verification of actual bank credit.
+                Once verified, official lucky draw tickets will be dispatched directly to{" "}
+                <b>{submittedSnapshot.whatsapp}</b> and <b>{submittedSnapshot.email}</b>.
+              </p>
+            </div>
+
+            {/* Support link */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setSubmittedSnapshot(null)}
+                className="inline-flex items-center gap-1.5 font-semibold text-emerald-800 underline hover:text-emerald-950"
+              >
+                <RefreshCw size={13} />
+                <span>Need to edit submitted details?</span>
+              </button>
+              <a
+                href={`mailto:${manualUpiConfig.supportEmail}?subject=Order%20${orderNumber}%20Payment%20Verification`}
+                className="inline-flex items-center gap-1 font-semibold text-emerald-900 hover:underline"
+              >
+                <HelpCircle size={13} />
+                <span>Contact Finance Support</span>
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -187,7 +267,7 @@ export function PaymentDetailsForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       {/* Reopening / Editing Notice */}
       {isReopening && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-4 text-xs text-blue-950">
@@ -196,8 +276,8 @@ export function PaymentDetailsForm({
             <span>Updating Existing Submission</span>
           </p>
           <p className="mt-1 text-[11px] text-blue-800">
-            Your payment reference is currently under administrator review. You can update your UTR reference, email, or
-            WhatsApp contact below if you noticed any typo or error.
+            Your payment reference is currently under administrator review. You can update your Payer Name,
+            UTR reference, email, or WhatsApp contact below if you noticed any typo or error.
           </p>
         </div>
       )}
@@ -216,20 +296,22 @@ export function PaymentDetailsForm({
             <button
               type="button"
               onClick={() => {
+                setPayerName("Simulated Buyer");
                 setUtr(`TEST-MOCK-${Date.now().toString().slice(-6)}`);
                 setEmail(email || "test-customer@example.com");
-                setPayerName("Simulated Buyer");
-                if (errorMessage) setErrorMessage(null);
+                setCustomWhatsapp(activeWhatsapp || "+91 98765 43210");
+                setGeneralError(null);
+                setFieldErrors({});
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ✓ Simulate Valid Reference
+              ✓ Fill Simulated Valid Details
             </button>
             <button
               type="button"
               onClick={() => {
                 setUtr("TEST-DUP-REF");
-                if (errorMessage) setErrorMessage(null);
+                setGeneralError(null);
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
@@ -239,8 +321,8 @@ export function PaymentDetailsForm({
         </div>
       )}
 
-      {/* Inline Error Notice */}
-      {errorMessage && (
+      {/* General Top Error Banner */}
+      {generalError && (
         <div
           role="alert"
           aria-live="assertive"
@@ -249,20 +331,61 @@ export function PaymentDetailsForm({
           <div className="flex items-start gap-2.5">
             <AlertCircle className="mt-0.5 text-red-600 shrink-0" size={18} />
             <div className="text-xs leading-relaxed">
-              <p className="font-bold text-red-950">Please review your submission</p>
-              <p className="mt-0.5 font-medium">{errorMessage}</p>
+              <p className="font-bold text-red-950">Submission could not be processed</p>
+              <p className="mt-0.5 font-medium">{generalError}</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* 1. UTR Reference Field */}
+      {/* 1. Payer Name Field (Mandatory) */}
+      <div>
+        <label
+          htmlFor="payer-name-input"
+          className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
+        >
+          1. Payer Name / Account Holder Name <span className="text-red-500 font-bold">*</span>
+        </label>
+        <div className="relative mt-1.5">
+          <input
+            id="payer-name-input"
+            name="payerName"
+            type="text"
+            required
+            minLength={2}
+            maxLength={120}
+            value={payerName}
+            onChange={(e) => {
+              setPayerName(e.target.value);
+              if (fieldErrors.payerName) {
+                setFieldErrors((prev) => ({ ...prev, payerName: undefined }));
+              }
+            }}
+            placeholder="Name on bank or UPI account"
+            className={`w-full rounded-xl border bg-white p-3 pr-10 text-sm text-[#35110f] transition focus:ring-1 focus:outline-hidden ${
+              fieldErrors.payerName
+                ? "border-red-500 focus:border-red-600 focus:ring-red-500/20"
+                : "border-[#eadbcf] focus:border-[#7c1619] focus:ring-[#7c1619]/20"
+            }`}
+          />
+          <User size={16} className="absolute right-3.5 top-3.5 text-[#705a54]/60 pointer-events-none" />
+        </div>
+        {fieldErrors.payerName ? (
+          <p className="mt-1 text-xs font-semibold text-red-600">{fieldErrors.payerName}</p>
+        ) : (
+          <p className="mt-1 text-[11px] text-[#705a54]">
+            Exact name matching your bank statement helps administrators reconcile incoming credits immediately.
+          </p>
+        )}
+      </div>
+
+      {/* 2. UTR Reference Field (Mandatory) */}
       <div>
         <label
           htmlFor="utr-input"
           className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
         >
-          1. UPI Transaction ID / UTR Number <span className="text-red-500">*</span>
+          2. UPI Transaction ID / UTR Number <span className="text-red-500 font-bold">*</span>
         </label>
         <input
           id="utr-input"
@@ -270,29 +393,39 @@ export function PaymentDetailsForm({
           type="text"
           required
           minLength={6}
-          maxLength={64}
+          maxLength={32}
           value={utr}
           onChange={(e) => {
             setUtr(e.target.value);
-            if (errorMessage) setErrorMessage(null);
+            if (fieldErrors.utr) {
+              setFieldErrors((prev) => ({ ...prev, utr: undefined }));
+            }
           }}
           placeholder={isMock ? "e.g. TEST12345678" : "e.g. 428172918291"}
-          className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 font-mono text-sm text-[#35110f] transition focus:border-[#7c1619] focus:ring-1 focus:ring-[#7c1619]/20 focus:outline-hidden"
+          className={`mt-1.5 w-full rounded-xl border bg-white p-3 font-mono text-sm text-[#35110f] transition focus:ring-1 focus:outline-hidden ${
+            fieldErrors.utr
+              ? "border-red-500 focus:border-red-600 focus:ring-red-500/20"
+              : "border-[#eadbcf] focus:border-[#7c1619] focus:ring-[#7c1619]/20"
+          }`}
         />
-        <p className="mt-1 text-[11px] text-[#705a54]">
-          {isMock
-            ? "Preview Test Mode: Enter any mock reference starting with TEST (e.g. TEST12345678)."
-            : 'Found on your UPI receipt under "UTR", "UPI Ref No", or "Google Transaction ID".'}
-        </p>
+        {fieldErrors.utr ? (
+          <p className="mt-1 text-xs font-semibold text-red-600">{fieldErrors.utr}</p>
+        ) : (
+          <p className="mt-1 text-[11px] text-[#705a54]">
+            {isMock
+              ? "Preview Test Mode: Enter any mock reference starting with TEST (e.g. TEST12345678)."
+              : 'Found on your UPI receipt under "UTR", "UPI Ref No", or "Google Transaction ID" (12 digits).'}
+          </p>
+        )}
       </div>
 
-      {/* 2. Customer Email Field */}
+      {/* 3. Customer Email Field (Mandatory) */}
       <div>
         <label
           htmlFor="email-input"
           className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
         >
-          2. Customer Email Address <span className="text-red-500">*</span>
+          3. Customer Email Address <span className="text-red-500 font-bold">*</span>
         </label>
         <div className="relative mt-1.5">
           <input
@@ -304,22 +437,32 @@ export function PaymentDetailsForm({
             value={email}
             onChange={(e) => {
               setEmail(e.target.value);
-              if (errorMessage) setErrorMessage(null);
+              if (fieldErrors.email) {
+                setFieldErrors((prev) => ({ ...prev, email: undefined }));
+              }
             }}
             placeholder="e.g. customer@example.com"
-            className="w-full rounded-xl border border-[#eadbcf] bg-white p-3 pr-10 text-sm text-[#35110f] transition focus:border-[#7c1619] focus:ring-1 focus:ring-[#7c1619]/20 focus:outline-hidden"
+            className={`w-full rounded-xl border bg-white p-3 pr-10 text-sm text-[#35110f] transition focus:ring-1 focus:outline-hidden ${
+              fieldErrors.email
+                ? "border-red-500 focus:border-red-600 focus:ring-red-500/20"
+                : "border-[#eadbcf] focus:border-[#7c1619] focus:ring-[#7c1619]/20"
+            }`}
           />
           <Mail size={16} className="absolute right-3.5 top-3.5 text-[#705a54]/60 pointer-events-none" />
         </div>
-        <p className="mt-1 text-[11px] text-[#705a54]">
-          Used to send your official payment receipt and lucky draw notifications.
-        </p>
+        {fieldErrors.email ? (
+          <p className="mt-1 text-xs font-semibold text-red-600">{fieldErrors.email}</p>
+        ) : (
+          <p className="mt-1 text-[11px] text-[#705a54]">
+            Where your official payment receipt and lucky draw notifications are delivered.
+          </p>
+        )}
       </div>
 
-      {/* 3. WhatsApp Contact Field */}
+      {/* 4. WhatsApp Contact Field (Mandatory) */}
       <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4">
         <label className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]">
-          3. WhatsApp Contact Number <span className="text-red-500">*</span>
+          4. WhatsApp Contact Number <span className="text-red-500 font-bold">*</span>
         </label>
 
         {suggestedPhone ? (
@@ -328,7 +471,12 @@ export function PaymentDetailsForm({
               <input
                 type="checkbox"
                 checked={useSuggestedPhone}
-                onChange={(e) => setUseSuggestedPhone(e.target.checked)}
+                onChange={(e) => {
+                  setUseSuggestedPhone(e.target.checked);
+                  if (fieldErrors.whatsapp) {
+                    setFieldErrors((prev) => ({ ...prev, whatsapp: undefined }));
+                  }
+                }}
                 className="mt-0.5 rounded border-[#eadbcf] text-[#7c1619] focus:ring-[#7c1619]"
               />
               <span className="leading-snug">
@@ -342,7 +490,7 @@ export function PaymentDetailsForm({
                   htmlFor="custom-whatsapp-input"
                   className="block text-[11px] font-semibold text-[#705a54]"
                 >
-                  Alternate WhatsApp Number
+                  Alternate WhatsApp Number <span className="text-red-500">*</span>
                 </label>
                 <div className="relative mt-1">
                   <input
@@ -352,10 +500,16 @@ export function PaymentDetailsForm({
                     value={customWhatsapp}
                     onChange={(e) => {
                       setCustomWhatsapp(e.target.value);
-                      if (errorMessage) setErrorMessage(null);
+                      if (fieldErrors.whatsapp) {
+                        setFieldErrors((prev) => ({ ...prev, whatsapp: undefined }));
+                      }
                     }}
                     placeholder="+91 98765 43210"
-                    className="w-full rounded-xl border border-[#eadbcf] bg-white p-2.5 pr-10 text-sm font-mono text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
+                    className={`w-full rounded-xl border bg-white p-2.5 pr-10 text-sm font-mono text-[#35110f] focus:outline-hidden ${
+                      fieldErrors.whatsapp
+                        ? "border-red-500 focus:border-red-600"
+                        : "border-[#eadbcf] focus:border-[#7c1619]"
+                    }`}
                   />
                   <MessageCircle size={16} className="absolute right-3 top-3 text-[#705a54]/60 pointer-events-none" />
                 </div>
@@ -371,38 +525,34 @@ export function PaymentDetailsForm({
               value={customWhatsapp}
               onChange={(e) => {
                 setCustomWhatsapp(e.target.value);
-                if (errorMessage) setErrorMessage(null);
+                if (fieldErrors.whatsapp) {
+                  setFieldErrors((prev) => ({ ...prev, whatsapp: undefined }));
+                }
               }}
               placeholder="+91 98765 43210"
-              className="w-full rounded-xl border border-[#eadbcf] bg-white p-3 pr-10 text-sm font-mono text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
+              className={`w-full rounded-xl border bg-white p-3 pr-10 text-sm font-mono text-[#35110f] focus:outline-hidden ${
+                fieldErrors.whatsapp
+                  ? "border-red-500 focus:border-red-600"
+                  : "border-[#eadbcf] focus:border-[#7c1619]"
+              }`}
             />
             <MessageCircle size={16} className="absolute right-3.5 top-3.5 text-[#705a54]/60 pointer-events-none" />
           </div>
         )}
 
-        <p className="mt-2 text-[11px] text-[#705a54]">
-          Your verified tickets and official verification links will be dispatched directly to this WhatsApp number.
-        </p>
+        {fieldErrors.whatsapp ? (
+          <p className="mt-1 text-xs font-semibold text-red-600">{fieldErrors.whatsapp}</p>
+        ) : (
+          <p className="mt-2 text-[11px] text-[#705a54]">
+            Your verified tickets and official verification links will be dispatched directly to this WhatsApp number.
+          </p>
+        )}
       </div>
 
-      {/* 4. Payer Name (Optional) */}
-      <div>
-        <label
-          htmlFor="payer-name-input"
-          className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
-        >
-          Payer Name / Bank Account Name <span className="text-xs font-normal text-[#705a54]">(Optional)</span>
-        </label>
-        <input
-          id="payer-name-input"
-          name="payerName"
-          type="text"
-          maxLength={120}
-          value={payerName}
-          onChange={(e) => setPayerName(e.target.value)}
-          placeholder="Name on your bank account (helps speed up verification)"
-          className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-        />
+      {/* Mandatory Notice Reminder */}
+      <div className="rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-3 text-[11px] text-[#705a54]">
+        <span className="font-bold text-[#7c1619]">Notice:</span> All 4 fields above are strictly mandatory.
+        Orders cannot enter Admin Verification without complete details.
       </div>
 
       {/* Submission CTA */}

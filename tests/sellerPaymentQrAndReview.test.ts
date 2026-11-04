@@ -569,10 +569,14 @@ test("PostgREST Ambiguity Disambiguation: All orders <-> sellers embeds use expl
     "Admin Orders page must explicitly hint sellers!orders_seller_id_fkey"
   );
 
-  // Admin Pending Payments must disambiguate sellers join inside orders
+  // Admin Pending Payments must disambiguate sellers join inside orders (snapshot seller + operational seller)
   assert.ok(
-    adminPaymentsSrc.includes("sellers!orders_seller_id_fkey"),
-    "Admin Payments page must explicitly hint sellers!orders_seller_id_fkey"
+    adminPaymentsSrc.includes("orders_snapshot_seller_id_fkey"),
+    "Admin Payments page must explicitly hint orders_snapshot_seller_id_fkey for snapshot payment recipient"
+  );
+  assert.ok(
+    adminPaymentsSrc.includes("orders_seller_id_fkey"),
+    "Admin Payments page must explicitly hint orders_seller_id_fkey for operational seller"
   );
 
   // Admin Order Detail
@@ -581,16 +585,24 @@ test("PostgREST Ambiguity Disambiguation: All orders <-> sellers embeds use expl
     "Admin Order Detail page must explicitly hint sellers!orders_seller_id_fkey"
   );
 
-  // Admin Payment Detail
+  // Admin Payment Detail must disambiguate sellers join inside orders (snapshot seller + operational seller)
   assert.ok(
-    adminPaymentDetailSrc.includes("sellers!orders_seller_id_fkey"),
-    "Admin Payment Detail page must explicitly hint sellers!orders_seller_id_fkey"
+    adminPaymentDetailSrc.includes("orders_snapshot_seller_id_fkey"),
+    "Admin Payment Detail page must explicitly hint orders_snapshot_seller_id_fkey for snapshot payment recipient"
+  );
+  assert.ok(
+    adminPaymentDetailSrc.includes("orders_seller_id_fkey"),
+    "Admin Payment Detail page must explicitly hint orders_seller_id_fkey for operational seller"
   );
 
-  // Admin Export
+  // Admin Export must disambiguate sellers join inside orders
   assert.ok(
-    adminExportSrc.includes("sellers!orders_seller_id_fkey"),
-    "Admin Export route must explicitly hint sellers!orders_seller_id_fkey"
+    adminExportSrc.includes("orders_snapshot_seller_id_fkey"),
+    "Admin Export route must explicitly hint orders_snapshot_seller_id_fkey for snapshot payment recipient"
+  );
+  assert.ok(
+    adminExportSrc.includes("orders_seller_id_fkey"),
+    "Admin Export route must explicitly hint orders_seller_id_fkey for operational seller"
   );
 
   // Buy Order page
@@ -654,6 +666,40 @@ test("Strict Seller QR Policy: Admin QR Activation, Self-Approval Prevention, an
   assert.ok(
     paymentScreenshotSrc.includes("existing.storage_path"),
     "paymentScreenshot.ts must clean up old storage_path on replacement"
+  );
+});
+
+test("Pending Payments PGRST201 Disambiguation: Snapshot Seller & Operational Seller hints", () => {
+  const adminPaymentsSrc = fs.readFileSync(path.resolve("src/app/admin/payments/page.tsx"), "utf-8");
+  const adminPaymentDetailSrc = fs.readFileSync(path.resolve("src/app/admin/payments/[paymentId]/page.tsx"), "utf-8");
+
+  // 1. Both pages must use explicit relationship hints to disambiguate orders <-> sellers
+  assert.ok(
+    adminPaymentsSrc.includes("sellers:sellers!orders_snapshot_seller_id_fkey"),
+    "Admin Payments page must embed snapshot seller as sellers using orders_snapshot_seller_id_fkey"
+  );
+  assert.ok(
+    adminPaymentsSrc.includes("operational_seller:sellers!orders_seller_id_fkey"),
+    "Admin Payments page must embed operational seller using orders_seller_id_fkey"
+  );
+
+  assert.ok(
+    adminPaymentDetailSrc.includes("sellers:sellers!orders_snapshot_seller_id_fkey"),
+    "Payment Detail page must embed snapshot seller as sellers using orders_snapshot_seller_id_fkey"
+  );
+  assert.ok(
+    adminPaymentDetailSrc.includes("operational_seller:sellers!orders_seller_id_fkey"),
+    "Payment Detail page must embed operational seller using orders_seller_id_fkey"
+  );
+
+  // 2. Neither page should contain un-hinted 'sellers(' inside orders
+  assert.ok(
+    !adminPaymentsSrc.includes("orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers("),
+    "Admin Payments page must never use bare sellers( inside orders"
+  );
+  assert.ok(
+    !adminPaymentDetailSrc.includes("orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers("),
+    "Payment Detail page must never use bare sellers( inside orders"
   );
 });
 

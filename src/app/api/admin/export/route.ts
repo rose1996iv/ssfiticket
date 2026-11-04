@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
       let query = db
         .from("payments")
         .select(
-          "id, status, amount_paise, utr_reference, submitted_at, verified_at, orders(order_number, customers(full_name, whatsapp_number, phone, email), sellers!orders_seller_id_fkey(display_name, seller_code))"
+          "id, status, amount_paise, utr_reference, submitted_at, verified_at, orders(order_number, customers(full_name, whatsapp_number, phone, email), sellers:sellers!orders_snapshot_seller_id_fkey(display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(display_name, seller_code))"
         )
         .order("submitted_at", { ascending: false })
         .limit(5000);

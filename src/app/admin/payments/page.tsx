@@ -27,6 +27,11 @@ type PaymentRow = {
     order_number: string;
     quantity: number;
     total_amount_paise: number;
+    payment_destination_type?: string | null;
+    payment_destination_upi_id?: string | null;
+    payment_destination_account_name?: string | null;
+    snapshot_seller_display_name?: string | null;
+    snapshot_seller_code?: string | null;
     customers: {
       id: string;
       full_name: string;
@@ -34,6 +39,11 @@ type PaymentRow = {
       whatsapp_number: string;
     } | null;
     sellers: {
+      id: string;
+      display_name: string;
+      seller_code: string;
+    } | null;
+    operational_seller?: {
       id: string;
       display_name: string;
       seller_code: string;
@@ -56,7 +66,7 @@ export default async function PaymentsPage() {
   const { data, error } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, submitted_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, submitted_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, payment_destination_type, payment_destination_upi_id, payment_destination_account_name, snapshot_seller_display_name, snapshot_seller_code, customers(id, full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(id, display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(id, display_name, seller_code))"
     )
     .eq("status", "SUBMITTED")
     .order("submitted_at", { ascending: true })
@@ -258,20 +268,43 @@ export default async function PaymentsPage() {
 
                   {/* Seller Attribution */}
                   <td className="p-4">
-                    {payment.orders?.sellers ? (
-                      <div>
-                        <p className="font-medium text-xs text-[#35110f]">
-                          {payment.orders.sellers.display_name}
-                        </p>
-                        <span className="inline-block rounded-md bg-[#fceeee] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#7c1619]">
-                          {payment.orders.sellers.seller_code}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700">
-                        Direct Online
-                      </span>
-                    )}
+                    {(() => {
+                      const sellerAttribution =
+                        payment.orders?.sellers ||
+                        (payment.orders?.snapshot_seller_display_name
+                          ? {
+                              display_name: payment.orders.snapshot_seller_display_name,
+                              seller_code: payment.orders.snapshot_seller_code ?? "",
+                            }
+                          : null) ||
+                        payment.orders?.operational_seller;
+
+                      if (!sellerAttribution) {
+                        return (
+                          <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700">
+                            Direct Online
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <div>
+                          <p className="font-medium text-xs text-[#35110f]">
+                            {sellerAttribution.display_name}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                            <span className="inline-block rounded-md bg-[#fceeee] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#7c1619]">
+                              {sellerAttribution.seller_code}
+                            </span>
+                            {payment.orders?.payment_destination_upi_id && (
+                              <span className="text-[10px] font-mono text-[#705a54] truncate max-w-[140px]" title={payment.orders.payment_destination_upi_id}>
+                                {payment.orders.payment_destination_upi_id}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </td>
 
                   {/* Quantity */}

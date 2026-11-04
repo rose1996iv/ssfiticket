@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
+import { requireAnyRole } from "@/lib/auth/server";
 
-export const instant = false;
 
 type PaymentRow = {
   id: string;
@@ -21,6 +21,7 @@ type PaymentRow = {
   amount_paise: number;
   utr_reference: string | null;
   submitted_at: string | null;
+  seller_review_status?: string | null;
   orders: {
     id: string;
     order_number: string;
@@ -40,13 +41,22 @@ type PaymentRow = {
   } | null;
 };
 
+const SELLER_REVIEW_LABELS: Record<string, { label: string; color: string }> = {
+  RECOMMENDED_APPROVAL: { label: "Rec: Approve", color: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  RECOMMENDED_REJECTION: { label: "Rec: Reject", color: "bg-red-100 text-red-800 border-red-200" },
+  FLAGGED_DISCREPANCY: { label: "Flagged", color: "bg-amber-100 text-amber-800 border-amber-200" },
+};
+
 export default async function PaymentsPage() {
   await connection();
+  const currentUser = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
   const db = createSupabaseAdminClient();
+  const { data: rawStorageMetrics } = await db.rpc("get_payment_screenshot_storage_metrics", { p_actor: currentUser.id });
+  const storageMetrics = Array.isArray(rawStorageMetrics) ? rawStorageMetrics[0] : rawStorageMetrics;
   const { data, error } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, submitted_at, orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers(id, display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, submitted_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code))"
     )
     .eq("status", "SUBMITTED")
     .order("submitted_at", { ascending: true })
@@ -131,6 +141,11 @@ export default async function PaymentsPage() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
+        <div className="flex flex-wrap items-baseline justify-between gap-2"><div><h2 className="font-bold text-[#35110f]">Payment Screenshot Storage</h2><p className="mt-1 text-xs text-[#705a54]">Private screenshot metadata only; no storage bucket scan is performed.</p></div><span className="text-xs text-[#705a54]">Failed upload count: unavailable</span></div>
+        {storageMetrics ? <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"><div><p className="text-xs text-[#705a54]">Objects</p><p className="font-bold">{storageMetrics.object_count}</p></div><div><p className="text-xs text-[#705a54]">Storage used</p><p className="font-bold">{(Number(storageMetrics.total_bytes) / 1024 / 1024).toFixed(2)} MB</p></div><div><p className="text-xs text-[#705a54]">Average size</p><p className="font-bold">{(Number(storageMetrics.average_bytes) / 1024).toFixed(0)} KB</p></div><div><p className="text-xs text-[#705a54]">Last 7 days</p><p className="font-bold">{storageMetrics.uploads_last_7_days} uploads</p></div></div> : <p className="mt-3 text-sm text-[#705a54]">Storage usage unavailable</p>}
+      </div>
+
       {/* Metric Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
@@ -195,6 +210,7 @@ export default async function PaymentsPage() {
               <th className="p-4">Quantity</th>
               <th className="p-4">Amount</th>
               <th className="p-4">Submitted UTR</th>
+              <th className="p-4">Seller Review</th>
               <th className="p-4">Submitted Date</th>
               <th className="p-4 text-right">Action</th>
             </tr>
@@ -209,6 +225,10 @@ export default async function PaymentsPage() {
                     minute: "2-digit",
                   })
                 : "—";
+
+              const reviewMeta = payment.seller_review_status
+                ? SELLER_REVIEW_LABELS[payment.seller_review_status]
+                : null;
 
               return (
                 <tr key={payment.id} className="transition-colors hover:bg-[#fffaf7]/60">
@@ -271,6 +291,19 @@ export default async function PaymentsPage() {
                     </span>
                   </td>
 
+                  {/* Seller Review */}
+                  <td className="p-4">
+                    {reviewMeta ? (
+                      <span className={`inline-block rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${reviewMeta.color}`}>
+                        {reviewMeta.label}
+                      </span>
+                    ) : (
+                      <span className="inline-block rounded-full bg-gray-50 border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500 font-medium">
+                        Pending
+                      </span>
+                    )}
+                  </td>
+
                   {/* Submitted Date */}
                   <td className="p-4 text-xs text-[#705a54] whitespace-nowrap">
                     {submittedDate}
@@ -292,7 +325,7 @@ export default async function PaymentsPage() {
 
             {payments.length === 0 && (
               <tr>
-                <td className="p-12 text-center" colSpan={8}>
+                <td className="p-12 text-center" colSpan={9}>
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-green-700">
                     <CheckCircle2 size={28} />
                   </div>

@@ -159,7 +159,7 @@ export function SellerOrderForm({
             autoComplete="tel"
             required
             disabled={isSubmitting || !isCampaignActive}
-            pattern="[0-9+ \-()]{7,25}"
+            pattern="[0-9+\s\(\)\-]{7,25}"
             placeholder="e.g. +91 91234 56789 or international"
             className="mt-1.5 w-full rounded-lg border border-[#eadbcf] bg-white p-2.5 text-sm text-[#35110f] shadow-2xs focus:border-[#7c1619] focus:outline-hidden disabled:bg-gray-100 disabled:cursor-not-allowed"
           />

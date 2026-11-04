@@ -5,7 +5,6 @@ import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
-export const instant = false;
 
 type SellerOrder = {
   id: string;

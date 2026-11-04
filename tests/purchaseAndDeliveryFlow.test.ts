@@ -1969,33 +1969,34 @@ test("Cross-Channel Consistency: Order total and quantity match across WhatsApp 
 /* TASK 6 — CONTENT AUDIT, PAYMENT GUIDANCE & TERMS AND CONDITIONS TESTS       */
 /* ========================================================================== */
 
-test("Landing Page Payment Guidance: Includes all 5 steps, official payee, and safety warning", async () => {
+test("Landing Page Payment Guidance: Includes the payment workflow, configured payee, and safety warning", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
 
   const componentPath = path.resolve("src/components/home/PaymentInstructionsSection.tsx");
   const code = fs.readFileSync(componentPath, "utf-8");
+  const pageCode = fs.readFileSync(path.resolve("src/app/(public)/page.tsx"), "utf-8");
 
   // Step 1: Select tickets and authoritative pricing
   assert.ok(code.includes("Select Tickets"), "Step 1 must be present");
   assert.ok(code.includes("server-side based strictly on the campaign unit price"), "Must enforce server pricing");
 
-  // Step 2: Choose payment method and verified payee
-  assert.ok(code.includes("Choose Payment Method"), "Step 2 must be present");
-  assert.ok(code.includes("HLAWN THA DAWT"), "Payee name must be HLAWN THA DAWT");
-  assert.ok(code.includes("6909251270@ptaxis"), "UPI ID must be 6909251270@ptaxis");
+  // Official payment details must come from the shared configuration rather than a duplicate literal.
+  assert.ok(code.includes("payeeName: string"), "Payment guide must accept the configured payee name");
+  assert.ok(code.includes("upiId: string"), "Payment guide must accept the configured UPI ID");
+  assert.ok(pageCode.includes('import { manualUpiConfig } from "@/lib/config/payment"'), "Main page must use the shared payment configuration");
+  assert.ok(pageCode.includes("payeeName={manualUpiConfig.displayName}"), "Configured payee name must be passed to the guide");
+  assert.ok(pageCode.includes("upiId={manualUpiConfig.upiId}"), "Configured UPI ID must be passed to the guide");
   assert.ok(code.includes("INR"), "Currency must be INR");
 
-  // Step 3: Verify details
-  assert.ok(code.includes("Verify Payment Details"), "Step 3 must be present");
-
-  // Step 4: Submit reference UTR
+  // The customer must return after payment and submit a UTR; submission does not confirm payment.
+  assert.ok(code.includes("return to your order page"), "Return-to-order step must be present");
   assert.ok(code.includes("Submit Reference (UTR)"), "Step 4 must be present");
   assert.ok(code.includes("Submitting a UTR does not automatically confirm payment receipt"), "Must warn that UTR submission is not proof");
 
-  // Step 5: Admin review and atomic ticket issuance
-  assert.ok(code.includes("Payment Review &amp; Ticket Issuance") || code.includes("Payment Review"), "Step 5 must be present");
-  assert.ok(code.includes("only after successful payment verification"), "Tickets valid only after verification");
+  // Admin review remains the only route to ticket issuance.
+  assert.ok(code.includes("Wait for SSFI Admin Verification"), "Admin verification step must be present");
+  assert.ok(code.includes("Tickets are issued only after Admin checks actual bank credit"), "Tickets must require bank-credit verification");
 
   // Payment Safety Warning
   assert.ok(code.includes("Payment Safety Warning — Before You Pay"), "Safety warning heading must be present");

@@ -6,7 +6,6 @@ import { SellerReferralCard } from "@/components/seller/SellerReferralCard";
 import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 
-export const instant = false;
 
 type OrderSummary = { quantity: number; total_amount_paise: number; status: string };
 

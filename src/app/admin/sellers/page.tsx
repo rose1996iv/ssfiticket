@@ -4,12 +4,12 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hasCurrentUserRole } from "@/lib/auth/server";
 import { SellerQrModal } from "@/components/admin/SellerQrModal";
+import { AdminSellerPaymentQrModal } from "@/components/admin/AdminSellerPaymentQrModal";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
 import { CreateSellerModal } from "@/components/admin/CreateSellerModal";
 import { SellerDetailModal, SellerDetailData } from "@/components/admin/SellerDetailModal";
 import { SellerLifecycleModal } from "@/components/admin/SellerLifecycleModal";
 
-export const instant = false;
 
 export default async function AdminSellersPage() {
   await connection();
@@ -23,13 +23,17 @@ export default async function AdminSellersPage() {
       seller_code,
       display_name,
       is_active,
+      is_qr_active,
+      qr_storage_path,
+      upi_id,
+      account_name,
       created_at,
       profiles (
         id,
         email,
         phone
       ),
-      orders (
+      orders!orders_seller_id_fkey (
         id,
         order_number,
         quantity,
@@ -203,6 +207,16 @@ export default async function AdminSellersPage() {
                   <td className="p-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <SellerDetailModal seller={s} />
+                      <AdminSellerPaymentQrModal
+                        sellerId={s.id}
+                        sellerCode={s.seller_code}
+                        displayName={s.display_name}
+                        isActive={s.is_active}
+                        isQrActive={Boolean(s.is_qr_active)}
+                        hasQrImage={Boolean(s.qr_storage_path)}
+                        upiId={s.upi_id}
+                        accountName={s.account_name}
+                      />
                       <SellerQrModal
                         sellerCode={s.seller_code}
                         sellerName={s.display_name}

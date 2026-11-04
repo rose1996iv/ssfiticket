@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
       let query = db
         .from("payments")
         .select(
-          "id, status, amount_paise, utr_reference, submitted_at, verified_at, orders(order_number, customers(full_name, whatsapp_number, phone, email), sellers(display_name, seller_code))"
+          "id, status, amount_paise, utr_reference, submitted_at, verified_at, orders(order_number, customers(full_name, whatsapp_number, phone, email), sellers!orders_seller_id_fkey(display_name, seller_code))"
         )
         .order("submitted_at", { ascending: false })
         .limit(5000);
@@ -224,7 +224,7 @@ export async function GET(request: NextRequest) {
       let query = db
         .from("orders")
         .select(
-          "id, order_number, quantity, unit_price_paise, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers(display_name, seller_code)"
+          "id, order_number, quantity, unit_price_paise, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers!orders_seller_id_fkey(display_name, seller_code)"
         )
         .order("created_at", { ascending: false })
         .limit(EXPORT_MAX_LIMITS.orders);

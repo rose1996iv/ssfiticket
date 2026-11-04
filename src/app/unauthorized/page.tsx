@@ -4,7 +4,6 @@ import { ArrowLeft, ArrowRight, LogOut, ShieldAlert, AlertTriangle, UserCheck } 
 import { logout } from "@/server/actions/auth";
 import { Logo } from "@/components/brand/Logo";
 
-export const instant = false;
 
 type PageProps = {
   searchParams: Promise<{ reason?: string }>;

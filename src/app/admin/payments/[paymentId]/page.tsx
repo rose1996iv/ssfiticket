@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Flag, ThumbsDown, ThumbsUp } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { rejectPayment, verifyPayment } from "@/server/actions/operations";
+import { AdminPaymentScreenshot } from "@/components/admin/AdminPaymentScreenshot";
 
-export const instant = false;
 
 type PaymentDetail = {
   id: string;
@@ -15,13 +15,47 @@ type PaymentDetail = {
   payer_name: string | null;
   submitted_at: string | null;
   rejection_reason: string | null;
-  orders: {
-    id: string;
-    order_number: string;
-    quantity: number;
-    customers: { full_name: string; phone: string; whatsapp_number: string }[];
-    sellers: { display_name: string; seller_code: string }[];
-  }[];
+  seller_review_status: string | null;
+  seller_reviewed_at: string | null;
+  seller_review_note: string | null;
+  payment_screenshots:
+    | { uploaded_at: string; file_size_bytes: number }
+    | { uploaded_at: string; file_size_bytes: number }[]
+    | null;
+  orders:
+    | {
+        id: string;
+        order_number: string;
+        quantity: number;
+        customers:
+          | { full_name: string; phone: string; whatsapp_number: string }
+          | { full_name: string; phone: string; whatsapp_number: string }[]
+          | null;
+        sellers:
+          | { display_name: string; seller_code: string }
+          | { display_name: string; seller_code: string }[]
+          | null;
+      }
+    | {
+        id: string;
+        order_number: string;
+        quantity: number;
+        customers:
+          | { full_name: string; phone: string; whatsapp_number: string }
+          | { full_name: string; phone: string; whatsapp_number: string }[]
+          | null;
+        sellers:
+          | { display_name: string; seller_code: string }
+          | { display_name: string; seller_code: string }[]
+          | null;
+      }[]
+    | null;
+};
+
+const SELLER_REVIEW_LABELS: Record<string, { label: string; color: string; icon: typeof ThumbsUp }> = {
+  RECOMMENDED_APPROVAL: { label: "Seller Recommends Approval", color: "text-emerald-800 bg-emerald-50 border-emerald-200", icon: ThumbsUp },
+  RECOMMENDED_REJECTION: { label: "Seller Recommends Rejection", color: "text-red-800 bg-red-50 border-red-200", icon: ThumbsDown },
+  FLAGGED_DISCREPANCY: { label: "Seller Flagged Discrepancy", color: "text-amber-800 bg-amber-50 border-amber-200", icon: Flag },
 };
 
 export default async function PaymentDetailPage({
@@ -36,7 +70,7 @@ export default async function PaymentDetailPage({
   const { data } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers(display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, seller_review_status, seller_reviewed_at, seller_review_note, payment_screenshots(uploaded_at, file_size_bytes), orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(display_name, seller_code))"
     )
     .eq("id", paymentId)
     .maybeSingle();
@@ -44,10 +78,25 @@ export default async function PaymentDetailPage({
   const payment = data as unknown as PaymentDetail | null;
   if (!payment) notFound();
 
-  const order = payment.orders[0];
-  const customer = order?.customers[0];
-  const seller = order?.sellers[0];
+  const rawOrder = payment.orders;
+  const order = Array.isArray(rawOrder) ? rawOrder[0] : rawOrder;
+
+  const rawCustomer = order?.customers;
+  const customer = Array.isArray(rawCustomer) ? rawCustomer[0] : rawCustomer;
+
+  const rawSeller = order?.sellers;
+  const seller = Array.isArray(rawSeller) ? rawSeller[0] : rawSeller;
+
   const isAwaiting = payment.status === "SUBMITTED";
+
+  const rawScreenshots = payment.payment_screenshots;
+  const screenshot = Array.isArray(rawScreenshots)
+    ? rawScreenshots[0]
+    : rawScreenshots;
+
+  const reviewMeta = payment.seller_review_status
+    ? SELLER_REVIEW_LABELS[payment.seller_review_status]
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -86,6 +135,8 @@ export default async function PaymentDetailPage({
           </span>
         </div>
 
+        {screenshot && <AdminPaymentScreenshot paymentId={payment.id} uploadedAt={screenshot.uploaded_at} sizeBytes={screenshot.file_size_bytes} />}
+
         {/* Verification Summary Grid */}
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
           {/* UTR Reference Highlight */}
@@ -95,15 +146,19 @@ export default async function PaymentDetailPage({
             </span>
             <div className="mt-2 flex items-baseline justify-between gap-4">
               <span className="font-mono text-2xl font-bold tracking-tight text-[#35110f]">
-                {payment.utr_reference ?? "NO UTR PROVIDED"}
+                {payment.utr_reference ?? "NO UTR PROVIDED (OPTIONAL)"}
               </span>
               <span className="text-xl font-bold text-[#7c1619]">
                 ₹{payment.amount_paise / 100}
               </span>
             </div>
-            {payment.payer_name && (
+            {payment.payer_name ? (
               <p className="mt-1 text-xs text-[#705a54]">
                 Payer declared: <b>{payment.payer_name}</b>
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-[#705a54] italic">
+                Payer name not declared (optional)
               </p>
             )}
           </div>
@@ -127,13 +182,56 @@ export default async function PaymentDetailPage({
           </div>
         </div>
 
+        {/* Seller Advisory Review Section */}
+        <div className="mt-6 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-5">
+          <div className="flex items-center justify-between gap-2 border-b border-[#f0e7df] pb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#705a54]">
+              Seller Intermediate Review (Advisory)
+            </span>
+            {reviewMeta ? (
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold ${reviewMeta.color}`}>
+                <reviewMeta.icon size={13} />
+                <span>{reviewMeta.label}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-600">
+                <Clock size={12} />
+                <span>Pending Seller Review</span>
+              </span>
+            )}
+          </div>
+
+          {payment.seller_review_status ? (
+            <div className="mt-3 space-y-2 text-xs">
+              {payment.seller_review_note && (
+                <div className="rounded-lg bg-white p-3 border border-[#eadbcf] text-[#35110f]">
+                  <span className="font-semibold text-[#705a54] text-[11px] block mb-1">Seller Note:</span>
+                  <p className="italic">{payment.seller_review_note}</p>
+                </div>
+              )}
+              {payment.seller_reviewed_at && (
+                <p className="text-[11px] text-[#705a54]">
+                  Reviewed on: {new Date(payment.seller_reviewed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                </p>
+              )}
+              <p className="text-[10px] text-[#705a54]">
+                Note: Seller recommendation is advisory. Final ticket issuance authority rests with the Administrator.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-[#705a54] italic">
+              The assigned seller has not yet submitted an advisory recommendation for this payment. You may proceed with independent verification.
+            </p>
+          )}
+        </div>
+
         {/* Action Controls for SUBMITTED state */}
         {isAwaiting ? (
           <div className="mt-8 border-t border-[#f0e7df] pt-6 space-y-6">
             <div>
               <h2 className="text-sm font-bold text-[#35110f]">Verification Decisions</h2>
               <p className="mt-1 text-xs text-[#705a54]">
-                Verify matching bank deposit before issuing tickets. Ticket numbers are sequentially
+                Verify matching bank deposit or screenshot before issuing tickets. Ticket numbers are sequentially
                 and atomically generated upon confirmation.
               </p>
             </div>
@@ -158,7 +256,7 @@ export default async function PaymentDetailPage({
                   <input
                     name="reason"
                     required
-                    placeholder="Reason for rejection (e.g. UTR not found)"
+                    placeholder="Reason for rejection (e.g. UTR / payment not found)"
                     className="w-full rounded-xl border border-red-200 bg-red-50/50 p-2.5 text-xs text-red-950 focus:border-red-500 focus:outline-hidden"
                   />
                   <button

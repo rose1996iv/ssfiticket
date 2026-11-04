@@ -27,27 +27,19 @@ const revokeLinkSchema = z.object({
 });
 
 // Schema for payment details completion submission
+// utr and payerName are intentionally OPTIONAL — screenshot is the mandatory proof.
 const paymentCompletionSchema = z.object({
   orderId: z.string().uuid("Invalid order ID."),
-  token: z.string().trim().optional(),
-  utr: z
-    .string()
-    .trim()
-    .transform((val) => val.replace(/\s+/g, "").toUpperCase())
-    .pipe(
-      z
-        .string()
-        .min(6, "UTR / Transaction Reference must be at least 6 characters.")
-        .max(32, "UTR cannot exceed 32 characters.")
-        .regex(/^[A-Z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens.")
-    ),
+  token: z.string().trim().nullish(),
+  utr: z.string().trim().nullish().default(""),
   email: emailSchema,
   whatsapp: whatsappSchema,
   payerName: z
     .string()
     .trim()
-    .min(2, "Payer name must be at least 2 characters.")
-    .max(120, "Payer name cannot exceed 120 characters."),
+    .max(120, "Payer name cannot exceed 120 characters.")
+    .nullish()
+    .default(""),
 });
 
 export type GenerateRecoveryLinkResult = {
@@ -286,7 +278,7 @@ export type SubmitPaymentCompletionResult = {
 export async function submitPaymentCompletion(
   formData: FormData
 ): Promise<SubmitPaymentCompletionResult> {
-  const rawToken = formData.get("token") ? String(formData.get("token")).trim() : undefined;
+  const rawToken = formData.get("token");
   const rawOrderId = formData.get("orderId");
   const rawUtr = formData.get("utr");
   const rawEmail = formData.get("email");
@@ -295,11 +287,11 @@ export async function submitPaymentCompletion(
 
   const parsed = paymentCompletionSchema.safeParse({
     orderId: typeof rawOrderId === "string" ? rawOrderId : undefined,
-    token: rawToken,
-    utr: typeof rawUtr === "string" ? rawUtr : undefined,
-    email: typeof rawEmail === "string" ? rawEmail : undefined,
-    whatsapp: typeof rawWhatsapp === "string" ? rawWhatsapp : undefined,
-    payerName: typeof rawPayerName === "string" ? rawPayerName : undefined,
+    token: typeof rawToken === "string" && rawToken.trim() ? rawToken.trim() : undefined,
+    utr: typeof rawUtr === "string" ? rawUtr.trim() : "",
+    email: typeof rawEmail === "string" ? rawEmail.trim() : undefined,
+    whatsapp: typeof rawWhatsapp === "string" ? rawWhatsapp.trim() : undefined,
+    payerName: typeof rawPayerName === "string" ? rawPayerName.trim() : "",
   });
 
   if (!parsed.success) {
@@ -321,10 +313,11 @@ export async function submitPaymentCompletion(
   }
 
   // Mock mode guard in Preview / Development
+  // Only checked when UTR is actually provided — UTR is optional now.
   const isProd =
     process.env.VERCEL_ENV === "production" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
-  if (manualUpiConfig.isMock && !isProd) {
+  if (manualUpiConfig.isMock && !isProd && utr) {
     const trimmed = utr.trim();
     if (trimmed.toUpperCase().includes("FAIL")) {
       return {
@@ -337,7 +330,7 @@ export async function submitPaymentCompletion(
       return {
         success: false,
         error:
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678), or leave it blank.",
       };
     }
   }
@@ -345,13 +338,41 @@ export async function submitPaymentCompletion(
   const tokenHash = token && isValidTokenFormat(token) ? hashRecoveryToken(token) : null;
   const admin = createSupabaseAdminClient();
 
-  // Call atomic RPC
+  // Strict Server-Side Screenshot Verification:
+  // Payment screenshot is strictly mandatory. Must verify proof exists before transitioning to SUBMITTED.
+  const { data: paymentRecord } = await admin
+    .from("payments")
+    .select("id")
+    .eq("order_id", orderId)
+    .maybeSingle();
+
+  if (!paymentRecord) {
+    return {
+      success: false,
+      error: "Payment record not found for this order.",
+    };
+  }
+
+  const { data: screenshotRecord } = await admin
+    .from("payment_screenshots")
+    .select("id")
+    .eq("payment_id", paymentRecord.id)
+    .maybeSingle();
+
+  if (!screenshotRecord) {
+    return {
+      success: false,
+      error: "A payment screenshot is mandatory. Please upload your payment confirmation screenshot before submitting details.",
+    };
+  }
+
+  // Call atomic RPC — utr and payerName are optional (pass null when empty/absent)
   const { data, error } = await admin.rpc("submit_payment_details_completion", {
     p_order_id: orderId,
-    p_utr: utr,
+    p_utr: utr || null,
     p_email: email,
     p_whatsapp: whatsapp,
-    p_payer_name: payerName,
+    p_payer_name: payerName || null,
     p_token_hash: tokenHash,
   });
 

@@ -20,7 +20,6 @@ import { CustomerPaymentJourney } from "@/components/payment/CustomerPaymentJour
 import { PaymentDetailsForm } from "@/components/payment/PaymentDetailsForm";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
 
-export const instant = false;
 
 type OrderData = {
   id: string;
@@ -29,6 +28,13 @@ type OrderData = {
   total_amount_paise: number;
   status: string;
   created_at: string;
+  // Seller payment snapshot (captured at order creation — immutable)
+  snapshot_seller_display_name: string | null;
+  snapshot_seller_code: string | null;
+  snapshot_qr_storage_path: string | null;
+  snapshot_upi_id: string | null;
+  snapshot_account_name: string | null;
+  snapshot_payment_instructions: string | null;
   customers:
     | { full_name: string; phone?: string; whatsapp_number: string; email?: string | null }[]
     | { full_name: string; phone?: string; whatsapp_number: string; email?: string | null }
@@ -60,7 +66,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, snapshot_seller_display_name, snapshot_seller_code, snapshot_qr_storage_path, snapshot_upi_id, snapshot_account_name, snapshot_payment_instructions, customers(full_name, phone, whatsapp_number, email), sellers!orders_seller_id_fkey(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -93,16 +99,41 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   // Environment-aware resolution ensuring verification URLs point to the same database
   const { baseUrl: envBaseUrl } = resolveEnvironmentAppUrl();
 
-  const upiIntentUri = buildUpiPaymentUri({
-    payeeVpa: manualUpiConfig.upiId,
-    payeeName: manualUpiConfig.displayName,
-    amountPaise: order.total_amount_paise,
-    orderNumber: order.order_number,
-    transactionRef: order.order_number,
-    currency: manualUpiConfig.currency,
-  });
+  // Determine seller snapshot QR availability:
+  // Must use the captured seller snapshot QR — never fall back to an unrelated central SSFI QR.
+  let sellerQrSignedUrl: string | null = null;
+  let hasSellerQr = false;
+  if (order.snapshot_qr_storage_path) {
+    try {
+      const { data: signed } = await db.storage
+        .from("seller-payment-qrs")
+        .createSignedUrl(order.snapshot_qr_storage_path, 300); // 5-min signed URL
+      if (signed?.signedUrl) {
+        sellerQrSignedUrl = signed.signedUrl;
+        hasSellerQr = true;
+      }
+    } catch {
+      // Non-fatal: QR unavailable
+    }
+  }
 
-  const dynamicQrDataUrl = await generateUpiQrDataUrl(upiIntentUri, { width: 320 });
+  const effectiveUpiId = order.snapshot_upi_id;
+  const effectivePayeeName = order.snapshot_account_name || order.snapshot_seller_display_name || (seller ? seller.display_name : "Seller Account");
+
+  const upiIntentUri = effectiveUpiId
+    ? buildUpiPaymentUri({
+        payeeVpa: effectiveUpiId,
+        payeeName: effectivePayeeName,
+        amountPaise: order.total_amount_paise,
+        orderNumber: order.order_number,
+        transactionRef: order.order_number,
+        currency: manualUpiConfig.currency,
+      })
+    : "";
+
+  const dynamicQrDataUrl = upiIntentUri
+    ? await generateUpiQrDataUrl(upiIntentUri, { width: 320 })
+    : "";
 
   const isPending = order.status === "PENDING_PAYMENT";
   const isSubmitted =
@@ -154,7 +185,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               <span>Payment Details Received!</span>
             </div>
             <p className="mt-1 text-xs text-green-800 leading-relaxed">
-              Your payment reference and contact details have been safely registered and are currently awaiting
+              Your payment screenshot and contact details have been safely registered and are currently awaiting
               verification by SSFI administrators. Save this page to check your ticket issuance status.
             </p>
           </div>
@@ -212,7 +243,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               <div className="col-span-2 border-t border-[#f0e7df] pt-3">
                 <dt className="text-xs text-[#705a54]">Attributed Seller</dt>
                 <dd className="font-medium text-[#7c1619]">
-                  {seller.display_name} <span className="font-mono text-xs">({seller.seller_code})</span>
+                  {order.snapshot_seller_display_name || seller.display_name} <span className="font-mono text-xs">({order.snapshot_seller_code || seller.seller_code})</span>
                 </dd>
               </div>
             )}
@@ -228,7 +259,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </div>
             <p className="mt-1 text-xs text-[#705a54] leading-relaxed">
               These tickets are securely registered in the SSFI database and eligible for the lucky draw.
-              Each ticket includes a unique cryptographic verification QR code for event-day entry.
+              Each ticket includes an authoritative verification QR code for event-day entry.
             </p>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -348,15 +379,15 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
             </div>
             <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-xs text-blue-950 space-y-2">
               <p className="font-semibold text-blue-900">Submitted Transaction Reference:</p>
-              <p className="font-mono text-base font-bold text-[#7c1619]">{payment?.utr_reference}</p>
+              <p className="font-mono text-base font-bold text-[#7c1619]">{payment?.utr_reference ?? "—"}</p>
               {payment?.submitted_at && (
                 <p className="text-[11px] text-blue-800">
                   Registered: {new Date(payment.submitted_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
                 </p>
               )}
               <p className="mt-2 text-[11px] leading-relaxed text-blue-900">
-                Our organizers will manually inspect bank credit records against your UTR. Once confirmed,
-                your lucky draw tickets will appear here and be dispatched to <b>{customer?.whatsapp_number || customer?.phone}</b>.
+                Our organizers will manually inspect your payment screenshot and bank credit records.
+                Once confirmed, your lucky draw tickets will appear here and be dispatched to <b>{customer?.whatsapp_number || customer?.phone}</b>.
               </p>
             </div>
 
@@ -365,7 +396,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               <details className="group text-xs">
                 <summary className="font-semibold text-[#7c1619] cursor-pointer hover:underline flex items-center gap-1.5 py-1">
                   <RefreshCw size={13} />
-                  <span>Need to correct your submitted UTR or contact info? Click here</span>
+                  <span>Need to correct your submitted details or upload a new screenshot? Click here</span>
                 </summary>
                 <div className="mt-4 pt-3 border-t border-[#f0e7df]">
                   <PaymentDetailsForm
@@ -396,36 +427,58 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
               Reason: <b>{payment.rejection_reason || "Could not match bank transfer."}</b>
             </p>
             <p className="mt-1 text-xs text-red-700">
-              Please double-check your bank receipt and submit the corrected UTR below.
+              Please double-check your bank receipt and submit a corrected screenshot and details below.
             </p>
           </div>
         )}
 
-        {/* Part A: Customer Payment Journey & Part B: Details Form (Pending or Rejected) */}
+        {/* Payment Section (when pending or rejected) */}
         {(isPending || isRejected) && (
-          <CustomerPaymentJourney
-            orderNumber={order.order_number}
-            payeeName={manualUpiConfig.displayName}
-            upiId={manualUpiConfig.upiId}
-            amountInr={totalInr}
-            upiIntentUri={upiIntentUri}
-            dynamicQrDataUrl={dynamicQrDataUrl}
-            staticQrImagePath={manualUpiConfig.qrImagePath || "/upi_qr.jpeg"}
-            isMock={manualUpiConfig.isMock}
-            isReopening={false}
-          >
-            <PaymentDetailsForm
-              orderId={order.id}
+          hasSellerQr && sellerQrSignedUrl && effectiveUpiId ? (
+            <CustomerPaymentJourney
               orderNumber={order.order_number}
-              initialUtr={payment?.utr_reference ?? ""}
-              initialEmail={customer?.email ?? ""}
-              suggestedPhone={customer?.phone ?? customer?.whatsapp_number ?? ""}
-              initialWhatsapp={customer?.whatsapp_number ?? ""}
-              initialPayerName={payment?.payer_name ?? ""}
-              isReopening={false}
+              payeeName={effectivePayeeName}
+              upiId={effectiveUpiId || ""}
+              amountInr={totalInr}
+              upiIntentUri={upiIntentUri}
+              dynamicQrDataUrl={dynamicQrDataUrl}
+              staticQrImagePath={sellerQrSignedUrl}
               isMock={manualUpiConfig.isMock}
-            />
-          </CustomerPaymentJourney>
+              isReopening={false}
+            >
+              <PaymentDetailsForm
+                orderId={order.id}
+                orderNumber={order.order_number}
+                initialUtr={payment?.utr_reference ?? ""}
+                initialEmail={customer?.email ?? ""}
+                suggestedPhone={customer?.phone ?? customer?.whatsapp_number ?? ""}
+                initialWhatsapp={customer?.whatsapp_number ?? ""}
+                initialPayerName={payment?.payer_name ?? ""}
+                isReopening={false}
+                isMock={manualUpiConfig.isMock}
+              />
+            </CustomerPaymentJourney>
+          ) : (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-950 shadow-sm space-y-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 text-red-600 shrink-0" size={24} />
+                <div className="space-y-2">
+                  <h3 className="font-bold text-base text-red-950">Seller Payment QR Unavailable</h3>
+                  <p className="text-xs text-red-800 leading-relaxed">
+                    This order is attributed to seller <b>{order.snapshot_seller_display_name || seller?.display_name || "your assigned seller"}</b>, but their personal payment QR is currently not configured or active.
+                  </p>
+                  <p className="text-xs text-red-800 leading-relaxed">
+                    Under SSFI security policies, payment orders cannot be paid to unconfigured accounts or redirected to unrelated accounts.
+                    Please contact your seller or SSFI Support at{" "}
+                    <a href="mailto:Senthangstudents@gmail.com" className="font-bold underline text-red-950">
+                      Senthangstudents@gmail.com
+                    </a>{" "}
+                    with order reference <b className="font-mono">{order.order_number}</b> for recovery assistance.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
         )}
 
         {/* Back Link */}

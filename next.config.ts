@@ -10,9 +10,10 @@ const nextConfig: NextConfig = {
     // Explicitly disable runtimeServerDeploymentId so Next.js embeds the deploymentId
     // directly into build artifacts and never requires process.env.NEXT_DEPLOYMENT_ID at runtime.
     runtimeServerDeploymentId: false,
+    serverActions: {
+      bodySizeLimit: "4mb",
+    },
   },
-  cacheComponents: true,
-  partialPrefetching: true,
   turbopack: {
     rules: {
       "*.css": {

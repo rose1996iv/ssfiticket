@@ -5,7 +5,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
 import { CustomerDetailModal, CustomerDetailData } from "@/components/admin/CustomerDetailModal";
 
-export const instant = false;
 
 export default async function AdminCustomersPage() {
   await connection();
@@ -26,7 +25,7 @@ export default async function AdminCustomersPage() {
         total_amount_paise,
         status,
         created_at,
-        sellers (
+        sellers!orders_seller_id_fkey (
           display_name,
           seller_code
         ),

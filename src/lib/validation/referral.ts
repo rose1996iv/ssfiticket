@@ -13,11 +13,18 @@ export type ActiveSellerInfo = {
   seller_code: string;
   display_name: string;
   is_active: boolean;
+  is_qr_active: boolean;
+  qr_storage_path: string | null;
 };
 
 export type ReferralValidationResult =
-  | { valid: true; seller: ActiveSellerInfo; error?: never }
-  | { valid: false; seller?: never; error: string; code: "INVALID_FORMAT" | "NOT_FOUND" | "INACTIVE" };
+  | { valid: true; seller: ActiveSellerInfo; error?: never; code?: never }
+  | {
+      valid: false;
+      seller?: never;
+      error: string;
+      code: "INVALID_FORMAT" | "NOT_FOUND" | "INACTIVE" | "QR_INACTIVE";
+    };
 
 /**
  * Validates syntax of a seller referral code without database lookup.
@@ -51,7 +58,7 @@ export async function getActiveSellerByReferralCode(rawCode: unknown): Promise<R
 
   const { data, error } = await db
     .from("sellers")
-    .select("id, seller_code, display_name, is_active")
+    .select("id, seller_code, display_name, is_active, is_qr_active, qr_storage_path, upi_id")
     .eq("seller_code", normalizedCode)
     .maybeSingle();
 
@@ -71,6 +78,14 @@ export async function getActiveSellerByReferralCode(rawCode: unknown): Promise<R
     };
   }
 
+  if (!data.is_qr_active || !data.qr_storage_path || !data.upi_id) {
+    return {
+      valid: false,
+      code: "QR_INACTIVE",
+      error: `Seller "${data.display_name}" (${normalizedCode}) is currently not accepting new payment orders because their personal payment QR is unavailable or pending activation.`,
+    };
+  }
+
   return {
     valid: true,
     seller: {
@@ -78,6 +93,8 @@ export async function getActiveSellerByReferralCode(rawCode: unknown): Promise<R
       seller_code: data.seller_code,
       display_name: data.display_name,
       is_active: data.is_active,
+      is_qr_active: data.is_qr_active,
+      qr_storage_path: data.qr_storage_path,
     },
   };
 }

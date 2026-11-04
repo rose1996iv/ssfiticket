@@ -120,6 +120,7 @@ export function PurchaseGuideline({ isCampaignActive, campaignStatusText }: Prop
         <div className="mt-12 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
             href="/buy"
+            prefetch={false}
             className={`inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-sm font-bold shadow-md transition ${
               isCampaignActive
                 ? "bg-[#7c1619] text-white hover:bg-[#601114] hover:scale-105"

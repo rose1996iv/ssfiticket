@@ -16,7 +16,6 @@ import {
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
 
-export const instant = false;
 
 type PaymentSummary = { status: string; amount_paise: number };
 

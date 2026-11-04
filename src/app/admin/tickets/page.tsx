@@ -13,7 +13,6 @@ import { ExportDropdown } from "@/components/admin/ExportDropdown";
 import { AdminTicketsTable } from "@/components/admin/AdminTicketsTable";
 import { AdminTicketDetail } from "@/components/admin/TicketActionModal";
 
-export const instant = false;
 
 type TicketRow = AdminTicketDetail;
 

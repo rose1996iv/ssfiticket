@@ -15,6 +15,9 @@ import { getPublicSellerDirectory } from "@/server/actions/sellerDirectory";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 import { manualUpiConfig } from "@/lib/config/payment";
 
+export const dynamic = "force-dynamic";
+
+
 const prizes = [
   ["1st Prize", "₹10,000 Cash Giveaway"],
   ["2nd Prize", "₹8,000 Cash Celebration"],
@@ -94,6 +97,7 @@ export default async function Home() {
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
               href="/buy"
+              prefetch={false}
               className="inline-flex items-center gap-2 rounded-full bg-[#d6a23b] px-7 py-4 text-sm font-bold text-[#35110f] shadow-lg transition hover:bg-[#c29130] hover:scale-105"
             >
               <QrCode size={18} aria-hidden="true" />

@@ -782,7 +782,7 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
       status,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       order_items(quantity)
     `)
     .eq("id", orderId)
@@ -865,7 +865,7 @@ export async function enqueuePaymentApprovedNotification(
       total_amount_paise,
       campaigns(name),
       customers(id, full_name, email),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(amount_paise, verified_at, payment_method),
       order_items(quantity)
     `)
@@ -942,7 +942,7 @@ export async function enqueueTicketsIssuedNotification(
       total_amount_paise,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(amount_paise, verified_at),
       tickets(id, ticket_number, status, issued_at)
     `)

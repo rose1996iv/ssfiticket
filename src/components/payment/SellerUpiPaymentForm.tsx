@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight, FlaskConical, Loader2 } from "lucide-react";
 import { submitManualUpi } from "@/server/actions/operations";
+import { PaymentScreenshotField } from "@/components/payment/PaymentScreenshotField";
+import { uploadPaymentScreenshot } from "@/server/actions/paymentScreenshot";
+import { isNextRedirectError } from "@/lib/navigation/redirect";
 
 type Props = {
   orderId: string;
@@ -12,8 +15,8 @@ type Props = {
 
 export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
   const router = useRouter();
-  const [utr, setUtr] = useState("");
   const [payerName, setPayerName] = useState("");
+  const [screenshot, setScreenshot] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -22,39 +25,32 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
     setLoading(true);
     setErrorMessage(null);
 
-    const trimmedUtr = utr.trim();
+    const trimmedPayerName = payerName.trim();
 
-    if (!trimmedUtr) {
-      setErrorMessage("Please enter the payment reference / UTR.");
+    if (!screenshot) {
+      setErrorMessage("A payment screenshot is mandatory. Please upload your payment confirmation screenshot before submitting.");
       setLoading(false);
       return;
-    }
-
-    if (trimmedUtr.length < 6) {
-      setErrorMessage("UTR / Transaction Reference must be at least 6 characters.");
-      setLoading(false);
-      return;
-    }
-
-    if (isMock) {
-      const isTest = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmedUtr);
-      if (!isTest) {
-        setErrorMessage(
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678)."
-        );
-        setLoading(false);
-        return;
-      }
-    }
-
-    const formData = new FormData();
-    formData.set("orderId", orderId);
-    formData.set("utr", trimmedUtr);
-    if (payerName.trim()) {
-      formData.set("payerName", payerName.trim());
     }
 
     try {
+      // 1. Upload mandatory screenshot first
+      const screenshotData = new FormData();
+      screenshotData.set("orderId", orderId);
+      screenshotData.set("screenshot", screenshot);
+
+      const uploadRes = await uploadPaymentScreenshot(screenshotData);
+      if (!uploadRes.success) {
+        setErrorMessage(uploadRes.error || "Screenshot upload failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Submit payment reference
+      const formData = new FormData();
+      formData.set("orderId", orderId);
+      formData.set("payerName", trimmedPayerName || "");
+
       const res = await submitManualUpi(formData);
       if (!res.success) {
         setErrorMessage(res.error || "Payment submission failed. Please try again.");
@@ -70,21 +66,22 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
         router.refresh();
       }
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        if (
-          err.message.includes("already been submitted") ||
-          err.message.includes("already attached")
-        ) {
-          setErrorMessage(
-            "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference."
-          );
-        } else {
-          setErrorMessage(err.message);
-        }
-      } else {
-        setErrorMessage("An unexpected network error occurred. Please retry.");
+      if (isNextRedirectError(err)) {
+        throw err;
       }
       setLoading(false);
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("already been submitted") || msg.includes("already attached")) {
+        setErrorMessage(
+          "Payment has already been submitted for this order and is currently under review."
+        );
+      } else if (msg.includes("Minified React error #441") || msg.includes("Server Components render")) {
+        setErrorMessage(
+          "The server could not complete payment submission. Please verify your screenshot (under 2 MB) and seller access, then try again."
+        );
+      } else {
+        setErrorMessage(msg || "An unexpected network error occurred. Please retry.");
+      }
     }
   };
 
@@ -100,41 +97,28 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
             <span>Test Payment Simulation (Preview Environment — Test Data Only)</span>
           </p>
           <p className="mt-1 text-[11px] leading-normal text-amber-800">
-            Use this control to test the application workflow. It does not confirm that real funds have been transferred:
+            Use this control to test the application workflow:
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
-                setUtr(`TEST-SELLER-${Date.now().toString().slice(-6)}`);
                 setPayerName("Simulated Customer");
                 if (errorMessage) setErrorMessage(null);
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ✓ Simulate Valid Reference
+              ✓ Fill Simulated Payer Name
             </button>
             <button
               type="button"
               onClick={() => {
-                setUtr("TEST-DUP-REF");
-                setPayerName("Duplicate Tester");
+                setPayerName("");
                 if (errorMessage) setErrorMessage(null);
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ⚠ Test Duplicate Reference
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUtr("MOCK-FAIL-REJECTED");
-                setPayerName("Failing Test");
-                if (errorMessage) setErrorMessage(null);
-              }}
-              className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
-            >
-              ✕ Simulate Failure Scenario
+              ✓ Clear Payer Name (Screenshot Only)
             </button>
           </div>
         </div>
@@ -152,35 +136,12 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
               <p className="font-bold text-red-950">Payment Reference Notice</p>
               <p className="mt-0.5 font-medium">{errorMessage}</p>
               <p className="mt-1 text-[11px] text-red-700">
-                Correct the reference below and submit again.
+                Correct the information below and submit again.
               </p>
             </div>
           </div>
         </div>
       )}
-
-      <div>
-        <label className="block text-xs font-bold uppercase tracking-wider text-[#705a54]">
-          UTR / Bank Payment Reference <span className="text-red-500">*</span>
-        </label>
-        <input
-          name="utr"
-          required
-          minLength={6}
-          maxLength={64}
-          value={utr}
-          onChange={(e) => {
-            setUtr(e.target.value);
-            if (errorMessage) setErrorMessage(null);
-          }}
-          placeholder={isMock ? "e.g. TEST12345678" : "e.g. 428172918291"}
-          className={`mt-1 w-full rounded-xl border bg-white p-3 font-mono text-sm text-[#35110f] transition focus:outline-hidden ${
-            errorMessage
-              ? "border-red-400 ring-2 ring-red-200 focus:border-red-500"
-              : "border-[#eadbcf] focus:border-[#7c1619]"
-          }`}
-        />
-      </div>
 
       <div>
         <label className="block text-xs font-bold uppercase tracking-wider text-[#705a54]">
@@ -190,9 +151,25 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
           name="payerName"
           maxLength={120}
           value={payerName}
-          onChange={(e) => setPayerName(e.target.value)}
-          placeholder="Name on customer's UPI/bank account"
+          onChange={(e) => {
+            setPayerName(e.target.value);
+            if (errorMessage) setErrorMessage(null);
+          }}
+          placeholder="Name on customer's UPI/bank account (optional)"
           className="mt-1 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
+        />
+        <p className="mt-1 text-[11px] text-[#705a54]">
+          Account holder name is optional. Empty or omitted value is accepted.
+        </p>
+      </div>
+
+      {/* Mandatory Payment Screenshot Field */}
+      <div>
+        <PaymentScreenshotField
+          onChange={(file) => {
+            setScreenshot(file);
+            if (errorMessage) setErrorMessage(null);
+          }}
         />
       </div>
 
@@ -208,7 +185,7 @@ export function SellerUpiPaymentForm({ orderId, isMock }: Props) {
           </>
         ) : (
           <>
-            <span>Submit Payment Reference</span>
+            <span>Submit Payment &amp; Screenshot</span>
             <ArrowRight size={16} />
           </>
         )}

@@ -3,7 +3,6 @@ import { ArrowLeft, FileText } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-export const instant = false;
 
 export default async function TermsAndConditionsPage() {
   const db = createSupabaseAdminClient();
@@ -53,9 +52,9 @@ export default async function TermsAndConditionsPage() {
             Effective Campaign: <b>{campaignName}</b> · Governing Currency: <b>INR (₹)</b>
           </p>
           <p className="mt-3 text-sm leading-6 text-[#705a54]">
-            These Terms &amp; Conditions govern the purchase, payment verification, and issuance of lucky draw tickets
-            for the Senthang Students Fellowship India (SSFI) fundraising campaign. Please read these terms carefully before
-            placing an order.
+            These Terms &amp; Conditions govern ticket ordering, seller-owned QR payment workflows, mandatory payment screenshot verification,
+            two-tier review procedures, ticket issuance, and draw participation for the Senthang Students Fellowship India (SSFI) fundraising campaign.
+            Please review these terms carefully before placing an order.
           </p>
         </div>
 
@@ -65,7 +64,7 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">1</span>
-              <span>Ticket Selection and Order Amount</span>
+              <span>1. Ticket Selection and Order Amount</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
@@ -91,11 +90,17 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">2</span>
-              <span>Payment and Transaction Reference</span>
+              <span>2. Payment and Transaction Reference</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                2.1. <b>Official Payment Destination:</b> All payments must be transferred directly to the verified SSFI organizer payment details:
+                2.1. <b>Seller-Owned Payment QR Architecture:</b> Each seller manages their personal payment QR code, UPI ID, and payment instructions. Customers scanning a seller&apos;s referral link pay directly to that seller&apos;s account.
+              </p>
+              <p>
+                2.2. <b>Immutable Order Payment Snapshot:</b> At the moment an order is created, the system captures an immutable snapshot of the seller&apos;s payment QR code and UPI details. Subsequent modifications by the seller to their payment settings do not affect existing orders.
+              </p>
+              <p>
+                2.3. <b>Official Central Fallback Details:</b> If an assigned seller has not uploaded an active payment QR, the official central SSFI payment details are presented:
               </p>
               <div className="my-2 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 font-mono text-xs text-[#35110f] space-y-1">
                 <p><b>Payee Name:</b> HLAWN THA DAWT</p>
@@ -104,12 +109,13 @@ export default async function TermsAndConditionsPage() {
                 <p><b>Official Support Email:</b> Senthangstudents@gmail.com</p>
               </div>
               <p>
-                2.2. <b>Payment Submission (UTR):</b> After completing the transfer in any UPI application, the customer must return to
-                the order confirmation page and submit the valid 12-digit Unique Transaction Reference (UTR / UPI Ref No.).
+                2.4. <b>Mandatory Payment Screenshot Proof:</b> A genuine payment confirmation screenshot is <b>strictly mandatory</b> for all submissions. Orders cannot enter review without an uploaded screenshot.
               </p>
               <p>
-                2.3. <b>Submission Notice:</b> Submitting a UTR reference does <b>not</b> constitute proof that funds have been received.
-                It initiates a verification request for SSFI finance staff review.
+                2.5. <b>Optional UTR &amp; Payer Name:</b> The 12-digit UPI Transaction Reference (UTR / UPI Ref No.) and Payer Account Name are optional helper fields. While submitting a valid UTR speeds up reconciliation, the screenshot is the primary proof of payment.
+              </p>
+              <p>
+                2.6. <b>Submission Notice:</b> Submitting a payment screenshot and reference does <b>not</b> constitute proof of receipt or automatic ticket issuance; it registers your transfer for human verification.
               </p>
             </div>
           </section>
@@ -118,20 +124,21 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">3</span>
-              <span>Payment Verification</span>
+              <span>3. Payment Verification</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                3.1. <b>Manual Verification:</b> To prevent fraud, double-spending, and spoofed receipts, all incoming payments
-                are manually reviewed and reconciled by authorized SSFI staff against official bank credit records.
+                3.1. <b>Two-Tier Review System:</b> To ensure complete accuracy and prevent fraud, SSFI utilizes a two-tier review procedure:
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li><b>Tier 1 — Intermediate Seller Review (Advisory):</b> The seller reviews the customer&apos;s uploaded screenshot and provides an advisory recommendation (Recommend Approval, Recommend Rejection, or Flag Discrepancy). The seller cannot issue tickets.</li>
+                <li><b>Tier 2 — SSFI Administrator Final Verification (Authoritative):</b> Authorized SSFI administrators conduct final human verification against bank credit records and approve or reject the payment.</li>
+              </ul>
+              <p>
+                3.2. <b>Under Review State:</b> Upon screenshot submission, the order enters <code>PAYMENT_SUBMITTED</code> status.
               </p>
               <p>
-                3.2. <b>Under Review State:</b> Upon UTR submission, the payment moves into <code>SUBMITTED</code> (Under Review) status.
-                Verification typically takes place during daily administrative hours.
-              </p>
-              <p>
-                3.3. <b>Rejection of Invalid References:</b> References that do not match credit amounts, represent uncredited transfers,
-                or fail reconciliation will be marked <code>REJECTED</code>.
+                3.3. <b>Rejection of Invalid Proof:</b> Transferred amounts that do not match the order total, altered screenshots, uncredited transfers, or fake references are marked <code>FAILED</code>.
               </p>
             </div>
           </section>
@@ -140,20 +147,17 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">4</span>
-              <span>Ticket Issuance and Validity</span>
+              <span>4. Ticket Issuance and Validity</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                4.1. <b>Atomic Issuance:</b> Official ticket numbers are generated via sequential database sequence only after
-                the payment is explicitly approved by authorized SSFI staff (status: <code>TICKETS_ISSUED</code>).
+                4.1. <b>Atomic Issuance by Admin Only:</b> Official ticket numbers are generated via sequential database sequence only after the payment is approved by an authorized SSFI Administrator (status: <code>TICKETS_ISSUED</code>).
               </p>
               <p>
-                4.2. <b>Valid Ticket Format:</b> Authentic tickets follow the official numbering sequence (e.g. <code>SSFI-000001</code>).
-                Only tickets recorded with status <code>ISSUED</code> in the SSFI registry are valid and eligible for the lucky draw.
+                4.2. <b>Valid Ticket Format:</b> Authentic tickets follow the official numbering sequence (e.g. <code>SSFI-000001</code>). Only tickets recorded with status <code>ISSUED</code> in the SSFI registry are valid and eligible for the lucky draw.
               </p>
               <p>
-                4.3. <b>Unverified Status:</b> Orders in <code>PENDING_PAYMENT</code> or <code>PAYMENT_SUBMITTED</code> do not hold valid tickets
-                and are not eligible for any draw prize.
+                4.3. <b>Unverified Status:</b> Orders in <code>PENDING_PAYMENT</code> or <code>PAYMENT_SUBMITTED</code> do not hold valid tickets and are not eligible for any draw prize.
               </p>
             </div>
           </section>
@@ -162,20 +166,17 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">5</span>
-              <span>Ticket QR Code and Verification</span>
+              <span>5. Ticket QR Code and Verification</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                5.1. <b>Official Verification Portal:</b> Every issued ticket contains a scannable QR code resolving to the public
-                verification portal at <code>https://ssfiticket.vercel.app/verify/[ticketNumber]</code>.
+                5.1. <b>Official Verification Portal:</b> Every issued ticket contains a scannable QR code resolving to the public verification portal at <code>https://ssfiticket.vercel.app/verify/[ticketNumber]</code>.
               </p>
               <p>
-                5.2. <b>QR Display Gate:</b> Scannable ticket verification QR codes are displayed <b>only</b> after payment approval.
-                No QR code is rendered for pending or rejected orders.
+                5.2. <b>QR Display Gate:</b> Scannable ticket verification QR codes are displayed <b>only</b> after payment approval. No QR code is rendered for pending or rejected orders.
               </p>
               <p>
-                5.3. <b>Voided Tickets:</b> In the event a ticket is voided or cancelled by administration, the verification page will
-                clearly display the ticket as <code>VOID</code> and ineligible for the draw.
+                5.3. <b>Voided Tickets:</b> In the event a ticket is voided or cancelled by administration, the verification page will clearly display the ticket as <code>VOID</code> and ineligible for the draw.
               </p>
             </div>
           </section>
@@ -184,18 +185,20 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">6</span>
-              <span>Duplicate or Unsuccessful Payments</span>
+              <span>6. Duplicate or Unsuccessful Payments</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
-                6.1. <b>Avoid Double Payment:</b> Customers must avoid transferring a second time for the same order while the status is
-                Under Review. If you suspect an issue with your transfer, contact SSFI support before initiating another transaction.
+                6.1. <b>Avoid Double Payment:</b> Customers must avoid transferring a second time for the same order while the status is Under Review. If you suspect an issue with your transfer, contact SSFI support before initiating another transaction.
               </p>
               <p>
-                6.2. <b>Duplicate UTR Rejection:</b> The system rejects duplicate UTR submissions to prevent accidental or fraudulent double entry.
+                6.2. <b>Duplicate Reference Rejection:</b> The system rejects duplicate transaction references to prevent accidental or fraudulent double entry.
               </p>
               <p>
-                6.3. <b>Payment Reconciliation Support:</b> In case of a bank deduction without order credit, contact{" "}
+                6.3. <b>Wrong-Seller Transfers:</b> Transferring funds to a seller other than the one assigned to your order snapshot carries risks of delayed verification or non-recovery. Such issues require manual investigation.
+              </p>
+              <p>
+                6.4. <b>Payment Reconciliation Support:</b> In case of a bank deduction without order credit, contact{" "}
                 <a href="mailto:Senthangstudents@gmail.com" className="text-[#7c1619] underline font-semibold">
                   Senthangstudents@gmail.com
                 </a>{" "}
@@ -208,7 +211,7 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">7</span>
-              <span>Draw Information and Prize Conditions</span>
+              <span>7. Draw Information and Prize Conditions</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
@@ -223,7 +226,7 @@ export default async function TermsAndConditionsPage() {
               </ul>
               <div className="space-y-2">
                 <p>
-                  7.2. <b>Confirmed Draw Date &amp; Methodology:</b> The official lucky draw ceremony is confirmed to take place on{" "}
+                  7.2. <b>Confirmed Draw Date &amp; Methodology:</b> The official lucky draw ceremony has a <b className="text-[#7c1619]">Confirmed Draw Date</b> on{" "}
                   <b className="text-[#7c1619]">19 December 2026</b>. Winning tickets will be selected through a fair, transparent,
                   and public drawing supervised by the SSFI Executive Committee.
                 </p>
@@ -277,7 +280,7 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">8</span>
-              <span>Customer Responsibilities</span>
+              <span>8. Customer Responsibilities</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
@@ -288,11 +291,14 @@ export default async function TermsAndConditionsPage() {
               </p>
               <p>
                 8.2. <b>Security of Credentials:</b> Customers must never share their UPI PIN, OTP, banking password, or card details.
-                SSFI staff will never request these sensitive credentials.
+                SSFI staff and sellers will never request these sensitive credentials.
               </p>
               <p>
-                8.3. <b>Authentic References:</b> Submitting falsified, reused, or fraudulent transaction references is strictly prohibited
+                8.3. <b>Authentic References &amp; Screenshots:</b> Submitting falsified, reused, or fraudulent transaction screenshots or references is strictly prohibited
                 and will result in order cancellation and permanent disqualification from the campaign.
+              </p>
+              <p>
+                8.4. <b>Verification of Payee Details:</b> Customers are responsible for verifying the seller payee name rendered on their order confirmation page prior to confirming transfers in UPI apps.
               </p>
             </div>
           </section>
@@ -301,7 +307,7 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">9</span>
-              <span>Support and Enquiries</span>
+              <span>9. Support and Enquiries</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
@@ -311,7 +317,7 @@ export default async function TermsAndConditionsPage() {
                 Email: <a href="mailto:Senthangstudents@gmail.com" className="underline">Senthangstudents@gmail.com</a>
               </p>
               <p>
-                9.2. Always provide your Order Number (e.g. <code>SSFI-ORD-2026-XXXXXX</code>) and customer name when contacting support.
+                9.2. Always provide your Order Number (e.g. <code>ORD-2026-XXXXXX</code>) and customer name when contacting support.
               </p>
             </div>
           </section>
@@ -320,7 +326,7 @@ export default async function TermsAndConditionsPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">10</span>
-              <span>Changes to Campaign Information</span>
+              <span>10. Changes to Campaign Information</span>
             </h2>
             <div className="pl-8 space-y-2 text-xs sm:text-sm">
               <p>
@@ -330,6 +336,25 @@ export default async function TermsAndConditionsPage() {
               <p>
                 10.2. <b>Verified Channels:</b> Updates are released strictly through <code>ssfiticket.vercel.app</code> and
                 our official Instagram channel (<code>@ssfi_official</code>).
+              </p>
+            </div>
+          </section>
+
+          {/* Section 11 - Privacy & Storage Security */}
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold text-[#35110f] flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c1619] text-xs font-bold text-white">11</span>
+              <span>Privacy, Screenshot Storage &amp; Data Security</span>
+            </h2>
+            <div className="pl-8 space-y-2 text-xs sm:text-sm">
+              <p>
+                11.1. <b>Protected Storage:</b> All uploaded payment screenshots and seller QR images are stored in secure, private cloud storage buckets with Row Level Security (RLS) enforcement.
+              </p>
+              <p>
+                11.2. <b>Ephemeral Access:</b> Previews for sellers and administrators are rendered via short-lived cryptographic signed URLs (valid for 5 minutes maximum) and are never exposed publicly.
+              </p>
+              <p>
+                11.3. <b>Data Minimization:</b> Customer contact details and payment metadata are retained solely for the purpose of verifying transactions, issuing tickets, and facilitating event-day entry.
               </p>
             </div>
           </section>

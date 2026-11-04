@@ -3,7 +3,6 @@ import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { connection } from "next/server";
 
-export const instant = false;
 
 type OrderRow = { id: string; order_number: string; quantity: number; total_amount_paise: number; status: string; customers: { full_name: string } | null };
 

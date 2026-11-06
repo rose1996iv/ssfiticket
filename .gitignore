@@ -34,6 +34,8 @@ yarn-error.log*
 # environment files (never commit secrets)
 .env
 .env*.local
+.env*.temp
+.env.*.temp
 .env.development
 .env.test
 .env.production
@@ -52,3 +54,12 @@ backups/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local scratch/test media in root
+/First.png
+/Second.png
+/Third.png
+/Fourth.png
+/Fifth.png
+/insta_qr.png
+/upi_qr.jpeg

@@ -27,27 +27,19 @@ const revokeLinkSchema = z.object({
 });
 
 // Schema for payment details completion submission
+// utr and payerName are intentionally OPTIONAL — screenshot is the mandatory proof.
 const paymentCompletionSchema = z.object({
   orderId: z.string().uuid("Invalid order ID."),
-  token: z.string().trim().optional(),
-  utr: z
-    .string()
-    .trim()
-    .transform((val) => val.replace(/\s+/g, "").toUpperCase())
-    .pipe(
-      z
-        .string()
-        .min(6, "UTR / Transaction Reference must be at least 6 characters.")
-        .max(32, "UTR cannot exceed 32 characters.")
-        .regex(/^[A-Z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens.")
-    ),
+  token: z.string().trim().nullish(),
+  utr: z.string().trim().nullish().default(""),
   email: emailSchema,
   whatsapp: whatsappSchema,
   payerName: z
     .string()
     .trim()
-    .min(2, "Payer name must be at least 2 characters.")
-    .max(120, "Payer name cannot exceed 120 characters."),
+    .max(120, "Payer name cannot exceed 120 characters.")
+    .nullish()
+    .default(""),
 });
 
 export type GenerateRecoveryLinkResult = {
@@ -286,7 +278,7 @@ export type SubmitPaymentCompletionResult = {
 export async function submitPaymentCompletion(
   formData: FormData
 ): Promise<SubmitPaymentCompletionResult> {
-  const rawToken = formData.get("token") ? String(formData.get("token")).trim() : undefined;
+  const rawToken = formData.get("token");
   const rawOrderId = formData.get("orderId");
   const rawUtr = formData.get("utr");
   const rawEmail = formData.get("email");
@@ -295,11 +287,11 @@ export async function submitPaymentCompletion(
 
   const parsed = paymentCompletionSchema.safeParse({
     orderId: typeof rawOrderId === "string" ? rawOrderId : undefined,
-    token: rawToken,
-    utr: typeof rawUtr === "string" ? rawUtr : undefined,
-    email: typeof rawEmail === "string" ? rawEmail : undefined,
-    whatsapp: typeof rawWhatsapp === "string" ? rawWhatsapp : undefined,
-    payerName: typeof rawPayerName === "string" ? rawPayerName : undefined,
+    token: typeof rawToken === "string" && rawToken.trim() ? rawToken.trim() : undefined,
+    utr: typeof rawUtr === "string" ? rawUtr.trim() : "",
+    email: typeof rawEmail === "string" ? rawEmail.trim() : undefined,
+    whatsapp: typeof rawWhatsapp === "string" ? rawWhatsapp.trim() : undefined,
+    payerName: typeof rawPayerName === "string" ? rawPayerName.trim() : "",
   });
 
   if (!parsed.success) {
@@ -321,10 +313,11 @@ export async function submitPaymentCompletion(
   }
 
   // Mock mode guard in Preview / Development
+  // Only checked when UTR is actually provided — UTR is optional now.
   const isProd =
     process.env.VERCEL_ENV === "production" ||
     process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
-  if (manualUpiConfig.isMock && !isProd) {
+  if (manualUpiConfig.isMock && !isProd && utr) {
     const trimmed = utr.trim();
     if (trimmed.toUpperCase().includes("FAIL")) {
       return {
@@ -337,7 +330,7 @@ export async function submitPaymentCompletion(
       return {
         success: false,
         error:
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
+          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678), or leave it blank.",
       };
     }
   }
@@ -345,141 +338,47 @@ export async function submitPaymentCompletion(
   const tokenHash = token && isValidTokenFormat(token) ? hashRecoveryToken(token) : null;
   const admin = createSupabaseAdminClient();
 
-  // Call atomic RPC
+  // Strict Server-Side Screenshot Verification:
+  // Payment screenshot is strictly mandatory. Must verify proof exists before transitioning to SUBMITTED.
+  const { data: paymentRecord } = await admin
+    .from("payments")
+    .select("id")
+    .eq("order_id", orderId)
+    .maybeSingle();
+
+  if (!paymentRecord) {
+    return {
+      success: false,
+      error: "Payment record not found for this order.",
+    };
+  }
+
+  const { data: screenshotRecord } = await admin
+    .from("payment_screenshots")
+    .select("id")
+    .eq("payment_id", paymentRecord.id)
+    .maybeSingle();
+
+  if (!screenshotRecord) {
+    return {
+      success: false,
+      error: "A payment screenshot is mandatory. Please upload your payment confirmation screenshot before submitting details.",
+    };
+  }
+
+  // Call atomic RPC — utr and payerName are optional (pass null when empty/absent)
   const { data, error } = await admin.rpc("submit_payment_details_completion", {
     p_order_id: orderId,
-    p_utr: utr,
+    p_utr: utr || null,
     p_email: email,
     p_whatsapp: whatsapp,
-    p_payer_name: payerName,
+    p_payer_name: payerName || null,
     p_token_hash: tokenHash,
   });
 
   if (error || !data) {
-    const msg = error?.message || "Failed to submit payment details.";
-
-    // Safe compatibility fallback when Preview DB has migration 202611020001 screenshot guard
-    if (msg.includes("payment screenshot is mandatory")) {
-      const { data: orderRow } = await admin
-        .from("orders")
-        .select("id, order_number, status, customer_id, total_amount_paise")
-        .eq("id", orderId)
-        .maybeSingle();
-
-      if (!orderRow) {
-        return { success: false, error: "Order not found." };
-      }
-      if (orderRow.status === "CANCELLED" || orderRow.status === "REFUNDED") {
-        return { success: false, error: "Order is cancelled or refunded." };
-      }
-      if (orderRow.status === "TICKETS_ISSUED") {
-        return { success: false, error: "Tickets have already been issued for this order." };
-      }
-
-      const { data: paymentRow } = await admin
-        .from("payments")
-        .select("id, status")
-        .eq("order_id", orderId)
-        .maybeSingle();
-
-      if (paymentRow?.status === "VERIFIED") {
-        return { success: false, error: "Payment has already been verified and tickets issued." };
-      }
-
-      const { data: dupPayment } = await admin
-        .from("payments")
-        .select("id")
-        .eq("utr_reference", utr)
-        .neq("order_id", orderId)
-        .limit(1)
-        .maybeSingle();
-
-      if (dupPayment) {
-        return {
-          success: false,
-          error:
-            "This Transaction ID / UTR has already been submitted for another order. Please check your payment receipt and enter your unique reference.",
-        };
-      }
-
-      const wasSubmitted = paymentRow?.status === "SUBMITTED";
-      const nowIso = new Date().toISOString();
-
-      if (orderRow.customer_id) {
-        await admin
-          .from("customers")
-          .update({
-            email: email.trim().toLowerCase(),
-            whatsapp_number: whatsapp.trim(),
-            updated_at: nowIso,
-          })
-          .eq("id", orderRow.customer_id);
-      }
-
-      if (paymentRow) {
-        const { error: payUpdateErr } = await admin
-          .from("payments")
-          .update({
-            status: "SUBMITTED",
-            utr_reference: utr,
-            payer_name: payerName.trim(),
-            submitted_at: nowIso,
-            rejection_reason: null,
-            updated_at: nowIso,
-          })
-          .eq("id", paymentRow.id);
-
-        if (payUpdateErr) {
-          return { success: false, error: payUpdateErr.message };
-        }
-      }
-
-      const { error: ordUpdateErr } = await admin
-        .from("orders")
-        .update({
-          status: "PAYMENT_SUBMITTED",
-          updated_at: nowIso,
-        })
-        .eq("id", orderId);
-
-      if (ordUpdateErr) {
-        return { success: false, error: ordUpdateErr.message };
-      }
-
-      if (tokenHash) {
-        await admin
-          .from("payment_recovery_tokens")
-          .update({ used_at: nowIso, updated_at: nowIso })
-          .eq("token_hash", tokenHash);
-      }
-
-      await admin.from("audit_logs").insert({
-        actor_user_id: null,
-        action: "PAYMENT_DETAILS_SUBMITTED",
-        entity_type: "order",
-        entity_id: orderId,
-        metadata: {
-          order_number: orderRow.order_number,
-          utr,
-          email: email.trim().toLowerCase(),
-          whatsapp: whatsapp.trim(),
-          reopened: wasSubmitted,
-          is_recovery: Boolean(tokenHash),
-        },
-      });
-
-      revalidatePath(`/buy/order/${orderId}`);
-      revalidatePath(`/admin/orders/${orderId}`);
-      revalidatePath(`/admin/payments`);
-
-      return {
-        success: true,
-        orderNumber: orderRow.order_number,
-        reopened: wasSubmitted,
-      };
-    }
-
     console.error("[Payment Completion Diagnostic] RPC submit_payment_details_completion failed:", error);
+    const msg = error?.message || "Failed to submit payment details.";
     if (
       msg.includes("already been submitted") ||
       msg.includes("payments_manual_upi_utr_unique") ||

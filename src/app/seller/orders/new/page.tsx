@@ -8,7 +8,6 @@ import { SellerOrderForm } from "@/components/seller/SellerOrderForm";
 import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 
-export const instant = false;
 
 export default async function NewSalePage() {
   await connection();

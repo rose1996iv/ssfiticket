@@ -585,3 +585,141 @@ export async function permanentlyDeleteSeller(
   revalidatePath("/admin");
   return { success: true, message: `Seller ${seller.seller_code} permanently deleted.` };
 }
+
+/**
+ * Activates and approves a seller's personal payment QR code.
+ * Strictly restricted to authorized Administrators.
+ * Ensures seller is active, has a valid uploaded QR image, and has a valid UPI ID.
+ */
+export async function adminActivateSellerPaymentQr(sellerId: string): Promise<SellerLifecycleResult> {
+  const actor = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error: fetchErr } = await admin
+    .from("sellers")
+    .select("id, seller_code, display_name, is_active, qr_storage_path, upi_id")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (fetchErr || !seller) {
+    return { success: false, error: "Seller record not found." };
+  }
+
+  if (!seller.is_active) {
+    return { success: false, error: `Cannot activate payment QR for inactive seller "${seller.seller_code}". Please activate the seller account first.` };
+  }
+
+  if (!seller.qr_storage_path) {
+    return { success: false, error: `Seller "${seller.seller_code}" has not uploaded a payment QR image.` };
+  }
+
+  if (!seller.upi_id || !seller.upi_id.trim()) {
+    return { success: false, error: `Seller "${seller.seller_code}" has not configured a valid UPI ID.` };
+  }
+
+  const { error: updateErr } = await admin
+    .from("sellers")
+    .update({
+      is_qr_active: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sellerId);
+
+  if (updateErr) {
+    return { success: false, error: `Failed to activate seller payment QR: ${updateErr.message}` };
+  }
+
+  await admin.from("audit_logs").insert({
+    actor_user_id: actor.id,
+    action: "SELLER_PAYMENT_QR_ACTIVATED",
+    entity_type: "seller",
+    entity_id: sellerId,
+    metadata: {
+      seller_code: seller.seller_code,
+      display_name: seller.display_name,
+      activated_by: actor.email,
+    },
+  });
+
+  revalidatePath("/admin/sellers");
+  revalidatePath("/seller/payment-settings");
+  revalidatePath("/seller");
+  return { success: true, message: `Payment QR for seller ${seller.seller_code} has been approved and activated.` };
+}
+
+/**
+ * Deactivates a seller's personal payment QR code.
+ * Prevents further customer checkouts attributed to this seller's personal QR.
+ */
+export async function adminDeactivateSellerPaymentQr(sellerId: string, reason?: string): Promise<SellerLifecycleResult> {
+  const actor = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error: fetchErr } = await admin
+    .from("sellers")
+    .select("id, seller_code, display_name")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (fetchErr || !seller) {
+    return { success: false, error: "Seller record not found." };
+  }
+
+  const { error: updateErr } = await admin
+    .from("sellers")
+    .update({
+      is_qr_active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sellerId);
+
+  if (updateErr) {
+    return { success: false, error: `Failed to deactivate seller payment QR: ${updateErr.message}` };
+  }
+
+  await admin.from("audit_logs").insert({
+    actor_user_id: actor.id,
+    action: "SELLER_PAYMENT_QR_DEACTIVATED",
+    entity_type: "seller",
+    entity_id: sellerId,
+    metadata: {
+      seller_code: seller.seller_code,
+      display_name: seller.display_name,
+      reason: reason || "Administrative deactivation",
+      deactivated_by: actor.email,
+    },
+  });
+
+  revalidatePath("/admin/sellers");
+  revalidatePath("/seller/payment-settings");
+  revalidatePath("/seller");
+  return { success: true, message: `Payment QR for seller ${seller.seller_code} has been deactivated.` };
+}
+
+/**
+ * Generates a short-lived (5-minute) signed URL for an Administrator to preview a seller's payment QR code.
+ */
+export async function getAdminSellerQrSignedUrl(sellerId: string): Promise<{ success: boolean; url?: string; error?: string }> {
+  await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: seller, error } = await admin
+    .from("sellers")
+    .select("qr_storage_path")
+    .eq("id", sellerId)
+    .maybeSingle();
+
+  if (error || !seller?.qr_storage_path) {
+    return { success: false, error: "No payment QR image found for this seller." };
+  }
+
+  const { data: signed, error: signErr } = await admin.storage
+    .from("seller-payment-qrs")
+    .createSignedUrl(seller.qr_storage_path, 300);
+
+  if (signErr || !signed?.signedUrl) {
+    return { success: false, error: "Unable to generate private QR preview." };
+  }
+
+  return { success: true, url: signed.signedUrl };
+}

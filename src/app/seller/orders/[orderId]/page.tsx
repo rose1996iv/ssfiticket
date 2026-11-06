@@ -3,9 +3,10 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Send, Ticket } from "lucide-react";
 import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getOrderCollaborationNotes } from "@/server/actions/orderCollaboration";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
+import { OrderCollaborationCard } from "@/components/admin/OrderCollaborationCard";
 
-export const instant = false;
 
 type SellerOrder = {
   id: string;
@@ -70,6 +71,7 @@ export default async function SellerOrderPage({
 
   const deliveries = rawDeliveries as Array<{ channel: string; status: string; sent_at: string | null }>;
   const isIssued = order.status === "TICKETS_ISSUED";
+  const collabRes = await getOrderCollaborationNotes(order.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -228,6 +230,12 @@ export default async function SellerOrderPage({
           </div>
         )}
       </div>
+
+      <OrderCollaborationCard
+        orderId={order.id}
+        viewerRole="SELLER"
+        initialNotes={collabRes.notes}
+      />
     </div>
   );
 }

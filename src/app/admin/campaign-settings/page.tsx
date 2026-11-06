@@ -12,7 +12,6 @@ import {
 } from "@/components/admin/CampaignAuditTrail";
 import { extractSafeErrorDetails, type AuditLogError } from "@/lib/audit/logs";
 
-export const instant = false;
 
 export default async function CampaignSettingsPage() {
   await connection();

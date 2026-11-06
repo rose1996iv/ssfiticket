@@ -16,6 +16,10 @@ export type SellerDetailData = {
   seller_code: string;
   display_name: string;
   is_active: boolean;
+  is_qr_active?: boolean | null;
+  qr_storage_path?: string | null;
+  upi_id?: string | null;
+  account_name?: string | null;
   created_at: string;
   profiles: {
     id: string;

@@ -14,7 +14,6 @@ import { Logo } from "@/components/brand/Logo";
 import { PaymentDetailsForm } from "@/components/payment/PaymentDetailsForm";
 import { CustomerPaymentJourney } from "@/components/payment/CustomerPaymentJourney";
 
-export const instant = false;
 
 type Props = {
   params: Promise<{ token: string }>;

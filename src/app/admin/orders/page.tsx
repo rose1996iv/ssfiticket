@@ -12,8 +12,11 @@ import {
 } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
-
-export const instant = false;
+import { computeServerPaginationWindow } from "@/lib/pagination/serverPagination";
+import {
+  AdminFilterBar,
+  AdminPaginationFooter,
+} from "@/components/admin/AdminFilterAndPaginationBar";
 
 type OrderRow = {
   id: string;
@@ -27,6 +30,7 @@ type OrderRow = {
     full_name: string;
     phone: string;
     whatsapp_number: string;
+    email?: string | null;
   } | null;
   sellers: {
     id: string;
@@ -47,16 +51,112 @@ type OrderRow = {
   }[];
 };
 
-export default async function AdminOrdersPage() {
+type SearchParams = {
+  page?: string;
+  pageSize?: string;
+  q?: string;
+  status?: string;
+  seller?: string;
+  from?: string;
+  to?: string;
+};
+
+export default async function AdminOrdersPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
   await connection();
+  const params = (await searchParams) ?? {};
   const db = createSupabaseAdminClient();
-  const { data, error } = await db
+
+  const searchQuery = (params.q ?? "").trim();
+  const statusFilter = (params.status ?? "").trim().toUpperCase();
+  const sellerFilter = (params.seller ?? "").trim();
+  const fromDate = (params.from ?? "").trim();
+  const toDate = (params.to ?? "").trim();
+
+  const initialWindow = computeServerPaginationWindow(
+    { page: params.page, pageSize: params.pageSize },
+    0
+  );
+
+  const { data: sellerList } = await db
+    .from("sellers")
+    .select("id, display_name, seller_code")
+    .order("seller_code", { ascending: true });
+
+  // Resolve customer/payment/ticket matches for search query
+  let matchedCustomerIds: string[] = [];
+  let matchedOrderIdsFromPaymentOrTicket: string[] = [];
+  if (searchQuery) {
+    const [{ data: custMatches }, { data: payMatches }, { data: ticketMatches }] =
+      await Promise.all([
+        db
+          .from("customers")
+          .select("id")
+          .or(
+            `full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,whatsapp_number.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`
+          )
+          .limit(500),
+        db
+          .from("payments")
+          .select("order_id")
+          .or(`utr_reference.ilike.%${searchQuery}%,payer_name.ilike.%${searchQuery}%`)
+          .limit(500),
+        db
+          .from("tickets")
+          .select("order_id")
+          .ilike("ticket_number", `%${searchQuery}%`)
+          .limit(500),
+      ]);
+    matchedCustomerIds = (custMatches ?? []).map((c) => c.id as string);
+    matchedOrderIdsFromPaymentOrTicket = Array.from(
+      new Set([
+        ...(payMatches ?? []).map((p) => p.order_id as string),
+        ...(ticketMatches ?? []).map((t) => t.order_id as string),
+      ])
+    );
+  }
+
+  let query = db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code), payments(id, status, utr_reference, payer_name, amount_paise), tickets(id, ticket_number, status)"
-    )
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code), payments(id, status, utr_reference, payer_name, amount_paise), tickets(id, ticket_number, status)",
+      { count: "exact" }
+    );
+
+  if (statusFilter && statusFilter !== "ALL") {
+    query = query.eq("status", statusFilter);
+  }
+
+  if (sellerFilter) {
+    query = query.or(
+      `seller_id.eq.${sellerFilter},snapshot_seller_id.eq.${sellerFilter}`
+    );
+  }
+
+  if (fromDate) {
+    query = query.gte("created_at", `${fromDate}T00:00:00.000Z`);
+  }
+  if (toDate) {
+    query = query.lte("created_at", `${toDate}T23:59:59.999Z`);
+  }
+
+  if (searchQuery) {
+    const clauses: string[] = [`order_number.ilike.%${searchQuery}%`];
+    if (matchedCustomerIds.length > 0) {
+      clauses.push(`customer_id.in.(${matchedCustomerIds.join(",")})`);
+    }
+    if (matchedOrderIdsFromPaymentOrTicket.length > 0) {
+      clauses.push(`id.in.(${matchedOrderIdsFromPaymentOrTicket.join(",")})`);
+    }
+    query = query.or(clauses.join(","));
+  }
+
+  const { data, count, error } = await query
     .order("created_at", { ascending: false })
-    .limit(100);
+    .range(initialWindow.rangeFrom, initialWindow.rangeTo);
 
   if (error) {
     console.error("[Admin Orders Query Error]", {
@@ -72,18 +172,24 @@ export default async function AdminOrdersPage() {
             <AlertTriangle className="mt-0.5 shrink-0 text-red-600" size={24} />
             <div className="space-y-3">
               <div>
-                <h1 className="text-lg font-bold text-red-950">
-                  Unable to Load Orders
-                </h1>
+                <h1 className="text-lg font-bold text-red-950">Unable to Load Orders</h1>
                 <p className="mt-1 text-xs leading-relaxed text-red-800">
                   Failed to fetch customer purchase orders from the database.
                 </p>
               </div>
 
               <div className="rounded-xl border border-red-200 bg-white/90 p-3.5 font-mono text-xs text-red-900">
-                <p><span className="font-bold">Error Code:</span> {error.code || "UNKNOWN"}</p>
-                <p><span className="font-bold">Message:</span> {error.message || "Query failed"}</p>
-                {error.hint && <p className="mt-1 text-red-700"><span className="font-bold">Hint:</span> {error.hint}</p>}
+                <p>
+                  <span className="font-bold">Error Code:</span> {error.code || "UNKNOWN"}
+                </p>
+                <p>
+                  <span className="font-bold">Message:</span> {error.message || "Query failed"}
+                </p>
+                {error.hint && (
+                  <p className="mt-1 text-red-700">
+                    <span className="font-bold">Hint:</span> {error.hint}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -103,11 +209,14 @@ export default async function AdminOrdersPage() {
   }
 
   const orders = (data ?? []) as unknown as OrderRow[];
+  const pagination = computeServerPaginationWindow(
+    { page: params.page, pageSize: params.pageSize },
+    count ?? orders.length
+  );
 
   // Metric computations
-  const totalOrders = orders.length;
+  const totalOrders = count ?? orders.length;
   const totalRevenuePaise = orders.reduce((sum, o) => {
-    // Only count verified payments or tickets issued orders
     const isPaid =
       o.status === "TICKETS_ISSUED" ||
       o.status === "PAYMENT_VERIFIED" ||
@@ -120,6 +229,11 @@ export default async function AdminOrdersPage() {
       o.status === "PAYMENT_SUBMITTED" || o.payments.some((p) => p.status === "SUBMITTED")
   ).length;
 
+  const sellerOptions = (sellerList ?? []).map((s) => ({
+    value: s.id as string,
+    label: `${s.display_name} (${s.seller_code})`,
+  }));
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -129,12 +243,13 @@ export default async function AdminOrdersPage() {
             Orders Directory
           </h1>
           <p className="mt-1 text-xs text-[#705a54]">
-            Comprehensive relational view of purchase orders, customer details, seller attributions, payment references, and issued tickets.
+            Comprehensive relational view of purchase orders, customer details, seller
+            attributions, payment references, and issued tickets.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs font-semibold text-[#705a54]">
-            {totalOrders} total orders
+            {totalOrders} matching orders
           </span>
           <ExportDropdown resource="orders" resourceName="Orders" />
         </div>
@@ -144,18 +259,18 @@ export default async function AdminOrdersPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#705a54]">Total Orders</span>
+            <span className="text-xs font-semibold text-[#705a54]">Matching Orders</span>
             <div className="rounded-lg bg-[#fffaf7] p-2 text-[#7c1619]">
               <ShoppingBag size={18} />
             </div>
           </div>
           <p className="mt-2 text-2xl font-bold text-[#35110f]">{totalOrders}</p>
-          <span className="text-[11px] text-[#705a54]">All order states</span>
+          <span className="text-[11px] text-[#705a54]">Server-side paginated</span>
         </div>
 
         <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#705a54]">Verified Collection</span>
+            <span className="text-xs font-semibold text-[#705a54]">Page Verified Collection</span>
             <div className="rounded-lg bg-green-50 p-2 text-green-700">
               <IndianRupee size={18} />
             </div>
@@ -163,12 +278,12 @@ export default async function AdminOrdersPage() {
           <p className="mt-2 text-2xl font-bold text-green-800">
             ₹{(totalRevenuePaise / 100).toLocaleString("en-IN")}
           </p>
-          <span className="text-[11px] text-green-700 font-medium">From verified purchases</span>
+          <span className="text-[11px] font-medium text-green-700">From verified purchases</span>
         </div>
 
         <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#705a54]">Issued Tickets</span>
+            <span className="text-xs font-semibold text-[#705a54]">Page Issued Tickets</span>
             <div className="rounded-lg bg-[#fffaf7] p-2 text-[#7c1619]">
               <Ticket size={18} />
             </div>
@@ -179,15 +294,35 @@ export default async function AdminOrdersPage() {
 
         <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#705a54]">Pending Review</span>
+            <span className="text-xs font-semibold text-[#705a54]">Pending Review (Page)</span>
             <div className="rounded-lg bg-amber-50 p-2 text-amber-700">
               <Clock size={18} />
             </div>
           </div>
           <p className="mt-2 text-2xl font-bold text-amber-800">{pendingOrders}</p>
-          <span className="text-[11px] text-amber-700 font-medium">Awaiting staff verification</span>
+          <span className="text-[11px] font-medium text-amber-700">Awaiting staff verification</span>
         </div>
       </div>
+
+      {/* Server-Side Filter Bar */}
+      <AdminFilterBar
+        basePath="/admin/orders"
+        searchPlaceholder="Search by order ref, customer name/email/phone, ticket #, or UTR..."
+        currentQuery={searchQuery}
+        currentStatus={statusFilter || "ALL"}
+        statusOptions={[
+          { value: "ALL", label: "All Order Statuses" },
+          { value: "PENDING_PAYMENT", label: "PENDING PAYMENT" },
+          { value: "PAYMENT_SUBMITTED", label: "PAYMENT SUBMITTED" },
+          { value: "TICKETS_ISSUED", label: "TICKETS ISSUED" },
+          { value: "CANCELLED", label: "CANCELLED" },
+        ]}
+        currentSeller={sellerFilter}
+        sellerOptions={sellerOptions}
+        currentFromDate={fromDate}
+        currentToDate={toDate}
+        currentPageSize={pagination.pageSize}
+      />
 
       {/* Table */}
       <div className="overflow-x-auto rounded-2xl border border-[#eadbcf] bg-white shadow-sm">
@@ -215,10 +350,6 @@ export default async function AdminOrdersPage() {
 
               const primaryPayment = order.payments?.[0];
               const ticketCount = order.tickets?.length ?? 0;
-              const isDetailsMissing =
-                primaryPayment &&
-                !primaryPayment.utr_reference &&
-                primaryPayment.status !== "VERIFIED";
 
               return (
                 <tr key={order.id} className="transition-colors hover:bg-[#fffaf7]/60">
@@ -233,11 +364,13 @@ export default async function AdminOrdersPage() {
                   </td>
 
                   {/* Date */}
-                  <td className="p-4 text-xs text-[#705a54] whitespace-nowrap">{date}</td>
+                  <td className="p-4 whitespace-nowrap text-xs text-[#705a54]">{date}</td>
 
                   {/* Customer */}
                   <td className="p-4">
-                    <p className="font-semibold text-[#35110f]">{order.customers?.full_name ?? "Unknown Customer"}</p>
+                    <p className="font-semibold text-[#35110f]">
+                      {order.customers?.full_name ?? "Unknown Customer"}
+                    </p>
                     <p className="font-mono text-xs text-[#705a54]">
                       {order.customers?.whatsapp_number || order.customers?.phone || "—"}
                     </p>
@@ -247,7 +380,9 @@ export default async function AdminOrdersPage() {
                   <td className="p-4">
                     {order.sellers ? (
                       <div>
-                        <p className="font-medium text-xs text-[#35110f]">{order.sellers.display_name}</p>
+                        <p className="text-xs font-medium text-[#35110f]">
+                          {order.sellers.display_name}
+                        </p>
                         <span className="inline-block rounded-md bg-[#fceeee] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#7c1619]">
                           {order.sellers.seller_code}
                         </span>
@@ -306,27 +441,28 @@ export default async function AdminOrdersPage() {
                           >
                             {primaryPayment.status}
                           </span>
-                          {isDetailsMissing && (
-                            <span className="inline-block rounded-full bg-red-100 px-1.5 py-0.2 text-[9px] font-bold text-red-800">
-                              Details Missing
-                            </span>
-                          )}
                         </div>
                         {primaryPayment.utr_reference ? (
-                          <p className="font-mono text-xs font-semibold text-[#35110f]" title="Bank Reference / UTR">
+                          <p
+                            className="font-mono text-xs font-semibold text-[#35110f]"
+                            title="Bank Reference / UTR"
+                          >
                             UTR: {primaryPayment.utr_reference}
                           </p>
                         ) : (
-                          <p className="text-[11px] text-red-600 italic">No UTR yet</p>
+                          <p className="text-[11px] italic text-[#705a54]">UTR Optional</p>
                         )}
                         {primaryPayment.payer_name && (
                           <p className="text-[11px] text-[#705a54]" title="Bank / UPI Payer Name">
-                            Payer: <span className="font-medium text-[#35110f]">{primaryPayment.payer_name}</span>
+                            Payer:{" "}
+                            <span className="font-medium text-[#35110f]">
+                              {primaryPayment.payer_name}
+                            </span>
                           </p>
                         )}
                       </div>
                     ) : (
-                      <span className="text-xs text-[#705a54] italic">Pending</span>
+                      <span className="text-xs italic text-[#705a54]">Pending</span>
                     )}
                   </td>
 
@@ -364,7 +500,7 @@ export default async function AdminOrdersPage() {
                   </div>
                   <h3 className="mt-4 text-base font-bold text-[#35110f]">No Orders Found</h3>
                   <p className="mt-1 text-xs text-[#705a54]">
-                    Orders will appear here as customers buy tickets via sellers.
+                    Zero orders match the selected filters.
                   </p>
                 </td>
               </tr>
@@ -372,6 +508,19 @@ export default async function AdminOrdersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Server-Side Pagination Footer */}
+      <AdminPaginationFooter
+        basePath="/admin/orders"
+        pagination={pagination}
+        queryParams={{
+          q: searchQuery,
+          status: statusFilter,
+          seller: sellerFilter,
+          from: fromDate,
+          to: toDate,
+        }}
+      />
     </div>
   );
 }

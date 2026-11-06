@@ -257,11 +257,26 @@ export function AdminTicketsTable({ tickets }: Props) {
                   {/* Customer */}
                   <td className="p-4">
                     <p className="font-semibold text-[#35110f]">
-                      {ticket.customers?.full_name ?? "Unknown"}
+                      {ticket.contact_full_name || ticket.customers?.full_name || "Unknown"}
                     </p>
                     <p className="font-mono text-xs text-[#705a54]">
-                      {ticket.customers?.phone ?? "—"}
+                      {ticket.contact_whatsapp ||
+                        ticket.customers?.whatsapp_number ||
+                        ticket.customers?.phone ||
+                        "—"}
                     </p>
+                    {(ticket.contact_email || ticket.customers?.email) && (
+                      <p className="text-[11px] text-[#705a54]">
+                        {ticket.contact_email || ticket.customers?.email}
+                      </p>
+                    )}
+                    {Boolean(
+                      ticket.contact_full_name || ticket.contact_email || ticket.contact_whatsapp
+                    ) && (
+                      <span className="mt-0.5 inline-block rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-indigo-900">
+                        Single-Ticket Override
+                      </span>
+                    )}
                   </td>
 
                   {/* Order & Payment */}

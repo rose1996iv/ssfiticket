@@ -4,7 +4,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 // Authenticated routes read request cookies and must render at request time.
-export const instant = false;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

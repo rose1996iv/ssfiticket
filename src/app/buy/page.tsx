@@ -9,6 +9,9 @@ import { CampaignCountdown } from "@/components/campaign/CampaignCountdown";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 import { isFeatureEnabled } from "@/lib/config/featureFlags";
 
+export const dynamic = "force-dynamic";
+
+
 
 
 const prizes = [
@@ -46,12 +49,14 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
           <div className="mt-6 flex flex-col gap-2">
             <Link
               href="/"
+              prefetch={false}
               className="inline-flex justify-center rounded-lg bg-[#7c1619] px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-[#601114]"
             >
               Return to Homepage
             </Link>
             <Link
               href="/terms"
+              prefetch={false}
               className="inline-flex justify-center rounded-lg border border-[#eadbcf] px-4 py-2.5 text-sm font-semibold text-[#705a54] hover:bg-[#fbf7f4]"
             >
               View Lucky Draw Terms
@@ -111,7 +116,10 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
 
           <div className="mt-8 border-t border-[#f0e7df] pt-6 text-center text-xs text-[#705a54]">
             Are you an SSFI seller?{" "}
-            <Link href="/login" className="font-semibold text-[#7c1619] underline">
+            <Link
+              href="/login"
+              prefetch={false}
+              className="font-semibold text-[#7c1619] underline">
               Log in to your dashboard
             </Link>{" "}
             to download your QR code.
@@ -125,25 +133,56 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
   const validation = await getActiveSellerByReferralCode(rawRef);
 
   if (!validation.valid) {
+    const isQrInactive = validation.code === "QR_INACTIVE";
+    const isInactive = validation.code === "INACTIVE";
+
     return (
       <main className="min-h-screen bg-[#fffaf7] px-4 py-12 text-[#35110f] sm:px-6 sm:py-16">
-        <div className="mx-auto max-w-lg rounded-2xl border border-red-200 bg-white p-6 shadow-sm sm:p-8">
-          <div className="flex items-center gap-2 text-red-700">
+        <div
+          className={`mx-auto max-w-lg rounded-2xl border ${
+            isQrInactive ? "border-amber-200" : "border-red-200"
+          } bg-white p-6 shadow-sm sm:p-8`}
+        >
+          <div
+            className={`flex items-center gap-2 ${
+              isQrInactive ? "text-amber-700" : "text-red-700"
+            }`}
+          >
             <ShieldAlert size={24} />
-            <span className="text-xs font-bold tracking-widest uppercase">Referral Error</span>
+            <span className="text-xs font-bold tracking-widest uppercase">
+              {isQrInactive ? "Seller Notice" : "Referral Error"}
+            </span>
           </div>
 
-          <h1 className="mt-4 text-2xl font-bold tracking-tight text-red-900">
-            {validation.code === "INACTIVE" ? "Seller Account Inactive" : "Invalid Referral Code"}
+          <h1
+            className={`mt-4 text-2xl font-bold tracking-tight ${
+              isQrInactive ? "text-[#35110f]" : "text-red-900"
+            }`}
+          >
+            {isQrInactive
+              ? "Payment QR Unavailable"
+              : isInactive
+              ? "Seller Account Inactive"
+              : "Invalid Referral Code"}
           </h1>
           <p className="mt-3 text-sm leading-6 text-[#705a54]">{validation.error}</p>
 
           <div className="mt-6 rounded-xl border border-[#eadbcf] bg-[#fffaf7] p-4 text-xs text-[#705a54]">
             <p className="font-semibold text-[#35110f]">What you can do:</p>
             <ul className="mt-2 list-disc space-y-1 pl-4">
-              <li>Verify that the referral URL was copied completely.</li>
-              <li>Ask your SSFI seller to provide their updated QR code.</li>
-              <li>Or try entering a different seller code below.</li>
+              {isQrInactive ? (
+                <>
+                  <li>Choose another registered SSFI seller code below.</li>
+                  <li>Contact the seller to let them know their payment QR is pending activation.</li>
+                  <li>Check back once this seller has activated their payment QR.</li>
+                </>
+              ) : (
+                <>
+                  <li>Verify that the referral URL was copied completely.</li>
+                  <li>Ask your SSFI seller to provide their updated QR code.</li>
+                  <li>Or try entering a different seller code below.</li>
+                </>
+              )}
             </ul>
           </div>
 
@@ -163,7 +202,10 @@ export default async function PublicBuyPage({ searchParams }: PageProps) {
           </form>
 
           <div className="mt-6 text-center">
-            <Link href="/" className="text-xs text-[#7c1619] underline">
+            <Link
+              href="/"
+              prefetch={false}
+              className="text-xs text-[#7c1619] underline">
               Return to SSFI Homepage
             </Link>
           </div>

@@ -96,8 +96,7 @@ export function OfficialSellerDirectory({ sellers }: Props) {
 
                 {/* Direct Action */}
                 <div className="mt-6 border-t border-[#f0e7df] pt-4">
-                  <Link
-                    href={seller.referralPath}
+                  <Link href={seller.referralPath} prefetch={false}
                     className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7c1619] px-4 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-[#601114]"
                   >
                     <span>Book via {seller.regionName}</span>

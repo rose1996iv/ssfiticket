@@ -59,6 +59,7 @@ export interface PaymentExportRow {
     order_number: string;
     customers: { full_name: string; whatsapp_number: string; phone?: string; email?: string } | null;
     sellers: { display_name: string; seller_code: string } | null;
+    operational_seller?: { display_name: string; seller_code: string } | null;
   } | null;
 }
 
@@ -116,14 +117,14 @@ export function buildPaymentsDataset(
       key: "seller_name",
       width: 20,
       format: "text",
-      getValue: (r) => r.orders?.sellers?.display_name || "Direct / Website",
+      getValue: (r) => r.orders?.sellers?.display_name || r.orders?.operational_seller?.display_name || "Direct / Website",
     },
     {
       header: "Seller Code",
       key: "seller_code",
       width: 14,
       format: "text",
-      getValue: (r) => r.orders?.sellers?.seller_code || "—",
+      getValue: (r) => r.orders?.sellers?.seller_code || r.orders?.operational_seller?.seller_code || "—",
     },
     {
       header: "Submitted At",

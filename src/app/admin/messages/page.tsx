@@ -5,7 +5,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { AdminMessageCompose } from "@/components/admin/AdminMessageCompose";
 import { AdminSentMessagesTable, type SentMessageItem } from "@/components/admin/AdminSentMessagesTable";
 
-export const instant = false;
 
 type SellerOption = {
   id: string;

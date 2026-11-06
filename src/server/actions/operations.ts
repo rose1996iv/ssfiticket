@@ -8,8 +8,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { dispatchOrderTicketDeliveries } from "@/lib/delivery/service";
-import { manualUpiConfig } from "@/lib/config/payment";
 import { isFeatureEnabled } from "@/lib/config/featureFlags";
+import { isNextRedirectError } from "@/lib/navigation/redirect";
 
 const saleSchema = z.object({
   name: z.string().trim().min(2, "Full name must be at least 2 characters.").max(120, "Name cannot exceed 120 characters."),
@@ -20,13 +20,8 @@ const saleSchema = z.object({
 
 const utrSchema = z.object({
   orderId: z.string().uuid("Invalid order ID."),
-  utr: z
-    .string()
-    .trim()
-    .min(6, "UTR / Reference must be at least 6 characters.")
-    .max(64)
-    .regex(/^[A-Za-z0-9-]+$/, "UTR must only contain alphanumeric characters or hyphens."),
-  payerName: z.string().trim().max(120).optional(),
+  utr: z.string().trim().nullish().default(""),
+  payerName: z.string().trim().max(120, "Payer name cannot exceed 120 characters.").nullish().default(""),
 });
 
 async function currentSellerContext() {
@@ -34,7 +29,7 @@ async function currentSellerContext() {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("sellers")
-    .select("id, is_active")
+    .select("id, is_active, seller_code, display_name, qr_storage_path, upi_id, account_name, payment_instructions, is_qr_active")
     .eq("profile_id", user.id)
     .maybeSingle();
 
@@ -54,7 +49,7 @@ async function currentSellerContext() {
     throw new Error("Your seller account is currently inactive.");
   }
 
-  return { sellerId: data.id as string, userId: user.id as string };
+  return { seller: data, sellerId: data.id as string, userId: user.id as string };
 }
 
 async function currentSellerId() {
@@ -79,7 +74,14 @@ export async function createSale(formData: FormData) {
     throw new Error(firstError);
   }
 
-  const { sellerId, userId } = await currentSellerContext();
+  const { seller, sellerId, userId } = await currentSellerContext();
+
+  // Enforce active personal payment QR: Every seller accepting new orders MUST have an active personal QR
+  if (!seller.is_qr_active || !seller.qr_storage_path || !seller.upi_id) {
+    throw new Error(
+      "Your seller account cannot create new orders because your personal payment QR is unavailable or inactive. Please upload and activate your payment QR in Payment Settings."
+    );
+  }
   const admin = createSupabaseAdminClient();
 
   // 1. Strict Server-Side Campaign State Verification
@@ -181,7 +183,33 @@ export async function createSale(formData: FormData) {
     throw new Error("Unable to create this sale. Please try again.");
   }
 
-    // Trigger automated Order Created customer notification
+  // Capture seller payment snapshot on order — immutable at order creation time
+  try {
+    const snapshotData: Record<string, unknown> = {
+      snapshot_seller_id: seller.id,
+      snapshot_seller_code: seller.seller_code,
+      snapshot_qr_storage_path: seller.qr_storage_path,
+      snapshot_upi_id: seller.upi_id ?? null,
+      snapshot_account_name: seller.account_name ?? null,
+      snapshot_payment_instructions: seller.payment_instructions ?? null,
+      snapshot_captured_at: new Date().toISOString(),
+    };
+    if (seller.display_name) {
+      snapshotData.snapshot_seller_display_name = seller.display_name;
+    }
+    const { error: snapErr } = await admin
+      .from("orders")
+      .update(snapshotData)
+      .eq("id", data);
+
+    if (snapErr) {
+      console.warn("[Seller Order Diagnostic] Could not write payment snapshot to order:", snapErr);
+    }
+  } catch (snapEx) {
+    console.warn("[Seller Order Diagnostic] Snapshot capture failed:", snapEx);
+  }
+
+  // Trigger automated Order Created customer notification
   try {
     const { enqueueOrderCreatedNotification } = await import("@/lib/delivery/outbox");
     await enqueueOrderCreatedNotification(data);
@@ -197,158 +225,121 @@ export async function submitManualUpi(formData: FormData): Promise<{
   error?: string;
   redirectUrl?: string;
 }> {
-  const parsed = utrSchema.safeParse({
-    orderId: formData.get("orderId"),
-    utr: formData.get("utr"),
-    payerName: formData.get("payerName"),
-  });
+  try {
+    const rawOrderId = formData.get("orderId");
+    const rawUtr = formData.get("utr");
+    const rawPayerName = formData.get("payerName");
 
-  if (!parsed.success) {
-    const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Enter a valid UTR/reference.";
-    return { success: false, error: firstError };
-  }
+    const parsed = utrSchema.safeParse({
+      orderId: typeof rawOrderId === "string" ? rawOrderId : undefined,
+      utr: typeof rawUtr === "string" ? rawUtr.trim() : "",
+      payerName: typeof rawPayerName === "string" ? rawPayerName.trim() : "",
+    });
 
-  // Preview / Development mock mode validation
-  // Fail-closed in Production: Mock validation is strictly forbidden in production
-  const isProd =
-    process.env.VERCEL_ENV === "production" ||
-    process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
-  if (manualUpiConfig.isMock && !isProd) {
-    const trimmed = parsed.data.utr.trim();
-    if (trimmed.toUpperCase().includes("FAIL")) {
-      return {
-        success: false,
-        error: "Simulated Mock Payment Failure: Test reference was rejected by test validation rules.",
-      };
+    if (!parsed.success) {
+      const firstError = parsed.error.issues?.[0]?.message ?? parsed.error.message ?? "Enter a valid reference.";
+      return { success: false, error: firstError };
     }
-    const isTestRef = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmed);
-    if (!isTestRef) {
-      return {
-        success: false,
-        error:
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678).",
-      };
+
+    const sellerId = await currentSellerId();
+    const admin = createSupabaseAdminClient();
+
+    const { data: order, error: orderErr } = await admin
+      .from("orders")
+      .select("id, status")
+      .eq("id", parsed.data.orderId)
+      .eq("seller_id", sellerId)
+      .maybeSingle();
+
+    if (orderErr || !order) {
+      return { success: false, error: "This order does not belong to your seller account." };
     }
-  }
 
-  const sellerId = await currentSellerId();
-  const admin = createSupabaseAdminClient();
-
-  const { data: order, error: orderErr } = await admin
-    .from("orders")
-    .select("id, status")
-    .eq("id", parsed.data.orderId)
-    .eq("seller_id", sellerId)
-    .maybeSingle();
-
-  if (orderErr || !order) {
-    return { success: false, error: "This order does not belong to your seller account." };
-  }
-
-  if (order.status !== "PENDING_PAYMENT") {
-    if (order.status === "PAYMENT_SUBMITTED") {
-      return {
-        success: false,
-        error: "A payment reference has already been submitted for this order and is currently under review.",
-      };
+    if (order.status !== "PENDING_PAYMENT") {
+      if (order.status === "PAYMENT_SUBMITTED") {
+        return {
+          success: false,
+          error: "A payment reference has already been submitted for this order and is currently under review.",
+        };
+      }
+      return { success: false, error: "This order is not eligible for payment submission." };
     }
-    return { success: false, error: "This order is not eligible for payment submission." };
-  }
 
-  const { error } = await admin.rpc("submit_manual_upi", {
-    p_order_id: parsed.data.orderId,
-    p_utr: parsed.data.utr.trim(),
-    p_payer_name: parsed.data.payerName?.trim() || "",
-  });
+    // Mandatory payment screenshot check before submission
+    const { data: paymentRecord } = await admin
+      .from("payments")
+      .select("id")
+      .eq("order_id", parsed.data.orderId)
+      .maybeSingle();
 
-  if (error) {
-    if (error.message.includes("payment screenshot is mandatory")) {
-      const cleanUtr = parsed.data.utr.trim();
-      const { data: dupPayment } = await admin
-        .from("payments")
+    let hasScreenshot = false;
+    if (paymentRecord) {
+      const { data: screenshotRecord } = await admin
+        .from("payment_screenshots")
         .select("id")
-        .eq("utr_reference", cleanUtr)
-        .neq("order_id", parsed.data.orderId)
-        .limit(1)
+        .eq("payment_id", paymentRecord.id)
         .maybeSingle();
+      if (screenshotRecord) {
+        hasScreenshot = true;
+      }
+    }
 
-      if (dupPayment) {
+    if (!hasScreenshot) {
+      return {
+        success: false,
+        error: "A payment screenshot is mandatory. Please upload your payment confirmation screenshot before submitting.",
+      };
+    }
+
+    const cleanUtr = parsed.data.utr ? parsed.data.utr.trim() : null;
+    const cleanPayer = parsed.data.payerName ? parsed.data.payerName.trim() : null;
+
+    const { error } = await admin.rpc("submit_manual_upi", {
+      p_order_id: parsed.data.orderId,
+      p_utr: cleanUtr || null,
+      p_payer_name: cleanPayer || null,
+    });
+
+    if (error) {
+      console.error("[Seller Order Diagnostic] RPC submit_manual_upi failed:", {
+        code: error.code,
+        message: error.message,
+      });
+      if (
+        error.message.includes("already been submitted") ||
+        error.message.includes("already attached") ||
+        error.message.includes("payments_manual_upi_utr_unique")
+      ) {
+        return {
+          success: false,
+          error: "Payment has already been submitted for this order.",
+        };
+      }
+      if (error.code === "22P02" || error.message.includes("enum payment_status")) {
         return {
           success: false,
           error:
-            "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+            "Payment submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied.",
         };
       }
-
-      const nowIso = new Date().toISOString();
-      const { data: payRow, error: payErr } = await admin
-        .from("payments")
-        .update({
-          status: "SUBMITTED",
-          utr_reference: cleanUtr,
-          payer_name: parsed.data.payerName?.trim() || null,
-          submitted_at: nowIso,
-          rejection_reason: null,
-          updated_at: nowIso,
-        })
-        .eq("order_id", parsed.data.orderId)
-        .select("id")
-        .single();
-
-      if (payErr || !payRow) {
-        return { success: false, error: "This payment cannot be submitted in its current state." };
-      }
-
-      await admin
-        .from("orders")
-        .update({ status: "PAYMENT_SUBMITTED", updated_at: nowIso })
-        .eq("id", parsed.data.orderId);
-
-      await admin.from("audit_logs").insert({
-        actor_user_id: null,
-        action: "PAYMENT_SUBMITTED",
-        entity_type: "payment",
-        entity_id: payRow.id,
-        metadata: { order_id: parsed.data.orderId },
-      });
-
-      revalidatePath(`/seller/orders/${parsed.data.orderId}`);
-      return {
-        success: true,
-        redirectUrl: `/seller/orders/${parsed.data.orderId}?submitted=1`,
-      };
+      return { success: false, error: "This payment cannot be submitted in its current state." };
     }
 
-    console.error("[Seller Order Diagnostic] RPC submit_manual_upi failed:", {
-      code: error.code,
-      message: error.message,
-    });
-    if (
-      error.message.includes("UTR is already attached") ||
-      error.message.includes("payments_manual_upi_utr_unique") ||
-      error.code === "23505"
-    ) {
-      return {
-        success: false,
-        error:
-          "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
-      };
+    revalidatePath(`/seller/orders/${parsed.data.orderId}`);
+    return {
+      success: true,
+      redirectUrl: `/seller/orders/${parsed.data.orderId}?submitted=1`,
+    };
+  } catch (err: unknown) {
+    if (isNextRedirectError(err)) {
+      throw err;
     }
-    if (error.code === "22P02" || error.message.includes("enum payment_status")) {
-      return {
-        success: false,
-        error:
-          "Payment submission failed due to a database trigger transition conflict. Please ensure database migration 202610290006 is applied.",
-      };
-    }
-    return { success: false, error: "This payment cannot be submitted in its current state." };
+    console.error("[Seller Operations Diagnostic] submitManualUpi unexpected error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Payment submission failed. Please try again.",
+    };
   }
-
-  revalidatePath(`/seller/orders/${parsed.data.orderId}`);
-  return {
-    success: true,
-    redirectUrl: `/seller/orders/${parsed.data.orderId}?submitted=1`,
-  };
 }
 
 export async function verifyPayment(formData: FormData) {

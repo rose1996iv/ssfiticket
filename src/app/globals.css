@@ -49,6 +49,37 @@ body {
   transform: translate(0.5px, -0.5px);
 }
 
+/* ==========================================================================
+   Presentation & Perimeter Animated Border System (SSFI Theme)
+   ========================================================================== */
+
+@keyframes borderTrailAnimation {
+  0% {
+    stroke-dashoffset: 100;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.card-border-trail {
+  animation: borderTrailAnimation 8s linear infinite;
+  will-change: stroke-dashoffset;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 4s ease-in-out infinite;
+}
+
 /* Strict accessibility: respects user preference for reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -58,6 +89,11 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .card-border-trail {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
   }
 
   .glitch-title:hover {

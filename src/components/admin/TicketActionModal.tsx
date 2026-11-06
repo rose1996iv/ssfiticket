@@ -19,6 +19,7 @@ import {
   adminUpdateTicketNotesAction,
 } from "@/server/actions/tickets";
 import { getTicketVerificationUrl } from "@/lib/ticket/qr";
+import { CustomerContactEditModal } from "@/components/admin/CustomerContactEditModal";
 
 export type AdminTicketDetail = {
   id: string;
@@ -30,6 +31,9 @@ export type AdminTicketDetail = {
   admin_notes?: string | null;
   original_ticket_id?: string | null;
   reissued_ticket_id?: string | null;
+  contact_full_name?: string | null;
+  contact_email?: string | null;
+  contact_whatsapp?: string | null;
   orders: {
     id: string;
     order_number: string;
@@ -44,6 +48,8 @@ export type AdminTicketDetail = {
     id: string;
     full_name: string;
     phone: string;
+    whatsapp_number?: string | null;
+    email?: string | null;
   } | null;
   sellers: {
     id: string;
@@ -206,9 +212,63 @@ export function TicketActionModal({ ticket, qrDataUrl, onClose }: Props) {
 
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-[#f0e7df] bg-[#fffaf7] p-3">
-                <span className="text-[10px] font-semibold text-[#705a54] uppercase">Customer</span>
-                <p className="mt-0.5 font-bold text-[#35110f]">{ticket.customers?.full_name || "—"}</p>
-                <p className="font-mono text-[11px] text-[#705a54]">{ticket.customers?.phone || "—"}</p>
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-semibold uppercase text-[#705a54]">
+                    Customer / Ticket Contact
+                  </span>
+                </div>
+                <p className="mt-0.5 font-bold text-[#35110f]">
+                  {ticket.contact_full_name || ticket.customers?.full_name || "—"}
+                </p>
+                <p className="font-mono text-[11px] text-[#705a54]">
+                  {ticket.contact_whatsapp ||
+                    ticket.customers?.whatsapp_number ||
+                    ticket.customers?.phone ||
+                    "—"}
+                </p>
+                {(ticket.contact_email || ticket.customers?.email) && (
+                  <p className="truncate text-[10px] text-[#705a54]">
+                    {ticket.contact_email || ticket.customers?.email}
+                  </p>
+                )}
+                {Boolean(
+                  ticket.contact_full_name || ticket.contact_email || ticket.contact_whatsapp
+                ) && (
+                  <span className="mt-1 inline-block rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-indigo-900">
+                    Ticket Contact Override
+                  </span>
+                )}
+                {ticket.customers?.id && (
+                  <div className="mt-2">
+                    <CustomerContactEditModal
+                      mode="TICKET_CONTACT"
+                      customerId={ticket.customers.id}
+                      orderId={ticket.orders?.id}
+                      orderNumber={ticket.orders?.order_number}
+                      ticketId={ticket.id}
+                      ticketNumber={ticket.ticket_number}
+                      sellerLabel={
+                        ticket.sellers
+                          ? `${ticket.sellers.display_name} (${ticket.sellers.seller_code})`
+                          : "Direct Online"
+                      }
+                      issuedAtLabel={new Date(ticket.issued_at).toLocaleString("en-IN", {
+                        timeZone: "Asia/Kolkata",
+                      })}
+                      initialFullName={
+                        ticket.contact_full_name || ticket.customers.full_name || ""
+                      }
+                      initialEmail={ticket.contact_email || ticket.customers.email || ""}
+                      initialWhatsapp={
+                        ticket.contact_whatsapp ||
+                        ticket.customers.whatsapp_number ||
+                        ticket.customers.phone ||
+                        ""
+                      }
+                      buttonLabel="Edit Contact"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-[#f0e7df] bg-[#fffaf7] p-3">

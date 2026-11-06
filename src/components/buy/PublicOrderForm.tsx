@@ -143,7 +143,7 @@ export function PublicOrderForm({
             type="tel"
             autoComplete="tel"
             required
-            pattern="[0-9+ \-()]{7,25}"
+            pattern="[0-9+\s\(\)\-]{7,25}"
             placeholder="e.g. +91 91234 56789 or international"
             className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] shadow-xs focus:border-[#7c1619] focus:outline-hidden"
           />

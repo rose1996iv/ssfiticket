@@ -6,7 +6,6 @@ import { Logo } from "@/components/brand/Logo";
 import { generateTicketQrDataUrl } from "@/lib/ticket/qr";
 import { resolveEnvironmentAppUrl } from "@/lib/config/appUrl";
 
-export const instant = false;
 
 type PageProps = {
   params: Promise<{ ticketNumber: string }>;

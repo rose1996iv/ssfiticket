@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowRight, FlaskConical, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowRight, FlaskConical, Loader2, User } from "lucide-react";
 import { submitPublicUpiPayment } from "@/server/actions/publicOrder";
+import { PaymentScreenshotField } from "@/components/payment/PaymentScreenshotField";
+import { uploadPaymentScreenshot } from "@/server/actions/paymentScreenshot";
 
 type Props = {
   orderId: string;
@@ -12,8 +14,8 @@ type Props = {
 
 export function PublicUpiPaymentForm({ orderId, isMock }: Props) {
   const router = useRouter();
-  const [utr, setUtr] = useState("");
   const [payerName, setPayerName] = useState("");
+  const [screenshot, setScreenshot] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -22,43 +24,35 @@ export function PublicUpiPaymentForm({ orderId, isMock }: Props) {
     setLoading(true);
     setErrorMessage(null);
 
-    const trimmedUtr = utr.trim();
+    const trimmedPayerName = payerName.trim();
 
-    if (!trimmedUtr) {
-      setErrorMessage("Please enter your UPI reference / UTR number.");
+    if (!screenshot) {
+      setErrorMessage("A payment screenshot is mandatory. Please upload your payment confirmation screenshot before submitting.");
       setLoading(false);
       return;
-    }
-
-    if (trimmedUtr.length < 6) {
-      setErrorMessage("UTR / Transaction Reference must be at least 6 characters.");
-      setLoading(false);
-      return;
-    }
-
-    // Mock mode guard on client
-    if (isMock) {
-      const isTest = /^(TEST|MOCK)[A-Za-z0-9-]*$/i.test(trimmedUtr);
-      if (!isTest) {
-        setErrorMessage(
-          "Preview mock payment mode is active. Please enter a recognized test reference starting with TEST or MOCK (e.g. TEST12345678)."
-        );
-        setLoading(false);
-        return;
-      }
-    }
-
-    const formData = new FormData();
-    formData.set("orderId", orderId);
-    formData.set("utr", trimmedUtr);
-    if (payerName.trim()) {
-      formData.set("payerName", payerName.trim());
     }
 
     try {
+      // 1. Upload screenshot first
+      const screenshotData = new FormData();
+      screenshotData.set("orderId", orderId);
+      screenshotData.set("screenshot", screenshot);
+
+      const uploadRes = await uploadPaymentScreenshot(screenshotData);
+      if (!uploadRes.success) {
+        setErrorMessage(uploadRes.error || "Screenshot upload failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Submit payment reference
+      const formData = new FormData();
+      formData.set("orderId", orderId);
+      formData.set("payerName", trimmedPayerName || "");
+
       const res = await submitPublicUpiPayment(formData);
       if (!res.success) {
-        setErrorMessage(res.error || "Payment reference submission failed. Please try again.");
+        setErrorMessage(res.error || "Payment submission failed. Please try again.");
         setLoading(false);
         return;
       }
@@ -73,17 +67,7 @@ export function PublicUpiPaymentForm({ orderId, isMock }: Props) {
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
-        // Handle duplicate UTR error specifically
-        if (
-          err.message.includes("already been submitted") ||
-          err.message.includes("already attached")
-        ) {
-          setErrorMessage(
-            "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference."
-          );
-        } else {
-          setErrorMessage(err.message);
-        }
+        setErrorMessage(err.message);
       } else {
         setErrorMessage("An unexpected network error occurred. Please retry.");
       }
@@ -103,135 +87,100 @@ export function PublicUpiPaymentForm({ orderId, isMock }: Props) {
             <span>Test Payment Simulation (Preview Environment — Test Data Only)</span>
           </p>
           <p className="mt-1 text-[11px] leading-normal text-amber-800">
-            Use this control to test the application workflow. It does not confirm that real funds have been transferred:
+            Use this control to test the application workflow:
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
-                setUtr(`TEST-MOCK-${Date.now().toString().slice(-6)}`);
                 setPayerName("Simulated Buyer");
                 if (errorMessage) setErrorMessage(null);
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ✓ Simulate Valid Reference
+              ✓ Fill Simulated Payer Name
             </button>
             <button
               type="button"
               onClick={() => {
-                setUtr("TEST-DUP-REF");
-                setPayerName("Duplicate Tester");
+                setPayerName("");
                 if (errorMessage) setErrorMessage(null);
               }}
               className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
             >
-              ⚠ Test Duplicate Reference
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUtr("MOCK-FAIL-REJECTED");
-                setPayerName("Failing Test");
-                if (errorMessage) setErrorMessage(null);
-              }}
-              className="rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 transition hover:bg-amber-300 active:scale-98"
-            >
-              ✕ Simulate Failure Scenario
+              Clear
             </button>
           </div>
         </div>
       )}
 
-      {/* Friendly Inline Error Notice */}
       {errorMessage && (
         <div
           role="alert"
           aria-live="assertive"
-          className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900 shadow-2xs animate-in fade-in duration-200"
+          className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900 shadow-2xs"
         >
           <div className="flex items-start gap-2.5">
             <AlertCircle className="mt-0.5 text-red-600 shrink-0" size={18} />
             <div className="text-xs leading-relaxed">
-              <p className="font-bold text-red-950">Payment Reference Notice</p>
+              <p className="font-bold text-red-950">Submission could not be completed</p>
               <p className="mt-0.5 font-medium">{errorMessage}</p>
-              <p className="mt-1.5 text-[11px] text-red-700">
-                You can correct your entered UTR reference below and click &quot;Submit Payment Reference&quot; to retry.
-              </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* Payer Name (Optional) */}
       <div>
-        <label
-          htmlFor="utr-input"
-          className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
-        >
-          UPI Reference / UTR Number <span className="text-red-500">*</span>
+        <label htmlFor="payerName" className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]">
+          Payer Name / Bank Account Holder Name{" "}
+          <span className="font-normal text-[#705a54] normal-case tracking-normal">(Optional)</span>
         </label>
-        <input
-          id="utr-input"
-          name="utr"
-          type="text"
-          required
-          minLength={6}
-          maxLength={64}
-          value={utr}
-          onChange={(e) => {
-            setUtr(e.target.value);
-            if (errorMessage) setErrorMessage(null);
-          }}
-          placeholder={isMock ? "e.g. TEST12345678" : "e.g. 428172918291"}
-          className={`mt-1.5 w-full rounded-xl border bg-white p-3 font-mono text-sm text-[#35110f] transition focus:outline-hidden ${
-            errorMessage
-              ? "border-red-400 ring-2 ring-red-200 focus:border-red-500"
-              : "border-[#eadbcf] focus:border-[#7c1619] focus:ring-1 focus:ring-[#7c1619]/20"
-          }`}
-        />
+        <div className="relative mt-1.5">
+          <input
+            id="payerName"
+            name="payerName"
+            type="text"
+            maxLength={120}
+            value={payerName}
+            onChange={(e) => {
+              setPayerName(e.target.value);
+              if (errorMessage) setErrorMessage(null);
+            }}
+            placeholder="Name on bank or UPI account (optional)"
+            className="w-full rounded-xl border border-[#eadbcf] bg-white p-3 pr-10 text-sm text-[#35110f] transition focus:border-[#7c1619] focus:outline-hidden"
+          />
+          <User size={16} className="absolute right-3.5 top-3.5 text-[#705a54]/60 pointer-events-none" />
+        </div>
         <p className="mt-1 text-[11px] text-[#705a54]">
-          {isMock
-            ? "Preview Test Mode: Enter any mock reference starting with TEST (e.g. TEST12345678)."
-            : 'Found in your UPI app receipt under "UTR", "UPI Ref No.", or "Google Transaction ID".'}
+          Providing the name on your bank or UPI account helps us verify your payment faster.
         </p>
       </div>
 
-      <div>
-        <label
-          htmlFor="payer-name-input"
-          className="block text-xs font-semibold uppercase tracking-wider text-[#705a54]"
-        >
-          Payer Name / Bank Account Name <span className="text-xs font-normal text-[#705a54]">(Optional)</span>
-        </label>
-        <input
-          id="payer-name-input"
-          name="payerName"
-          type="text"
-          maxLength={120}
-          value={payerName}
-          onChange={(e) => setPayerName(e.target.value)}
-          placeholder="Name as it appears in your bank"
-          className="mt-1.5 w-full rounded-xl border border-[#eadbcf] bg-white p-3 text-sm text-[#35110f] focus:border-[#7c1619] focus:outline-hidden"
-        />
-      </div>
+      {/* Payment Screenshot — MANDATORY */}
+      <PaymentScreenshotField onChange={setScreenshot} />
 
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7c1619] p-3.5 text-sm font-bold text-white shadow-xs transition hover:bg-[#631214] active:scale-99 disabled:cursor-not-allowed disabled:opacity-70"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#7c1619] py-3.5 px-6 font-bold text-white shadow-sm transition hover:bg-[#631214] disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? (
           <>
-            <Loader2 className="animate-spin" size={16} />
-            <span>Verifying &amp; Submitting...</span>
+            <Loader2 className="animate-spin" size={18} />
+            <span>Submitting Payment Proof...</span>
           </>
         ) : (
           <>
-            <span>Submit Payment Reference</span>
-            <ArrowRight size={16} />
+            <span>Submit Payment Screenshot</span>
+            <ArrowRight size={18} />
           </>
         )}
       </button>
+
+      <p className="text-center text-[11px] text-[#705a54]">
+        Submitting your screenshot sends it to SSFI organizers for manual verification. Tickets are issued atomically once confirmed.
+      </p>
     </form>
   );
 }

@@ -4,7 +4,6 @@ import { requireRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SellerInboxView, type SellerInboxMessage } from "@/components/seller/SellerInboxView";
 
-export const instant = false;
 
 export default async function SellerMessagesPage() {
   await connection();

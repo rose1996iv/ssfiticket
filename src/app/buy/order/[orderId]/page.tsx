@@ -60,7 +60,7 @@ export default async function PublicOrderDetailPage({ params, searchParams }: Pa
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(full_name, phone, whatsapp_number, email), sellers!orders_seller_id_fkey(display_name, seller_code), payments(id, status, utr_reference, payer_name, rejection_reason, submitted_at, verified_at), tickets(ticket_number, status, issued_at)"
     )
     .eq("id", orderId)
     .maybeSingle();

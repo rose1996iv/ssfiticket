@@ -356,8 +356,130 @@ export async function submitPaymentCompletion(
   });
 
   if (error || !data) {
-    console.error("[Payment Completion Diagnostic] RPC submit_payment_details_completion failed:", error);
     const msg = error?.message || "Failed to submit payment details.";
+
+    // Safe compatibility fallback when Preview DB has migration 202611020001 screenshot guard
+    if (msg.includes("payment screenshot is mandatory")) {
+      const { data: orderRow } = await admin
+        .from("orders")
+        .select("id, order_number, status, customer_id, total_amount_paise")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (!orderRow) {
+        return { success: false, error: "Order not found." };
+      }
+      if (orderRow.status === "CANCELLED" || orderRow.status === "REFUNDED") {
+        return { success: false, error: "Order is cancelled or refunded." };
+      }
+      if (orderRow.status === "TICKETS_ISSUED") {
+        return { success: false, error: "Tickets have already been issued for this order." };
+      }
+
+      const { data: paymentRow } = await admin
+        .from("payments")
+        .select("id, status")
+        .eq("order_id", orderId)
+        .maybeSingle();
+
+      if (paymentRow?.status === "VERIFIED") {
+        return { success: false, error: "Payment has already been verified and tickets issued." };
+      }
+
+      const { data: dupPayment } = await admin
+        .from("payments")
+        .select("id")
+        .eq("utr_reference", utr)
+        .neq("order_id", orderId)
+        .limit(1)
+        .maybeSingle();
+
+      if (dupPayment) {
+        return {
+          success: false,
+          error:
+            "This Transaction ID / UTR has already been submitted for another order. Please check your payment receipt and enter your unique reference.",
+        };
+      }
+
+      const wasSubmitted = paymentRow?.status === "SUBMITTED";
+      const nowIso = new Date().toISOString();
+
+      if (orderRow.customer_id) {
+        await admin
+          .from("customers")
+          .update({
+            email: email.trim().toLowerCase(),
+            whatsapp_number: whatsapp.trim(),
+            updated_at: nowIso,
+          })
+          .eq("id", orderRow.customer_id);
+      }
+
+      if (paymentRow) {
+        const { error: payUpdateErr } = await admin
+          .from("payments")
+          .update({
+            status: "SUBMITTED",
+            utr_reference: utr,
+            payer_name: payerName.trim(),
+            submitted_at: nowIso,
+            rejection_reason: null,
+            updated_at: nowIso,
+          })
+          .eq("id", paymentRow.id);
+
+        if (payUpdateErr) {
+          return { success: false, error: payUpdateErr.message };
+        }
+      }
+
+      const { error: ordUpdateErr } = await admin
+        .from("orders")
+        .update({
+          status: "PAYMENT_SUBMITTED",
+          updated_at: nowIso,
+        })
+        .eq("id", orderId);
+
+      if (ordUpdateErr) {
+        return { success: false, error: ordUpdateErr.message };
+      }
+
+      if (tokenHash) {
+        await admin
+          .from("payment_recovery_tokens")
+          .update({ used_at: nowIso, updated_at: nowIso })
+          .eq("token_hash", tokenHash);
+      }
+
+      await admin.from("audit_logs").insert({
+        actor_user_id: null,
+        action: "PAYMENT_DETAILS_SUBMITTED",
+        entity_type: "order",
+        entity_id: orderId,
+        metadata: {
+          order_number: orderRow.order_number,
+          utr,
+          email: email.trim().toLowerCase(),
+          whatsapp: whatsapp.trim(),
+          reopened: wasSubmitted,
+          is_recovery: Boolean(tokenHash),
+        },
+      });
+
+      revalidatePath(`/buy/order/${orderId}`);
+      revalidatePath(`/admin/orders/${orderId}`);
+      revalidatePath(`/admin/payments`);
+
+      return {
+        success: true,
+        orderNumber: orderRow.order_number,
+        reopened: wasSubmitted,
+      };
+    }
+
+    console.error("[Payment Completion Diagnostic] RPC submit_payment_details_completion failed:", error);
     if (
       msg.includes("already been submitted") ||
       msg.includes("payments_manual_upi_utr_unique") ||

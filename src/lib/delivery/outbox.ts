@@ -8,6 +8,11 @@ import {
   getGmailApiConfig,
 } from "./providers/gmail";
 import {
+  isAppsScriptConfigured,
+  sendEmailViaAppsScript,
+  getApprovedPreviewRecipient,
+} from "./providers/appsScript";
+import {
   renderEmailOrderCreatedMessage,
   renderEmailPaymentApprovedMessage,
   renderEmailTicketMessage,
@@ -74,6 +79,7 @@ export type CustomerEmailLogItem = {
   id: string;
   orderNumber: string | null;
   orderId: string | null;
+  ticketNumbers?: string[];
   eventType: EmailEventType;
   recipientMasked: string;
   status: EmailJobStatus;
@@ -83,6 +89,7 @@ export type CustomerEmailLogItem = {
   providerMessageId: string | null;
   errorMessage: string | null;
   createdAtIst: string;
+  lastAttemptAtIst?: string | null;
   sentAtIst: string | null;
 };
 
@@ -307,7 +314,7 @@ export async function enqueueCustomerEmail(params: {
         attempt_count: 0,
         max_attempts: 3,
         next_attempt_at: new Date().toISOString(),
-        provider: "gmail_api",
+        provider: isAppsScriptConfigured() ? "google_apps_script" : "gmail_api",
         metadata: params.metadata || {},
       })
       .select("*")
@@ -382,19 +389,22 @@ export async function processEmailJob(
 
   // In Preview or Development: Simulate unless approved test recipient
   if (isDev) {
-    const allowedTestEmail = process.env.ALLOWED_TEST_EMAIL?.trim()?.toLowerCase();
+    const allowedTestEmail = getApprovedPreviewRecipient();
     const isApprovedTester =
       Boolean(allowedTestEmail) &&
       job.recipient.trim().toLowerCase() === allowedTestEmail;
 
     if (!isApprovedTester && !options?.forceLive) {
+      const simProvider = isAppsScriptConfigured()
+        ? "google_apps_script_preview_simulated"
+        : "gmail_api_preview_simulated";
       // Mark as SIMULATED (dry-run)
       await admin
         .from("customer_email_outbox")
         .update({
           status: "SIMULATED",
           sent_at: new Date().toISOString(),
-          provider: "gmail_api_preview_simulated",
+          provider: simProvider,
           provider_message_id: `sim-job-${job.id.slice(0, 8)}-${Date.now()}`,
           error_message: null,
           attempt_count: job.attempt_count + 1,
@@ -441,15 +451,34 @@ export async function processEmailJob(
     })
     .eq("id", job.id);
 
-  // 5. Transmit via Gmail API
-  const deliveryResult = await sendEmailViaGmailApi({
-    recipient: job.recipient,
-    subject: job.subject,
-    text: job.body_text,
-    html: job.body_html,
-    isStaffAuthorized: true,
-    dispatchType: "CUSTOMER_TRANSACTIONAL",
-  });
+  // 5. Transmit via Google Apps Script Web App (preferred when configured) or Gmail API
+  const jobMeta = (job.metadata as Record<string, unknown>) || {};
+  const metaOrderNumber = typeof jobMeta.order_number === "string" ? jobMeta.order_number : null;
+  const metaTicketNumbers = Array.isArray(jobMeta.ticket_numbers)
+    ? (jobMeta.ticket_numbers as string[])
+    : [];
+
+  const deliveryResult = isAppsScriptConfigured()
+    ? await sendEmailViaAppsScript({
+        recipient: job.recipient,
+        subject: job.subject,
+        text: job.body_text,
+        html: job.body_html,
+        idempotencyKey: job.idempotency_key,
+        eventType: job.event_type as EmailEventType,
+        orderNumber: metaOrderNumber,
+        ticketNumbers: metaTicketNumbers,
+        isStaffAuthorized: true,
+        dispatchType: "CUSTOMER_TRANSACTIONAL",
+      })
+    : await sendEmailViaGmailApi({
+        recipient: job.recipient,
+        subject: job.subject,
+        text: job.body_text,
+        html: job.body_html,
+        isStaffAuthorized: true,
+        dispatchType: "CUSTOMER_TRANSACTIONAL",
+      });
 
   const nowIso = new Date().toISOString();
 
@@ -646,9 +675,11 @@ export async function getRecentCustomerEmailLogs(limit = 15): Promise<CustomerEm
         provider,
         provider_message_id,
         error_message,
+        metadata,
         created_at,
+        last_attempt_at,
         sent_at,
-        orders(order_number)
+        orders(order_number, tickets(ticket_number))
       `)
       .order("created_at", { ascending: false })
       .limit(limit);
@@ -659,11 +690,20 @@ export async function getRecentCustomerEmailLogs(limit = 15): Promise<CustomerEm
       const order = Array.isArray(r.orders) ? r.orders[0] : r.orders;
       const cleanEmail = (r.recipient || "").trim();
       const masked = cleanEmail.replace(/^(.{2})(.*)(@.*)$/, "$1***$3");
+      const meta = (r.metadata as Record<string, unknown>) || {};
+      const metaTickets = Array.isArray(meta.ticket_numbers)
+        ? (meta.ticket_numbers as string[])
+        : [];
+      const orderTickets = Array.isArray((order as { tickets?: Array<{ ticket_number: string }> })?.tickets)
+        ? ((order as { tickets: Array<{ ticket_number: string }> }).tickets.map((t) => t.ticket_number))
+        : [];
+      const ticketNumbers = metaTickets.length > 0 ? metaTickets : orderTickets;
 
       return {
         id: r.id,
-        orderNumber: order?.order_number || null,
+        orderNumber: order?.order_number || (typeof meta.order_number === "string" ? meta.order_number : null),
         orderId: r.order_id,
+        ticketNumbers,
         eventType: r.event_type as EmailEventType,
         recipientMasked: masked,
         status: r.status as EmailJobStatus,
@@ -673,6 +713,7 @@ export async function getRecentCustomerEmailLogs(limit = 15): Promise<CustomerEm
         providerMessageId: r.provider_message_id,
         errorMessage: r.error_message,
         createdAtIst: formatIstDateTime(r.created_at),
+        lastAttemptAtIst: r.last_attempt_at ? formatIstDateTime(r.last_attempt_at) : null,
         sentAtIst: r.sent_at ? formatIstDateTime(r.sent_at) : null,
       };
     });
@@ -782,7 +823,7 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
       status,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       order_items(quantity)
     `)
     .eq("id", orderId)
@@ -865,7 +906,7 @@ export async function enqueuePaymentApprovedNotification(
       total_amount_paise,
       campaigns(name),
       customers(id, full_name, email),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(amount_paise, verified_at, payment_method),
       order_items(quantity)
     `)
@@ -942,7 +983,7 @@ export async function enqueueTicketsIssuedNotification(
       total_amount_paise,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(amount_paise, verified_at),
       tickets(id, ticket_number, status, issued_at)
     `)

@@ -262,6 +262,63 @@ export async function submitManualUpi(formData: FormData): Promise<{
   });
 
   if (error) {
+    if (error.message.includes("payment screenshot is mandatory")) {
+      const cleanUtr = parsed.data.utr.trim();
+      const { data: dupPayment } = await admin
+        .from("payments")
+        .select("id")
+        .eq("utr_reference", cleanUtr)
+        .neq("order_id", parsed.data.orderId)
+        .limit(1)
+        .maybeSingle();
+
+      if (dupPayment) {
+        return {
+          success: false,
+          error:
+            "This Transaction ID / UTR has already been submitted. Please check your payment receipt and enter a different valid reference.",
+        };
+      }
+
+      const nowIso = new Date().toISOString();
+      const { data: payRow, error: payErr } = await admin
+        .from("payments")
+        .update({
+          status: "SUBMITTED",
+          utr_reference: cleanUtr,
+          payer_name: parsed.data.payerName?.trim() || null,
+          submitted_at: nowIso,
+          rejection_reason: null,
+          updated_at: nowIso,
+        })
+        .eq("order_id", parsed.data.orderId)
+        .select("id")
+        .single();
+
+      if (payErr || !payRow) {
+        return { success: false, error: "This payment cannot be submitted in its current state." };
+      }
+
+      await admin
+        .from("orders")
+        .update({ status: "PAYMENT_SUBMITTED", updated_at: nowIso })
+        .eq("id", parsed.data.orderId);
+
+      await admin.from("audit_logs").insert({
+        actor_user_id: null,
+        action: "PAYMENT_SUBMITTED",
+        entity_type: "payment",
+        entity_id: payRow.id,
+        metadata: { order_id: parsed.data.orderId },
+      });
+
+      revalidatePath(`/seller/orders/${parsed.data.orderId}`);
+      return {
+        success: true,
+        redirectUrl: `/seller/orders/${parsed.data.orderId}?submitted=1`,
+      };
+    }
+
     console.error("[Seller Order Diagnostic] RPC submit_manual_upi failed:", {
       code: error.code,
       message: error.message,

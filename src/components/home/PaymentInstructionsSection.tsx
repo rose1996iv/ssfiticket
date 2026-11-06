@@ -71,8 +71,8 @@ const PAYMENT_STEPS = [
 
 export function PaymentInstructionsSection({
   ticketPriceInr = 100,
-  payeeName,
-  upiId,
+  payeeName = "HLAWN THA DAWT",
+  upiId = "6909251270@ptaxis",
 }: Props) {
   return (
     <section

@@ -20,11 +20,18 @@ import {
   isGmailApiConfigured,
   type GmailOAuthHealth,
 } from "@/lib/delivery/providers/gmail";
+import {
+  checkAppsScriptHealth,
+  isAppsScriptConfigured,
+  type AppsScriptHealth,
+} from "@/lib/delivery/providers/appsScript";
 
 export type AdminCustomerEmailDashboardData = {
   environment: string;
   senderAddress: string;
   isOAuthConfigured: boolean;
+  isAppsScriptConfigured: boolean;
+  activeProvider: "google_apps_script" | "gmail_api" | "unconfigured";
   authorizedAdminInbox?: string;
   settings: CustomerEmailSettings;
   metrics: CustomerEmailMetrics;
@@ -46,11 +53,18 @@ export async function getAdminCustomerEmailDashboardData(): Promise<AdminCustome
 
   const config = getGmailApiConfig();
   const isOAuthConfigured = isGmailApiConfigured();
+  const appsScriptReady = isAppsScriptConfigured();
+  const activeProvider = appsScriptReady
+    ? "google_apps_script"
+    : isOAuthConfigured
+    ? "gmail_api"
+    : "unconfigured";
   const settings = await getCustomerEmailSettings();
   const metrics = await getCustomerEmailMetrics();
   const recentLogs = await getRecentCustomerEmailLogs(15);
 
   const authorizedAdminInbox =
+    process.env.ALLOWED_TEST_EMAIL?.trim() ||
     process.env.GMAIL_ADMIN_TEST_RECIPIENT?.trim() ||
     process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT?.trim() ||
     user.email;
@@ -59,6 +73,8 @@ export async function getAdminCustomerEmailDashboardData(): Promise<AdminCustome
     environment,
     senderAddress: config.senderAddress,
     isOAuthConfigured,
+    isAppsScriptConfigured: appsScriptReady,
+    activeProvider,
     authorizedAdminInbox: authorizedAdminInbox || undefined,
     settings,
     metrics,
@@ -163,5 +179,13 @@ export async function triggerAdminCustomerTestEmail(
 export async function checkAdminGmailOAuthHealthAction(): Promise<GmailOAuthHealth> {
   await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
   return await checkGmailOAuthHealth();
+}
+
+/**
+ * Inspects Google Apps Script Web App connection health, shared secret authentication, and remaining MailApp quota.
+ */
+export async function checkAdminAppsScriptHealthAction(): Promise<AppsScriptHealth> {
+  await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+  return await checkAppsScriptHealth();
 }
 

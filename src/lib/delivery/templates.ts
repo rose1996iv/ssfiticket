@@ -129,7 +129,7 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
       : null;
   const safeSupportPhone = rawSupportPhone ? escapeHtml(rawSupportPhone) : null;
 
-  const subject = `[SSFI Lucky Draw] Official Ticket Confirmation — Order ${payload.orderNumber}`;
+  const subject = `Congratulations! Your SSFI Lucky Draw Ticket Is Ready — Official Ticket Confirmation (${payload.orderNumber})`;
 
   // Plain-text counterpart with direct links
   const ticketTextList = payload.ticketNumbers
@@ -228,6 +228,14 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
           <tr>
             <td style="color: #705a54; padding-bottom: 8px;">Confirmed Draw Date:</td>
             <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">19 December 2026</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Order Reference:</td>
+            <td style="font-weight: bold; font-family: monospace; text-align: right; padding-bottom: 8px;">${safeOrder}</td>
+          </tr>
+          <tr>
+            <td style="color: #705a54; padding-bottom: 8px;">Ticket Quantity:</td>
+            <td style="font-weight: bold; text-align: right; padding-bottom: 8px;">${payload.ticketNumbers.length} Ticket${payload.ticketNumbers.length > 1 ? "s" : ""}</td>
           </tr>
           <tr>
             <td style="color: #705a54; padding-bottom: 8px;">Verified Amount:</td>

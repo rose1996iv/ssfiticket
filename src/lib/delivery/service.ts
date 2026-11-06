@@ -12,6 +12,7 @@ import {
   renderEmailTicketMessage,
 } from "./templates";
 import { isGmailApiConfigured, sendEmailViaGmailApi } from "./providers/gmail";
+import { isAppsScriptConfigured, sendEmailViaAppsScript } from "./providers/appsScript";
 
 /**
  * Dispatches ticket delivery across official SSFI channels (WhatsApp and Email).
@@ -38,7 +39,7 @@ export async function dispatchOrderTicketDeliveries(
       status,
       campaigns(name),
       customers(id, full_name, phone, whatsapp_number, email),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(status, verified_at, amount_paise),
       tickets(id, ticket_number, status, issued_at)
     `)
@@ -80,8 +81,9 @@ export async function dispatchOrderTicketDeliveries(
     process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
   const isDev = !isProduction && (process.env.NODE_ENV !== "production" || isVercelPreview);
   const hasLiveWhatsApp = Boolean(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const hasAppsScript = isAppsScriptConfigured();
   const hasGmailApi = isGmailApiConfigured();
-  const hasLiveEmail = Boolean(process.env.RESEND_API_KEY || hasGmailApi);
+  const hasLiveEmail = Boolean(hasAppsScript || process.env.RESEND_API_KEY || hasGmailApi);
 
   const payload: DeliveryPayload = {
     orderId: order.id,
@@ -348,7 +350,23 @@ async function executeEmailDelivery(
     };
   }
 
-  // 1. Official Gmail API adapter (uses Google OAuth2 with Senthangstudents@gmail.com)
+  // 1. Official Google Apps Script Web App adapter (SSFI Lucky Draw Email Automation)
+  if (isAppsScriptConfigured()) {
+    return await sendEmailViaAppsScript({
+      recipient,
+      subject,
+      text,
+      html,
+      eventType: "TICKETS_ISSUED",
+      orderNumber: payload.orderNumber,
+      ticketNumbers: payload.ticketNumbers,
+      idempotencyKey: `TICKETS_ISSUED:${payload.orderId}`,
+      payload,
+      isStaffAuthorized: options?.isStaffAuthorized ?? false,
+    });
+  }
+
+  // 2. Official Gmail API adapter (uses Google OAuth2 with Senthangstudents@gmail.com)
   if (isGmailApiConfigured()) {
     return await sendEmailViaGmailApi({
       recipient,

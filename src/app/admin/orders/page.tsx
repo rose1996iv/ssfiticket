@@ -53,7 +53,7 @@ export default async function AdminOrdersPage() {
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers(id, display_name, seller_code), payments(id, status, utr_reference, payer_name, amount_paise), tickets(id, ticket_number, status)"
+      "id, order_number, quantity, total_amount_paise, status, created_at, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code), payments(id, status, utr_reference, payer_name, amount_paise), tickets(id, ticket_number, status)"
     )
     .order("created_at", { ascending: false })
     .limit(100);

@@ -24,7 +24,7 @@ export async function prepareWhatsAppTicketDelivery(orderId: string) {
       status,
       campaigns(name),
       customers(id, full_name, phone, whatsapp_number, email),
-      sellers(display_name, seller_code),
+      sellers!orders_seller_id_fkey(display_name, seller_code),
       payments(status, verified_at, amount_paise),
       tickets(id, ticket_number, status, issued_at)
     `)

@@ -46,7 +46,7 @@ export default async function PaymentsPage() {
   const { data, error } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, submitted_at, orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers(id, display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, submitted_at, orders(id, order_number, quantity, total_amount_paise, customers(id, full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(id, display_name, seller_code))"
     )
     .eq("status", "SUBMITTED")
     .order("submitted_at", { ascending: true })

@@ -18,9 +18,11 @@ import {
   retryAdminCustomerEmailJob,
   triggerAdminCustomerTestEmail,
   checkAdminGmailOAuthHealthAction,
+  checkAdminAppsScriptHealthAction,
   type AdminCustomerEmailDashboardData,
 } from "@/server/actions/emailSettings";
 import type { GmailOAuthHealth } from "@/lib/delivery/providers/gmail";
+import type { AppsScriptHealth } from "@/lib/delivery/providers/appsScript";
 
 type Props = {
   initialData?: AdminCustomerEmailDashboardData;
@@ -30,9 +32,11 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
   const [data, setData] = useState<AdminCustomerEmailDashboardData | undefined>(initialData);
   const [isPending, startTransition] = useTransition();
 
-  // OAuth Health Check State
+  // OAuth & Apps Script Health Check State
   const [oauthHealth, setOauthHealth] = useState<GmailOAuthHealth | null>(null);
   const [isCheckingOAuth, setIsCheckingOAuth] = useState(false);
+  const [appsScriptHealth, setAppsScriptHealth] = useState<AppsScriptHealth | null>(null);
+  const [isCheckingAppsScript, setIsCheckingAppsScript] = useState(false);
 
   // Live Gate Modal State
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -78,6 +82,25 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
       });
     } finally {
       setIsCheckingOAuth(false);
+    }
+  };
+
+  const handleTestAppsScript = async () => {
+    setIsCheckingAppsScript(true);
+    try {
+      const health = await checkAdminAppsScriptHealthAction();
+      setAppsScriptHealth(health);
+    } catch (err: unknown) {
+      setAppsScriptHealth({
+        isConfigured: false,
+        senderName: "Senthang Students Fellowship India (SSFI)",
+        replyTo: data?.senderAddress || "Senthangstudents@gmail.com",
+        status: "ERROR",
+        message: err instanceof Error ? err.message : "Apps Script health check failed",
+        checkedAtIst: new Date().toLocaleTimeString(),
+      });
+    } finally {
+      setIsCheckingAppsScript(false);
     }
   };
 
@@ -232,7 +255,26 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
               </span>
             </div>
             <div className="flex items-center justify-between border-b border-[#f4ece4] pb-2">
-              <span className="text-[#705a54]">OAuth Credentials:</span>
+              <span className="text-[#705a54]">Google Apps Script Web App:</span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`font-semibold ${
+                    data?.isAppsScriptConfigured ? "text-emerald-700" : "text-amber-700"
+                  }`}
+                >
+                  {data?.isAppsScriptConfigured ? "Configured (Active Primary)" : "Pending Setup"}
+                </span>
+                <button
+                  onClick={handleTestAppsScript}
+                  disabled={isCheckingAppsScript}
+                  className="rounded border border-[#e8d6c5] bg-white px-2 py-0.5 text-3xs font-semibold text-[#7c1619] hover:bg-[#fff5ee] disabled:opacity-50"
+                >
+                  {isCheckingAppsScript ? "Checking..." : "Check Web App"}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-b border-[#f4ece4] pb-2">
+              <span className="text-[#705a54]">Gmail OAuth Credentials:</span>
               <span
                 className={`font-semibold ${
                   data?.isOAuthConfigured ? "text-emerald-700" : "text-amber-700"
@@ -246,6 +288,26 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
               <code className="text-2xs text-[#7c1619]">https://www.googleapis.com/auth/gmail.send</code>
             </div>
           </div>
+
+          {appsScriptHealth && (
+            <div
+              className={`mt-4 rounded-lg border p-3 text-xs leading-relaxed ${
+                appsScriptHealth.status === "HEALTHY"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-bold">
+                {appsScriptHealth.status === "HEALTHY" ? (
+                  <CheckCircle2 size={15} className="text-emerald-600" />
+                ) : (
+                  <AlertTriangle size={15} className="text-amber-600" />
+                )}
+                <span>Apps Script Status: {appsScriptHealth.status}</span>
+              </div>
+              <p className="mt-1">{appsScriptHealth.message}</p>
+            </div>
+          )}
 
           {/* Health Check Result Banner */}
           {oauthHealth && (
@@ -447,11 +509,11 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
           <table className="w-full text-left text-xs">
             <thead className="border-b border-[#eadbcf] bg-[#fffaf7] text-2xs font-bold uppercase text-[#80635b]">
               <tr>
-                <th className="px-4 py-2.5">Date (IST)</th>
+                <th className="px-4 py-2.5">Date / Last Attempt (IST)</th>
                 <th className="px-4 py-2.5">Event Type</th>
-                <th className="px-4 py-2.5">Order</th>
+                <th className="px-4 py-2.5">Order &amp; Ticket(s)</th>
                 <th className="px-4 py-2.5">Recipient</th>
-                <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5">Status &amp; Provider</th>
                 <th className="px-4 py-2.5">Attempts</th>
                 <th className="px-4 py-2.5 text-right">Actions</th>
               </tr>
@@ -460,16 +522,28 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
               {data?.recentLogs && data.recentLogs.length > 0 ? (
                 data.recentLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-[#fffcf9]">
-                    <td className="px-4 py-2.5 text-2xs text-[#705a54]">{log.createdAtIst}</td>
+                    <td className="px-4 py-2.5 text-2xs text-[#705a54]">
+                      <div>{log.lastAttemptAtIst || log.createdAtIst}</div>
+                      {log.sentAtIst && (
+                        <div className="text-3xs text-emerald-700">Sent: {log.sentAtIst}</div>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 font-semibold text-[#7c1619]">{log.eventType}</td>
-                    <td className="px-4 py-2.5 font-mono text-2xs">{log.orderNumber || "—"}</td>
+                    <td className="px-4 py-2.5 font-mono text-2xs">
+                      <div className="font-bold">{log.orderNumber || "—"}</div>
+                      {log.ticketNumbers && log.ticketNumbers.length > 0 && (
+                        <div className="mt-0.5 text-3xs text-[#7c1619]">
+                          {log.ticketNumbers.join(", ")}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-2xs">{log.recipientMasked}</td>
                     <td className="px-4 py-2.5">
                       <span
                         className={`inline-block rounded-full px-2 py-0.5 text-3xs font-bold uppercase ${
                           log.status === "SENT"
                             ? "bg-emerald-100 text-emerald-800"
-                            : log.status === "QUEUED"
+                            : log.status === "QUEUED" || log.status === "SENDING"
                             ? "bg-amber-100 text-amber-800"
                             : log.status === "RETRY"
                             ? "bg-blue-100 text-blue-800"
@@ -480,6 +554,7 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
                       >
                         {log.status}
                       </span>
+                      <div className="mt-0.5 font-mono text-3xs text-[#705a54]">{log.provider}</div>
                       {log.errorMessage && (
                         <p className="mt-0.5 max-w-[200px] truncate text-3xs text-red-700" title={log.errorMessage}>
                           {log.errorMessage}
@@ -490,7 +565,7 @@ export function AdminCustomerEmailCard({ initialData }: Props) {
                       {log.attemptCount}/{log.maxAttempts}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      {(log.status === "FAILED" || log.status === "RETRY") && (
+                      {log.status !== "SENT" && (
                         <button
                           onClick={() => handleRetryJob(log.id)}
                           disabled={retryingJobId === log.id}

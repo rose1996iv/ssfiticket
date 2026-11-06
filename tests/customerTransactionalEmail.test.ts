@@ -10,6 +10,12 @@ import {
   sanitizeGmailApiError,
   checkGmailPreviewGate,
 } from "../src/lib/delivery/providers/gmail.ts";
+import {
+  computeAppsScriptSignature,
+  isAppsScriptConfigured,
+  sanitizeAppsScriptError,
+  sendEmailViaAppsScript,
+} from "../src/lib/delivery/providers/appsScript.ts";
 
 test("Customer Transactional Email Suite", async (t) => {
   // ==========================================================================
@@ -327,5 +333,69 @@ test("Customer Transactional Email Suite", async (t) => {
     assert.equal(isTicketDeliveryAllowed(pendingOrder), false, "Pending payment must never trigger ticket delivery");
     assert.equal(isTicketDeliveryAllowed(paymentSubmittedOrder), false, "Payment submitted without verification must not trigger ticket delivery");
     assert.equal(isTicketDeliveryAllowed(approvedOrder), true, "Verified payment allows ticket delivery");
+  });
+
+  // ==========================================================================
+  // 13. Google Apps Script Web App Provider Security & Preview Safety Gate
+  // ==========================================================================
+  await t.test("Google Apps Script provider enforces HMAC-SHA256 signing, URL redaction, and Preview recipient gate", async () => {
+    const prevUrl = process.env.APPS_SCRIPT_WEB_APP_URL;
+    const prevSecret = process.env.APPS_SCRIPT_SHARED_SECRET;
+    const prevEnv = process.env.VERCEL_ENV;
+    const prevAllowed = process.env.ALLOWED_TEST_EMAIL;
+
+    try {
+      delete process.env.APPS_SCRIPT_WEB_APP_URL;
+      delete process.env.APPS_SCRIPT_SHARED_SECRET;
+      assert.equal(isAppsScriptConfigured(), false, "Unconfigured when env vars are missing");
+
+      process.env.APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxTestDeploymentId123456/exec";
+      process.env.APPS_SCRIPT_SHARED_SECRET = "0123456789abcdef0123456789abcdef";
+      assert.equal(isAppsScriptConfigured(), true, "Configured when valid URL and 32-char secret are present");
+
+      // Deterministic HMAC-SHA256 signature verification
+      const sig1 = computeAppsScriptSignature(
+        1730000000000,
+        "TICKETS_ISSUED:order-123",
+        "customer@example.com",
+        process.env.APPS_SCRIPT_SHARED_SECRET
+      );
+      const sig2 = computeAppsScriptSignature(
+        1730000000000,
+        "TICKETS_ISSUED:order-123",
+        "CUSTOMER@EXAMPLE.COM",
+        process.env.APPS_SCRIPT_SHARED_SECRET
+      );
+      assert.equal(sig1.length, 64, "HMAC-SHA256 hex digest is 64 chars");
+      assert.equal(sig1, sig2, "Signature normalizes recipient casing");
+
+      // Redaction of sensitive Apps Script deployment URLs in error messages
+      const rawErr = "Failed to connect to https://script.google.com/macros/s/AKfycbxSecretId999/exec";
+      const sanitized = sanitizeAppsScriptError(rawErr);
+      assert.ok(!sanitized.includes("AKfycbxSecretId999"), "Deployment ID must be redacted");
+      assert.ok(sanitized.includes("[REDACTED]"), "Redaction placeholder must be present");
+
+      // Preview safety gate: non-allowlisted customer email is simulated in Preview
+      process.env.VERCEL_ENV = "preview";
+      process.env.ALLOWED_TEST_EMAIL = "tester@ssfi.org";
+
+      const simResult = await sendEmailViaAppsScript({
+        recipient: "real.customer@gmail.com",
+        subject: "Congratulations! Your SSFI Lucky Draw Ticket Is Ready",
+        text: "Ticket body",
+        html: "<p>Ticket body</p>",
+        eventType: "TICKETS_ISSUED",
+        orderNumber: "ORD-2026-000999",
+        ticketNumbers: ["SSFI-000999"],
+      });
+
+      assert.equal(simResult.status, "SIMULATED", "Real customer email must be simulated in Preview");
+      assert.equal(simResult.provider, "google_apps_script_preview_simulated");
+    } finally {
+      process.env.APPS_SCRIPT_WEB_APP_URL = prevUrl;
+      process.env.APPS_SCRIPT_SHARED_SECRET = prevSecret;
+      process.env.VERCEL_ENV = prevEnv;
+      process.env.ALLOWED_TEST_EMAIL = prevAllowed;
+    }
   });
 });

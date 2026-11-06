@@ -36,7 +36,7 @@ export default async function PaymentDetailPage({
   const { data } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers(display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers!orders_seller_id_fkey(display_name, seller_code))"
     )
     .eq("id", paymentId)
     .maybeSingle();

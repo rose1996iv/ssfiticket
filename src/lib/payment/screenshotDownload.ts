@@ -44,6 +44,7 @@ export interface PaymentAndScreenshotLookup {
   payment: {
     id: string;
     order_id: string;
+    order_number?: string | null;
   } | null;
   screenshot: {
     id?: string;
@@ -127,34 +128,190 @@ export function resolvePrimaryScreenshotRole(roles: readonly string[]): Screensh
 }
 
 /**
- * Builds a deterministic, PII-free filename for downloaded payment screenshots:
- * SSFI-Payment-{paymentId}-Screenshot.{extension}
+ * Resolves the download file extension from MIME content type or storage path.
+ * Supports JPEG/JPG, PNG, and WebP, preserving original extension.
  */
-export function buildSafeScreenshotDownloadFilename(
-  paymentId: string,
+export function resolveScreenshotExtension(
   contentType?: string | null,
   storagePath?: string | null
 ): string {
-  const cleanId = UUID_SCHEMA.safeParse(paymentId).success
-    ? paymentId.toLowerCase()
-    : "unknown";
-
-  let ext = "jpg";
-  const mime = (contentType || "").toLowerCase().trim();
-  if (mime === "image/png") {
-    ext = "png";
-  } else if (mime === "image/webp") {
-    ext = "webp";
-  } else if (mime === "image/jpeg") {
-    ext = "jpg";
-  } else if (storagePath) {
-    const pathExt = storagePath.split(".").pop()?.toLowerCase();
-    if (pathExt === "png" || pathExt === "webp" || pathExt === "jpg") {
-      ext = pathExt;
+  if (storagePath) {
+    const rawExt = storagePath.split(".").pop()?.trim().toLowerCase();
+    if (rawExt === "png" || rawExt === "webp" || rawExt === "jpg" || rawExt === "jpeg") {
+      return rawExt;
     }
   }
 
-  return `SSFI-Payment-${cleanId}-Screenshot.${ext}`;
+  const mime = (contentType || "").trim().toLowerCase();
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/jpeg") return "jpg";
+
+  return "jpg";
+}
+
+/**
+ * Sanitizes a human-readable order number for safe filesystem and header usage.
+ * Preserves alphanumeric characters and hyphens, stripping control characters,
+ * path traversal sequences, and symbols. Max 30 characters.
+ */
+export function sanitizeOrderNumberForFilename(
+  orderNumber?: string | null
+): string {
+  if (!orderNumber || typeof orderNumber !== "string") return "";
+  let s = orderNumber.trim();
+  // Strip control characters (0x00-0x1F, 0x7F-0x9F)
+  s = s.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  // Remove dots and path separators to prevent path traversal
+  s = s.replace(/[/\\.]+/g, "");
+  // Keep only alphanumeric and hyphen
+  s = s.replace(/[^A-Za-z0-9\-]/g, "");
+  // Collapse multiple hyphens
+  s = s.replace(/-+/g, "-");
+  // Trim leading/trailing hyphens
+  s = s.replace(/^-+|-+$/g, "");
+  const chars = Array.from(s);
+  if (chars.length > 30) {
+    s = chars.slice(0, 30).join("").replace(/-+$/, "");
+  }
+  return s;
+}
+
+/**
+ * Sanitizes a customer name for safe filesystem and header usage:
+ * - Replaces spaces and whitespace sequences with hyphens.
+ * - Strips control characters, filesystem-invalid characters, quotes, and punctuation.
+ * - Prevents path traversal (strips slashes, backslashes, and dots).
+ * - Preserves international Unicode letters and numbers across scripts.
+ * - Safely truncates length to a maximum of 50 characters.
+ */
+export function sanitizeCustomerNameForFilename(
+  customerName?: string | null
+): string {
+  if (!customerName || typeof customerName !== "string") return "";
+  let s = customerName.normalize("NFKC");
+  // Remove control characters (0x00-0x1F, 0x7F-0x9F)
+  s = s.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  // Replace path separators with space
+  s = s.replace(/[/\\/]+/g, " ");
+  // Remove invalid filesystem characters and symbols that cause issues in headers / shells
+  s = s.replace(/[<>:"/\\|?*'`~,;!@#$%^&()[\]{}=+]/g, "");
+  // Remove dots so no extensions or dotfiles can be forged
+  s = s.replace(/\.+/g, "");
+  // Replace whitespace sequences with a single hyphen
+  s = s.replace(/\s+/g, "-");
+  // Collapse multiple hyphens or underscores
+  s = s.replace(/-+/g, "-").replace(/_+/g, "_");
+  // Trim leading/trailing hyphens, underscores, whitespace
+  s = s.replace(/^[-_\s]+|[-_\s]+$/g, "");
+  // Limit length safely using code points (up to 50 characters)
+  const chars = Array.from(s);
+  if (chars.length > 50) {
+    s = chars.slice(0, 50).join("").replace(/^[-_\s]+|[-_\s]+$/g, "");
+  }
+  return s;
+}
+
+/**
+ * Masks customer name for audit log metadata to prevent customer PII exposure in system logs.
+ * Uses filesystem-safe REDACTED markers rather than illegal characters like asterisks.
+ */
+export function maskCustomerNameForAudit(
+  customerName?: string | null
+): string {
+  if (!customerName || typeof customerName !== "string") return "REDACTED";
+  const trimmed = customerName.trim();
+  if (!trimmed) return "REDACTED";
+  const chars = Array.from(trimmed);
+  if (chars.length <= 2) {
+    return `${chars[0]}-REDACTED`;
+  }
+  return `${chars[0]}${chars[1]}-REDACTED`;
+}
+
+/**
+ * Builds an RFC 6266 / RFC 5987 compliant Content-Disposition header value
+ * ensuring broad client compatibility with both ASCII fallback and full UTF-8 encoding.
+ * Example: attachment; filename="ORD-2026-000042.png"; filename*=UTF-8''ORD-2026-000042.png
+ */
+export function buildContentDispositionHeader(fileName: string): string {
+  const asciiFallback = fileName
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/["\\]/g, "");
+  const encodedUtf8 = encodeURIComponent(fileName)
+    .replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/\*/g, "%2A");
+
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedUtf8}`;
+}
+
+export interface BuildScreenshotFilenameOptions {
+  orderNumber?: string | null;
+  customerName?: string | null;
+  contentType?: string | null;
+  storagePath?: string | null;
+}
+
+/**
+ * Builds a clean, identifiable filename for downloaded payment screenshots.
+ * Approved Specification: {ORDER_NUMBER}.{ORIGINAL_EXTENSION}
+ * Examples:
+ * - ORD-2026-000042.png
+ * - ORD-2026-000043.jpg
+ * - ORD-2026-000044.jpeg
+ * - ORD-2026-000045.webp
+ *
+ * Requirements:
+ * 1. Contains ONLY the Order Number and original file extension.
+ * 2. Customer names never appear in the filename.
+ * 3. "Payment-Proof" never appears in the filename.
+ * 4. Fallback if order number is unavailable: Screenshot.{ORIGINAL_EXTENSION}
+ */
+export function buildSafeScreenshotDownloadFilename(
+  optionsOrOrderNumber?:
+    | BuildScreenshotFilenameOptions
+    | string
+    | null,
+  contentTypeOrStoragePath?: string | null,
+  storagePath?: string | null
+): string {
+  let orderNumber: string | null = null;
+  let contentType: string | null = null;
+  let path: string | null = null;
+
+  if (typeof optionsOrOrderNumber === "object" && optionsOrOrderNumber !== null) {
+    orderNumber = optionsOrOrderNumber.orderNumber ?? null;
+    contentType = optionsOrOrderNumber.contentType ?? null;
+    path = optionsOrOrderNumber.storagePath ?? null;
+  } else if (
+    typeof optionsOrOrderNumber === "string" ||
+    optionsOrOrderNumber === null ||
+    optionsOrOrderNumber === undefined
+  ) {
+    if (
+      contentTypeOrStoragePath &&
+      (contentTypeOrStoragePath.startsWith("image/") || contentTypeOrStoragePath.includes("/"))
+    ) {
+      // Legacy caller: (orderOrPaymentId, contentType, storagePath)
+      contentType = contentTypeOrStoragePath;
+      path = storagePath ?? null;
+      if (optionsOrOrderNumber && !UUID_SCHEMA.safeParse(optionsOrOrderNumber).success) {
+        orderNumber = optionsOrOrderNumber;
+      }
+    } else {
+      orderNumber = optionsOrOrderNumber ?? null;
+      contentType = contentTypeOrStoragePath ?? null;
+      path = storagePath ?? null;
+    }
+  }
+
+  const ext = resolveScreenshotExtension(contentType, path);
+  const safeOrder = sanitizeOrderNumberForFilename(orderNumber);
+
+  if (safeOrder) {
+    return `${safeOrder}.${ext}`;
+  }
+  return `Screenshot.${ext}`;
 }
 
 /**
@@ -376,11 +533,11 @@ export async function executeDownloadPaymentScreenshot(
   }
 
   // 6. Verify file exists in private bucket and generate 60-second signed download URL
-  const safeFileName = buildSafeScreenshotDownloadFilename(
-    payment.id,
-    screenshot.content_type,
-    screenshot.storage_path
-  );
+  const safeFileName = buildSafeScreenshotDownloadFilename({
+    orderNumber: payment.order_number,
+    contentType: screenshot.content_type,
+    storagePath: screenshot.storage_path,
+  });
 
   const storageResult = await deps.verifyAndCreateSignedDownloadUrl({
     bucket: PAYMENT_SCREENSHOT_BUCKET,

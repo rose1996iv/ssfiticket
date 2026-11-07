@@ -214,7 +214,7 @@ export async function downloadPaymentScreenshot(
         await Promise.all([
           admin
             .from("payments")
-            .select("id, order_id")
+            .select("id, order_id, orders (id, order_number)")
             .eq("id", targetPaymentId)
             .maybeSingle(),
           admin
@@ -227,9 +227,18 @@ export async function downloadPaymentScreenshot(
           admin.storage.getBucket(PAYMENT_SCREENSHOT_BUCKET),
         ]);
 
+      const orderRel = payment?.orders as unknown as {
+        id?: string;
+        order_number?: string | null;
+      } | null;
+
       return {
         payment: payment
-          ? { id: payment.id as string, order_id: payment.order_id as string }
+          ? {
+              id: payment.id as string,
+              order_id: payment.order_id as string,
+              order_number: orderRel?.order_number ?? null,
+            }
           : null,
         screenshot: screenshot
           ? {

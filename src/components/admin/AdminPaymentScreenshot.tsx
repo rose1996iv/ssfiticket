@@ -53,7 +53,7 @@ export function AdminPaymentScreenshotDownloadButton({
       if (result.success && result.url) {
         triggerBrowserFileDownload(
           result.url,
-          result.fileName || `SSFI-Payment-${paymentId}-Screenshot.jpg`
+          result.fileName || "Screenshot.jpg"
         );
       } else {
         setError(result.error || "Unable to download screenshot.");
@@ -131,7 +131,7 @@ export function AdminPaymentScreenshot({
     if (result.success && result.url) {
       triggerBrowserFileDownload(
         result.url,
-        result.fileName || `SSFI-Payment-${paymentId}-Screenshot.jpg`
+        result.fileName || "Screenshot.jpg"
       );
     } else {
       setError(result.error || "Unable to prepare secure screenshot download.");

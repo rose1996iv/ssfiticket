@@ -70,6 +70,9 @@ export const AUDIT_CATEGORY_ACTIONS: Record<AuditActionCategory, readonly string
     "PAYMENT_SCREENSHOT_REPLACED",
     "PAYMENT_SCREENSHOT_VIEWED",
     "PAYMENT_SCREENSHOT_DOWNLOADED",
+    "PAYMENT_SCREENSHOT_DOWNLOAD_SUCCEEDED",
+    "PAYMENT_SCREENSHOT_DOWNLOAD_DENIED",
+    "PAYMENT_SCREENSHOT_DOWNLOAD_FAILED",
   ],
   EMAIL: [
     "CUSTOMER_EMAIL_QUEUED",
@@ -250,6 +253,21 @@ const ACTION_METADATA_MAP: Record<
     label: "Payment Screenshot Downloaded",
     category: "SCREENSHOT",
     tone: "indigo",
+  },
+  PAYMENT_SCREENSHOT_DOWNLOAD_SUCCEEDED: {
+    label: "Payment Screenshot Download Succeeded",
+    category: "SCREENSHOT",
+    tone: "emerald",
+  },
+  PAYMENT_SCREENSHOT_DOWNLOAD_DENIED: {
+    label: "Payment Screenshot Download Denied",
+    category: "SCREENSHOT",
+    tone: "rose",
+  },
+  PAYMENT_SCREENSHOT_DOWNLOAD_FAILED: {
+    label: "Payment Screenshot Download Failed",
+    category: "SCREENSHOT",
+    tone: "amber",
   },
 
   // Collaboration
@@ -462,7 +480,7 @@ const SAFE_KEY_ALLOWLIST = new Set([
 ]);
 
 const SENSITIVE_KEY_REGEX =
-  /(token|secret|password|passcode|private_key|api_key|service_role|authorization|cookie|credential|hash)/i;
+  /(token|secret|password|passcode|private_key|api_key|service_role|authorization|cookie|credential|hash|signed_url|storage_path)/i;
 
 /**
  * Deeply sanitizes an audit metadata payload so that secret tokens, hashes,

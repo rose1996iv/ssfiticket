@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { ArrowLeft, CheckCircle2, Clock, ExternalLink, Lock, Ticket } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { hasAnyCurrentUserRole } from "@/lib/auth/server";
+import { hasAnyCurrentUserRole, hasCurrentUserRole } from "@/lib/auth/server";
 import { getOrderRecoveryStatus } from "@/server/actions/paymentRecovery";
 import {
   getOrderAuditTimeline,
@@ -95,7 +95,10 @@ export default async function AdminOrderDetailPage({
   const deliveries = rawDeliveries as unknown as DeliveryItem[];
 
   // RBAC: Check whether user can generate and revoke recovery links & edit customer info
-  const canManageAdmin = await hasAnyCurrentUserRole(["SUPER_ADMIN", "ADMIN"]);
+  const [canManageAdmin, isSuperAdmin] = await Promise.all([
+    hasAnyCurrentUserRole(["SUPER_ADMIN", "ADMIN"]),
+    hasCurrentUserRole("SUPER_ADMIN"),
+  ]);
   let initialTokenStatus = { hasToken: false, active: false };
   if (canManageAdmin) {
     try {
@@ -320,6 +323,7 @@ export default async function AdminOrderDetailPage({
             uploadedAt={screenshot.uploaded_at}
             sizeBytes={screenshot.file_size_bytes}
             contentType={screenshot.content_type}
+            canDownload={isSuperAdmin}
           />
         )}
 

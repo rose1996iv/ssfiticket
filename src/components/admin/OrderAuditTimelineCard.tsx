@@ -55,6 +55,18 @@ const ACTION_BADGE_MAP: Record<string, { label: string; className: string }> = {
     label: "Payment Screenshot Downloaded",
     className: "border-[#eadbcf] bg-[#fffaf7] text-[#35110f]",
   },
+  PAYMENT_SCREENSHOT_DOWNLOAD_SUCCEEDED: {
+    label: "Payment Screenshot Downloaded (SUPER_ADMIN)",
+    className: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  },
+  PAYMENT_SCREENSHOT_DOWNLOAD_DENIED: {
+    label: "Payment Screenshot Download Denied",
+    className: "border-red-200 bg-red-100 text-red-900",
+  },
+  PAYMENT_SCREENSHOT_DOWNLOAD_FAILED: {
+    label: "Payment Screenshot Download Failed",
+    className: "border-amber-200 bg-amber-100 text-amber-900",
+  },
   ORDER_COLLABORATION_NOTE_ADDED: {
     label: "Collaboration Note Added",
     className: "border-blue-200 bg-blue-50 text-blue-900",

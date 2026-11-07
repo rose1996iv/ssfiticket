@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { ArrowLeft, CheckCircle2, Clock, Flag, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Flag, ImageOff, ThumbsDown, ThumbsUp } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { hasCurrentUserRole } from "@/lib/auth/server";
 import { rejectPayment, verifyPayment } from "@/server/actions/operations";
 import {
   getOrderAuditTimeline,
@@ -90,6 +91,7 @@ export default async function PaymentDetailPage({
   await connection();
   const { paymentId } = await params;
   const db = createSupabaseAdminClient();
+  const isSuperAdmin = await hasCurrentUserRole("SUPER_ADMIN");
 
   const { data } = await db
     .from("payments")
@@ -178,13 +180,26 @@ export default async function PaymentDetailPage({
           </span>
         </div>
 
-        {screenshot && (
+        {screenshot ? (
           <AdminPaymentScreenshot
             paymentId={payment.id}
             uploadedAt={screenshot.uploaded_at}
             sizeBytes={screenshot.file_size_bytes}
             contentType={screenshot.content_type}
+            canDownload={isSuperAdmin}
           />
+        ) : (
+          <div className="mt-6 flex items-center gap-3 rounded-xl border border-dashed border-[#eadbcf] bg-[#fffaf7]/60 p-4 text-xs text-[#705a54]">
+            <ImageOff size={18} className="shrink-0 text-[#705a54]" />
+            <div>
+              <p className="font-bold text-[#35110f]">
+                No Payment Screenshot Uploaded
+              </p>
+              <p className="mt-0.5 text-[11px] text-[#705a54]">
+                No screenshot attachment is stored in private storage for this payment record. Verification can proceed using UTR reference or once a screenshot is uploaded.
+              </p>
+            </div>
+          </div>
         )}
 
         {/* Verification Summary Grid */}

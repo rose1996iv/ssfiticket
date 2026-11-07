@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ExportDropdown } from "@/components/admin/ExportDropdown";
-import { requireAnyRole } from "@/lib/auth/server";
+import { hasCurrentUserRole, requireAnyRole } from "@/lib/auth/server";
+import { AdminPaymentScreenshotDownloadButton } from "@/components/admin/AdminPaymentScreenshot";
 import { computeServerPaginationWindow } from "@/lib/pagination/serverPagination";
 import {
   AdminFilterBar,
@@ -28,6 +29,10 @@ type PaymentRow = {
   submitted_at: string | null;
   created_at?: string;
   seller_review_status?: string | null;
+  payment_screenshots?:
+    | { uploaded_at: string; file_size_bytes: number; content_type?: string }
+    | { uploaded_at: string; file_size_bytes: number; content_type?: string }[]
+    | null;
   orders: {
     id: string;
     order_number: string;
@@ -93,6 +98,7 @@ export default async function PaymentsPage({
   await connection();
   const params = (await searchParams) ?? {};
   const currentUser = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+  const isSuperAdmin = await hasCurrentUserRole("SUPER_ADMIN");
   const db = createSupabaseAdminClient();
 
   const activeStatus = params.status ? params.status.toUpperCase() : "SUBMITTED";
@@ -152,7 +158,7 @@ export default async function PaymentsPage({
   let query = db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, payer_name, submitted_at, created_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, seller_id, snapshot_seller_id, snapshot_upi_id, snapshot_account_name, snapshot_qr_storage_path, snapshot_seller_display_name, snapshot_seller_code, customers(id, full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(id, display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(id, display_name, seller_code))",
+      "id, status, amount_paise, utr_reference, payer_name, submitted_at, created_at, seller_review_status, payment_screenshots(uploaded_at, file_size_bytes, content_type), orders(id, order_number, quantity, total_amount_paise, seller_id, snapshot_seller_id, snapshot_upi_id, snapshot_account_name, snapshot_qr_storage_path, snapshot_seller_display_name, snapshot_seller_code, customers(id, full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(id, display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(id, display_name, seller_code))",
       { count: "exact" }
     );
 
@@ -558,13 +564,26 @@ export default async function PaymentsPage({
 
                   {/* Action */}
                   <td className="p-4 text-right">
-                    <Link
-                      href={`/admin/payments/${payment.id}`}
-                      className="inline-flex items-center gap-1 rounded-xl bg-[#7c1619] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#631214]"
-                    >
-                      <span>Review</span>
-                      <ArrowRight size={13} />
-                    </Link>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {(() => {
+                        const rawShot = payment.payment_screenshots;
+                        const shot = Array.isArray(rawShot) ? rawShot[0] : rawShot;
+                        if (!shot) return null;
+                        return (
+                          <AdminPaymentScreenshotDownloadButton
+                            paymentId={payment.id}
+                            canDownload={isSuperAdmin}
+                          />
+                        );
+                      })()}
+                      <Link
+                        href={`/admin/payments/${payment.id}`}
+                        className="inline-flex items-center gap-1 rounded-xl bg-[#7c1619] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#631214]"
+                      >
+                        <span>Review</span>
+                        <ArrowRight size={13} />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               );

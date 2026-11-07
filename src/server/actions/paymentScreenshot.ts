@@ -2,10 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireAnyRole } from "@/lib/auth/server";
+import { getCurrentUser, requireAnyRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hashRecoveryToken, isValidTokenFormat } from "@/lib/payment/recoveryToken";
 import { PAYMENT_SCREENSHOT_BUCKET, validatePaymentScreenshot } from "@/lib/payment/screenshot";
+import {
+  executeDownloadPaymentScreenshot,
+  PAYMENT_SCREENSHOT_VIEW_TTL_SECONDS,
+  resolvePrimaryScreenshotRole,
+  type ScreenshotDownloadResult,
+} from "@/lib/payment/screenshotDownload";
 
 async function authorizedPayment(orderId: string, token: string) {
   const admin = createSupabaseAdminClient();
@@ -176,6 +182,131 @@ export async function uploadPaymentScreenshot(formData: FormData): Promise<{ suc
   }
 }
 
+/**
+ * Dedicated SUPER_ADMIN-only server action to download a payment screenshot.
+ * Independently verifies the authenticated user's actual SUPER_ADMIN role on the server,
+ * verifies payment/screenshot ownership and private bucket integrity, verifies the object
+ * exists in storage, generates a 60-second signed download URL with a safe PII-free
+ * filename (SSFI-Payment-{paymentId}-Screenshot.{ext}), and logs every succeeded,
+ * denied, or failed attempt in public.audit_logs.
+ */
+export async function downloadPaymentScreenshot(
+  paymentId: string
+): Promise<ScreenshotDownloadResult> {
+  const admin = createSupabaseAdminClient();
+  const user = await getCurrentUser();
+
+  return executeDownloadPaymentScreenshot(paymentId, {
+    actorUserId: user?.id ?? null,
+    resolveActorRoles: async (userId: string) => {
+      const { data, error } = await admin
+        .from("profile_roles")
+        .select("roles(name)")
+        .eq("profile_id", userId);
+      if (error || !data) return [];
+      return data
+        .map((row: unknown) => {
+          const r = row as { roles?: { name?: string } | { name?: string }[] };
+          if (Array.isArray(r.roles)) return r.roles[0]?.name ?? "";
+          return r.roles?.name ?? "";
+        })
+        .filter(Boolean);
+    },
+    lookupPaymentAndScreenshot: async (targetPaymentId: string) => {
+      const [{ data: payment }, { data: screenshot }, { data: bucketInfo }] =
+        await Promise.all([
+          admin
+            .from("payments")
+            .select("id, order_id")
+            .eq("id", targetPaymentId)
+            .maybeSingle(),
+          admin
+            .from("payment_screenshots")
+            .select(
+              "id, payment_id, storage_path, content_type, file_size_bytes, uploaded_at"
+            )
+            .eq("payment_id", targetPaymentId)
+            .maybeSingle(),
+          admin.storage.getBucket(PAYMENT_SCREENSHOT_BUCKET),
+        ]);
+
+      return {
+        payment: payment
+          ? { id: payment.id as string, order_id: payment.order_id as string }
+          : null,
+        screenshot: screenshot
+          ? {
+              id: screenshot.id as string | undefined,
+              payment_id: screenshot.payment_id as string,
+              storage_path: screenshot.storage_path as string,
+              content_type: screenshot.content_type as string,
+              file_size_bytes: Number(screenshot.file_size_bytes ?? 0),
+              uploaded_at: screenshot.uploaded_at as string,
+            }
+          : null,
+        bucketIsPublic: bucketInfo?.public ?? false,
+      };
+    },
+    verifyAndCreateSignedDownloadUrl: async ({
+      bucket,
+      storagePath,
+      fileName,
+      expiresInSeconds,
+    }) => {
+      const { data: blob, error: downloadCheckError } = await admin.storage
+        .from(bucket)
+        .download(storagePath);
+
+      if (downloadCheckError || !blob || blob.size === 0) {
+        return {
+          signedUrl: null,
+          fileExists: false,
+          error:
+            downloadCheckError?.message ||
+            "Screenshot file does not exist in private storage bucket",
+        };
+      }
+
+      const { data: signed, error: signedError } = await admin.storage
+        .from(bucket)
+        .createSignedUrl(storagePath, expiresInSeconds, {
+          download: fileName,
+        });
+
+      if (signedError || !signed?.signedUrl) {
+        return {
+          signedUrl: null,
+          fileExists: true,
+          error:
+            signedError?.message ||
+            "Failed to generate short-lived signed download URL",
+        };
+      }
+
+      return {
+        signedUrl: signed.signedUrl,
+        fileExists: true,
+      };
+    },
+    writeAuditLog: async (entry) => {
+      await admin.from("audit_logs").insert({
+        actor_user_id: entry.actor_user_id,
+        action: entry.action,
+        entity_type: entry.entity_type,
+        entity_id: entry.entity_id,
+        metadata: entry.metadata,
+      });
+      revalidatePath("/admin/audit-logs");
+    },
+  });
+}
+
+/**
+ * Generates a 5-minute signed URL for authorized Admin Portal staff (SUPER_ADMIN, ADMIN,
+ * FUNDRAISING_MANAGER) strictly for VIEWING the payment screenshot inline.
+ * Any DOWNLOAD intent is delegated to downloadPaymentScreenshot(paymentId), which enforces
+ * SUPER_ADMIN-only authorization and audit logging.
+ */
 export async function createAdminPaymentScreenshotUrl(
   paymentId: string,
   intent: "VIEW" | "DOWNLOAD" = "VIEW"
@@ -188,37 +319,53 @@ export async function createAdminPaymentScreenshotUrl(
   uploadedAt?: string;
   error?: string;
 }> {
-  const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+  if (intent === "DOWNLOAD") {
+    return downloadPaymentScreenshot(paymentId);
+  }
+
+  const user = await requireAnyRole([
+    "SUPER_ADMIN",
+    "ADMIN",
+    "FUNDRAISING_MANAGER",
+  ]);
   if (!z.string().uuid().safeParse(paymentId).success) {
     return { success: false, error: "Invalid payment." };
   }
   const admin = createSupabaseAdminClient();
-  const { data } = await admin
-    .from("payment_screenshots")
-    .select("storage_path, content_type, file_size_bytes, uploaded_at")
-    .eq("payment_id", paymentId)
-    .maybeSingle();
+  const [{ data }, { data: paymentRow }, { data: roleRows }] =
+    await Promise.all([
+      admin
+        .from("payment_screenshots")
+        .select("storage_path, content_type, file_size_bytes, uploaded_at")
+        .eq("payment_id", paymentId)
+        .maybeSingle(),
+      admin
+        .from("payments")
+        .select("order_id")
+        .eq("id", paymentId)
+        .maybeSingle(),
+      admin
+        .from("profile_roles")
+        .select("roles(name)")
+        .eq("profile_id", user.id),
+    ]);
 
   if (!data) {
     return { success: false, error: "No screenshot has been submitted." };
   }
 
-  const { data: paymentRow } = await admin
-    .from("payments")
-    .select("order_id")
-    .eq("id", paymentId)
-    .maybeSingle();
-
-  const ext = data.storage_path.split(".").pop() || "jpg";
-  const downloadFileName = `ssfi-payment-proof-${paymentId.slice(0, 8)}.${ext}`;
+  const assignedRoles = (roleRows ?? [])
+    .map((row: unknown) => {
+      const r = row as { roles?: { name?: string } | { name?: string }[] };
+      if (Array.isArray(r.roles)) return r.roles[0]?.name ?? "";
+      return r.roles?.name ?? "";
+    })
+    .filter(Boolean);
+  const actualRole = resolvePrimaryScreenshotRole(assignedRoles);
 
   const { data: signed, error } = await admin.storage
     .from(PAYMENT_SCREENSHOT_BUCKET)
-    .createSignedUrl(
-      data.storage_path,
-      300,
-      intent === "DOWNLOAD" ? { download: downloadFileName } : undefined
-    );
+    .createSignedUrl(data.storage_path, PAYMENT_SCREENSHOT_VIEW_TTL_SECONDS);
 
   if (error || !signed) {
     return { success: false, error: "Unable to prepare the private preview." };
@@ -226,23 +373,22 @@ export async function createAdminPaymentScreenshotUrl(
 
   await admin.from("audit_logs").insert({
     actor_user_id: user.id,
-    action: intent === "DOWNLOAD" ? "PAYMENT_SCREENSHOT_DOWNLOADED" : "PAYMENT_SCREENSHOT_VIEWED",
+    action: "PAYMENT_SCREENSHOT_VIEWED",
     entity_type: "payment",
     entity_id: paymentId,
     metadata: {
       order_id: paymentRow?.order_id ?? null,
-      actor_role: "STAFF",
-      intent,
+      payment_id: paymentId,
+      actor_role: actualRole,
+      intent: "VIEW",
       content_type: data.content_type,
       file_size_bytes: data.file_size_bytes,
-      storage_path: data.storage_path,
     },
   });
 
   return {
     success: true,
     url: signed.signedUrl,
-    fileName: downloadFileName,
     contentType: data.content_type,
     fileSizeBytes: data.file_size_bytes,
     uploadedAt: data.uploaded_at,
@@ -250,13 +396,18 @@ export async function createAdminPaymentScreenshotUrl(
 }
 
 /**
- * Generates a 5-minute signed URL for a seller to view the screenshot for one of their orders.
- * Strictly verifies the payment belongs to an order attributed to the calling seller.
+ * Generates a 5-minute signed URL for a seller strictly to VIEW the screenshot for one of their orders.
+ * Sellers are never permitted to download payment screenshots; any DOWNLOAD intent is delegated to
+ * downloadPaymentScreenshot(paymentId), which denies and audits the attempt.
  */
 export async function createSellerPaymentScreenshotUrl(
   paymentId: string,
   intent: "VIEW" | "DOWNLOAD" = "VIEW"
 ): Promise<{ success: boolean; url?: string; fileName?: string; error?: string }> {
+  if (intent === "DOWNLOAD") {
+    return downloadPaymentScreenshot(paymentId);
+  }
+
   if (!z.string().uuid().safeParse(paymentId).success) {
     return { success: false, error: "Invalid payment ID." };
   }
@@ -304,16 +455,9 @@ export async function createSellerPaymentScreenshotUrl(
     return { success: false, error: "No screenshot has been submitted for this payment." };
   }
 
-  const ext = screenshot.storage_path.split(".").pop() || "jpg";
-  const downloadFileName = `ssfi-payment-proof-${paymentId.slice(0, 8)}.${ext}`;
-
   const { data: signed, error } = await admin.storage
     .from(PAYMENT_SCREENSHOT_BUCKET)
-    .createSignedUrl(
-      screenshot.storage_path,
-      300,
-      intent === "DOWNLOAD" ? { download: downloadFileName } : undefined
-    );
+    .createSignedUrl(screenshot.storage_path, PAYMENT_SCREENSHOT_VIEW_TTL_SECONDS);
 
   if (error || !signed) {
     return { success: false, error: "Unable to prepare the private preview." };
@@ -321,18 +465,19 @@ export async function createSellerPaymentScreenshotUrl(
 
   await admin.from("audit_logs").insert({
     actor_user_id: user.id,
-    action: intent === "DOWNLOAD" ? "PAYMENT_SCREENSHOT_DOWNLOADED" : "PAYMENT_SCREENSHOT_VIEWED",
+    action: "PAYMENT_SCREENSHOT_VIEWED",
     entity_type: "payment",
     entity_id: paymentId,
     metadata: {
       order_id: paymentRow.order_id,
+      payment_id: paymentId,
       actor_role: "SELLER",
       seller_id: sellerData.id,
-      intent,
+      intent: "VIEW",
       content_type: screenshot.content_type,
       file_size_bytes: screenshot.file_size_bytes,
     },
   });
 
-  return { success: true, url: signed.signedUrl, fileName: downloadFileName };
+  return { success: true, url: signed.signedUrl };
 }

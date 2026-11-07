@@ -60,7 +60,7 @@ export async function uploadSellerPaymentQr(
   formData: FormData
 ): Promise<{ success: boolean; error?: string; storagePath?: string }> {
   try {
-    const { admin, seller } = await getAuthenticatedSeller();
+    const { admin, seller, user } = await getAuthenticatedSeller();
     const file = formData.get("qrFile");
 
     if (!(file instanceof File)) {
@@ -104,8 +104,34 @@ export async function uploadSellerPaymentQr(
       await admin.storage.from(SELLER_PAYMENT_QR_BUCKET).remove([oldPath]);
     }
 
+    await admin.from("audit_logs").insert({
+      actor_user_id: user.id,
+      action: "SELLER_PAYMENT_QR_UPLOADED",
+      entity_type: "seller",
+      entity_id: seller.id,
+      metadata: {
+        actor_role: "SELLER",
+        seller_id: seller.id,
+        seller_code: seller.seller_code,
+        reason: oldPath
+          ? "Seller replaced personal payment QR image (awaiting Admin activation)"
+          : "Seller uploaded personal payment QR image (awaiting Admin activation)",
+        old_value: {
+          qr_storage_key: oldPath || null,
+          is_qr_active: seller.is_qr_active,
+        },
+        new_value: {
+          qr_storage_key: newPath,
+          qr_content_type: contentType,
+          is_qr_active: false,
+        },
+      },
+    });
+
     revalidatePath("/seller/payment-settings");
     revalidatePath("/seller");
+    revalidatePath("/admin/sellers");
+    revalidatePath("/admin/audit-logs");
 
     return { success: true, storagePath: newPath };
   } catch (err) {
@@ -123,7 +149,7 @@ export async function updateSellerPaymentDetails(
   formData: FormData
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { admin, seller } = await getAuthenticatedSeller();
+    const { admin, seller, user } = await getAuthenticatedSeller();
 
     const parsed = sellerPaymentDetailsSchema.safeParse({
       upiId: formData.get("upiId") || "",
@@ -163,8 +189,35 @@ export async function updateSellerPaymentDetails(
       throw new Error("Failed to update payment settings.");
     }
 
+    await admin.from("audit_logs").insert({
+      actor_user_id: user.id,
+      action: "SELLER_PAYMENT_DETAILS_UPDATED",
+      entity_type: "seller",
+      entity_id: seller.id,
+      metadata: {
+        actor_role: "SELLER",
+        seller_id: seller.id,
+        seller_code: seller.seller_code,
+        reason: "Seller updated personal payment UPI / account details",
+        old_value: {
+          upi_id: seller.upi_id ?? null,
+          account_name: seller.account_name ?? null,
+          payment_instructions: seller.payment_instructions ?? null,
+          is_qr_active: seller.is_qr_active,
+        },
+        new_value: {
+          upi_id: parsed.data.upiId || null,
+          account_name: parsed.data.accountName || null,
+          payment_instructions: parsed.data.paymentInstructions || null,
+          is_qr_active: targetIsQrActive,
+        },
+      },
+    });
+
     revalidatePath("/seller/payment-settings");
     revalidatePath("/seller");
+    revalidatePath("/admin/sellers");
+    revalidatePath("/admin/audit-logs");
 
     return { success: true };
   } catch (err) {

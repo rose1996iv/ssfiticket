@@ -1,10 +1,13 @@
 "use client";
 
-import { History, Lock, ShieldCheck, UserCheck } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, History, Lock, ShieldCheck, UserCheck } from "lucide-react";
 import type { AuditTimelineEvent } from "@/server/actions/orderCollaboration";
+import { sanitizeAuditMetadata } from "@/lib/audit/center";
 
 type Props = {
   events: AuditTimelineEvent[];
+  orderId?: string;
 };
 
 const ACTION_BADGE_MAP: Record<string, { label: string; className: string }> = {
@@ -70,7 +73,7 @@ const ACTION_BADGE_MAP: Record<string, { label: string; className: string }> = {
   },
 };
 
-export function OrderAuditTimelineCard({ events }: Props) {
+export function OrderAuditTimelineCard({ events, orderId }: Props) {
   return (
     <div className="rounded-2xl border border-[#eadbcf] bg-white p-5 shadow-xs space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f0e7df] pb-3">
@@ -82,10 +85,23 @@ export function OrderAuditTimelineCard({ events }: Props) {
             Immutable Order, Payment &amp; Contact Audit Timeline
           </h2>
         </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-900">
-          <Lock size={11} />
-          Append-Only Enforced ({events.length})
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={
+              orderId
+                ? `/admin/audit-logs?order=${encodeURIComponent(orderId)}`
+                : "/admin/audit-logs"
+            }
+            className="inline-flex items-center gap-1 rounded-full border border-[#eadbcf] bg-[#fffaf7] px-2.5 py-0.5 text-[10px] font-bold text-[#7c1619] transition hover:bg-[#f6ece3]"
+          >
+            Open Audit Center
+            <ExternalLink size={10} />
+          </Link>
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+            <Lock size={11} />
+            Append-Only Enforced ({events.length})
+          </span>
+        </div>
       </div>
 
       {events.length === 0 ? (
@@ -109,11 +125,11 @@ export function OrderAuditTimelineCard({ events }: Props) {
 
             const oldVal =
               evt.metadata.old_value && typeof evt.metadata.old_value === "object"
-                ? (evt.metadata.old_value as Record<string, unknown>)
+                ? sanitizeAuditMetadata(evt.metadata.old_value)
                 : null;
             const newVal =
               evt.metadata.new_value && typeof evt.metadata.new_value === "object"
-                ? (evt.metadata.new_value as Record<string, unknown>)
+                ? sanitizeAuditMetadata(evt.metadata.new_value)
                 : null;
 
             return (

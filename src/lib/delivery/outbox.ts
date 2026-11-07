@@ -181,8 +181,9 @@ export async function updateCustomerEmailLiveGate(
       actor_user_id: actorUserId,
       action: enabled ? "CUSTOMER_EMAIL_LIVE_ENABLED" : "CUSTOMER_EMAIL_LIVE_DISABLED",
       entity_type: "system_settings",
-      entity_id: "customer_email_live_enabled",
+      entity_id: null,
       metadata: {
+        setting_key: "customer_email_live_enabled",
         previous_state: !enabled,
         new_state: enabled,
         timestamp: formatIstDateTime(new Date().toISOString()),
@@ -233,8 +234,9 @@ export async function updateCustomerEmailEventToggles(
       actor_user_id: actorUserId,
       action: "CUSTOMER_EMAIL_EVENTS_UPDATED",
       entity_type: "system_settings",
-      entity_id: "customer_email_events",
+      entity_id: null,
       metadata: {
+        setting_key: "customer_email_events",
         events: updatedEvents,
         timestamp: formatIstDateTime(new Date().toISOString()),
       },
@@ -324,6 +326,22 @@ export async function enqueueCustomerEmail(params: {
       console.error("[Email Outbox] Failed to insert outbox job:", insertErr);
       return null;
     }
+
+    await admin.from("audit_logs").insert({
+      actor_user_id: null,
+      action: "CUSTOMER_EMAIL_QUEUED",
+      entity_type: "customer_email_outbox",
+      entity_id: created.id,
+      metadata: {
+        actor_role: "SYSTEM",
+        order_id: params.orderId || null,
+        customer_id: params.customerId || null,
+        event_type: params.eventType,
+        idempotency_key: idempotencyKey,
+        provider: created.provider,
+        reason: `Transactional email queued for ${params.eventType}`,
+      },
+    });
 
     // 3. Immediately attempt dispatch
     await processEmailJob(created.id);
@@ -416,6 +434,20 @@ export async function processEmailJob(
       console.log(
         `[Email Outbox] Job ${job.id} (${job.event_type}) simulated for recipient "${job.recipient}". No real email sent.`
       );
+      await admin.from("audit_logs").insert({
+        actor_user_id: options?.actorUserId || null,
+        action: "CUSTOMER_EMAIL_SIMULATED",
+        entity_type: "customer_email_outbox",
+        entity_id: job.id,
+        metadata: {
+          actor_role: options?.actorUserId ? "ADMIN" : "SYSTEM",
+          order_id: job.order_id || null,
+          customer_id: job.customer_id || null,
+          event_type: job.event_type,
+          provider: simProvider,
+          reason: `Preview email delivery simulated (${job.event_type})`,
+        },
+      });
       return { success: true, status: "SIMULATED" };
     }
   }
@@ -498,6 +530,23 @@ export async function processEmailJob(
       .eq("id", job.id);
 
     console.log(`[Email Outbox] Job ${job.id} (${job.event_type}) sent successfully to ${job.recipient}. Message ID: ${deliveryResult.providerMessageId}`);
+    await admin.from("audit_logs").insert({
+      actor_user_id: options?.actorUserId || null,
+      action: "CUSTOMER_EMAIL_SENT",
+      entity_type: "customer_email_outbox",
+      entity_id: job.id,
+      metadata: {
+        actor_role: options?.actorUserId ? "ADMIN" : "SYSTEM",
+        order_id: job.order_id || null,
+        order_number: metaOrderNumber,
+        ticket_numbers: metaTicketNumbers,
+        customer_id: job.customer_id || null,
+        event_type: job.event_type,
+        provider: deliveryResult.provider,
+        provider_message_id: deliveryResult.providerMessageId,
+        reason: `Customer email delivered via ${deliveryResult.provider} (${job.event_type})`,
+      },
+    });
     return { success: true, status: "SENT" };
   }
 
@@ -515,6 +564,23 @@ export async function processEmailJob(
         updated_at: nowIso,
       })
       .eq("id", job.id);
+
+    await admin.from("audit_logs").insert({
+      actor_user_id: options?.actorUserId || null,
+      action: "CUSTOMER_EMAIL_SIMULATED",
+      entity_type: "customer_email_outbox",
+      entity_id: job.id,
+      metadata: {
+        actor_role: options?.actorUserId ? "ADMIN" : "SYSTEM",
+        order_id: job.order_id || null,
+        order_number: metaOrderNumber,
+        ticket_numbers: metaTicketNumbers,
+        customer_id: job.customer_id || null,
+        event_type: job.event_type,
+        provider: deliveryResult.provider,
+        reason: `Customer email simulated via ${deliveryResult.provider} (${job.event_type})`,
+      },
+    });
 
     return { success: true, status: "SIMULATED" };
   }
@@ -540,6 +606,26 @@ export async function processEmailJob(
       updated_at: nowIso,
     })
     .eq("id", job.id);
+
+  await admin.from("audit_logs").insert({
+    actor_user_id: options?.actorUserId || null,
+    action: "CUSTOMER_EMAIL_FAILED",
+    entity_type: "customer_email_outbox",
+    entity_id: job.id,
+    metadata: {
+      actor_role: options?.actorUserId ? "ADMIN" : "SYSTEM",
+      order_id: job.order_id || null,
+      order_number: metaOrderNumber,
+      ticket_numbers: metaTicketNumbers,
+      customer_id: job.customer_id || null,
+      event_type: job.event_type,
+      attempt_count: newAttemptCount,
+      max_attempts: job.max_attempts,
+      result_status: newStatus,
+      error_message: deliveryResult.error || "Email delivery failure",
+      reason: deliveryResult.error || "Email delivery failure",
+    },
+  });
 
   console.error(
     `[Email Outbox] Job ${job.id} failed (attempt ${newAttemptCount}/${job.max_attempts}). New status: ${newStatus}. Error: ${deliveryResult.error}`

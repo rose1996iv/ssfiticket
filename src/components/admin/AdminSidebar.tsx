@@ -9,6 +9,7 @@ import {
   LogOut,
   MessageSquare,
   QrCode,
+  ShieldCheck,
   ShoppingBag,
   Ticket,
   Users,
@@ -31,6 +32,7 @@ const navItems = [
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/sellers", label: "Sellers & QR Codes", icon: QrCode },
   { href: "/admin/messages", label: "Seller Messaging", icon: MessageSquare },
+  { href: "/admin/audit-logs", label: "Audit Logs", icon: ShieldCheck },
   { href: "/admin/campaign-settings", label: "Campaign Settings", icon: CalendarClock },
 ];
 

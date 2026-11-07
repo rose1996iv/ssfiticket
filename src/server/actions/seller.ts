@@ -93,7 +93,7 @@ export async function createSellerAccount(
   rawInput: Record<string, unknown>
 ): Promise<CreateSellerResult> {
   // 1. Strict Server-Side Administrator Role Verification
-  await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+  const caller = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
 
   // 2. Validate input schema
   const parsed = createSellerSchema.safeParse(rawInput);
@@ -239,6 +239,27 @@ export async function createSellerAccount(
     if (sellerError || !sellerRow) {
       throw new Error(`Seller record creation failed: ${sellerError?.message}`);
     }
+
+    await admin.from("audit_logs").insert({
+      actor_user_id: caller.id,
+      action: "SELLER_CREATED",
+      entity_type: "seller",
+      entity_id: sellerRow.id,
+      metadata: {
+        actor_role: "ADMIN",
+        seller_id: sellerRow.id,
+        seller_code: sellerRow.seller_code,
+        display_name: sellerRow.display_name,
+        email,
+        reason: `Provisioned new seller account (${sellerRow.seller_code})`,
+        new_value: {
+          seller_code: sellerRow.seller_code,
+          display_name: sellerRow.display_name,
+          email,
+          is_active: true,
+        },
+      },
+    });
 
     // 11. Generate an initial password recovery/activation link if email service is active
     let activationLink: string | null = null;

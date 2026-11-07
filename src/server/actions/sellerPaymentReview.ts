@@ -75,7 +75,9 @@ export async function submitSellerPaymentReview(
   // 2. Fetch payment + associated order to verify seller ownership
   const { data: paymentRow, error: paymentErr } = await admin
     .from("payments")
-    .select("id, status, orders(id, seller_id)")
+    .select(
+      "id, status, order_id, seller_review_status, seller_review_note, orders(id, order_number, seller_id)"
+    )
     .eq("id", paymentId)
     .maybeSingle();
 
@@ -83,9 +85,12 @@ export async function submitSellerPaymentReview(
     return { success: false, error: "Payment not found." };
   }
 
-  const orderSellerId = (
-    paymentRow.orders as unknown as { seller_id: string } | null
-  )?.seller_id;
+  const orderData = paymentRow.orders as unknown as {
+    id: string;
+    order_number?: string | null;
+    seller_id: string;
+  } | null;
+  const orderSellerId = orderData?.seller_id;
 
   if (!orderSellerId || orderSellerId !== sellerData.id) {
     return {
@@ -121,8 +126,38 @@ export async function submitSellerPaymentReview(
     return { success: false, error: "Failed to record review. Please try again." };
   }
 
+  // 5. Record append-only audit log for Seller Payment Review
+  await admin.from("audit_logs").insert({
+    actor_user_id: user.id,
+    action: "SELLER_PAYMENT_REVIEWED",
+    entity_type: "payment",
+    entity_id: paymentId,
+    metadata: {
+      actor_role: "SELLER",
+      seller_id: sellerData.id,
+      order_id: orderData?.id || paymentRow.order_id || null,
+      order_number: orderData?.order_number || null,
+      payment_id: paymentId,
+      review_status: reviewStatus,
+      review_note: reviewNote || null,
+      reason: reviewNote || `Seller submitted advisory review: ${reviewStatus}`,
+      old_value: {
+        seller_review_status: paymentRow.seller_review_status ?? null,
+        seller_review_note: paymentRow.seller_review_note ?? null,
+      },
+      new_value: {
+        seller_review_status: reviewStatus,
+        seller_review_note: reviewNote || null,
+      },
+    },
+  });
+
   revalidatePath("/seller/payments");
   revalidatePath(`/admin/payments/${paymentId}`);
+  if (orderData?.id) {
+    revalidatePath(`/admin/orders/${orderData.id}`);
+  }
+  revalidatePath("/admin/audit-logs");
   return { success: true };
 }
 

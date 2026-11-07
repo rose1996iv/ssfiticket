@@ -490,7 +490,7 @@ export default async function AdminOrderDetailPage({
       />
 
       {/* Phase 5: Centralized Append-Only Audit Timeline */}
-      <OrderAuditTimelineCard events={auditRes.events} />
+      <OrderAuditTimelineCard events={auditRes.events} orderId={order.id} />
     </div>
   );
 }

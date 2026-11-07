@@ -111,8 +111,31 @@ export async function uploadPaymentScreenshot(formData: FormData): Promise<{ suc
         metadata: { content_type: contentType, file_size_bytes: file.size },
       });
 
+      await admin.from("audit_logs").insert({
+        actor_user_id: null,
+        action: "PAYMENT_SCREENSHOT_REPLACED",
+        entity_type: "payment",
+        entity_id: paymentId,
+        metadata: {
+          actor_role: "SYSTEM",
+          order_id: orderId,
+          payment_id: paymentId,
+          reason: "Customer or seller replaced payment screenshot proof",
+          old_value: {
+            storage_key: existing.storage_path || null,
+          },
+          new_value: {
+            storage_key: newPath,
+            content_type: contentType,
+            file_size_bytes: file.size,
+          },
+        },
+      });
+
       revalidatePath(`/admin/payments`);
       revalidatePath(`/admin/payments/${paymentId}`);
+      revalidatePath(`/admin/orders/${orderId}`);
+      revalidatePath(`/admin/audit-logs`);
       return { success: true };
     }
 
@@ -126,8 +149,27 @@ export async function uploadPaymentScreenshot(formData: FormData): Promise<{ suc
       throw new Error("The screenshot could not be recorded. Please retry.");
     }
     await admin.from("payment_events").insert({ payment_id: paymentId, event_type: "SCREENSHOT_SUBMITTED", metadata: { content_type: contentType, file_size_bytes: file.size } });
+    await admin.from("audit_logs").insert({
+      actor_user_id: null,
+      action: "PAYMENT_SCREENSHOT_UPLOADED",
+      entity_type: "payment",
+      entity_id: paymentId,
+      metadata: {
+        actor_role: "SYSTEM",
+        order_id: orderId,
+        payment_id: paymentId,
+        reason: "Customer or seller uploaded payment screenshot proof",
+        new_value: {
+          storage_key: path,
+          content_type: contentType,
+          file_size_bytes: file.size,
+        },
+      },
+    });
     revalidatePath(`/admin/payments`);
     revalidatePath(`/admin/payments/${paymentId}`);
+    revalidatePath(`/admin/orders/${orderId}`);
+    revalidatePath(`/admin/audit-logs`);
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : "Screenshot upload failed. Please retry." };

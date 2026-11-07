@@ -14,14 +14,26 @@ type PageProps = {
 export default async function PublicTicketVerificationPage({ params }: PageProps) {
   await connection();
   const { ticketNumber } = await params;
-  const cleanNumber = decodeURIComponent(ticketNumber).trim().toUpperCase();
+  const rawInput = decodeURIComponent(ticketNumber).trim().toUpperCase();
+  const isProductionEnv = process.env.VERCEL_ENV === "production";
+  const hasPreviewPrefix = rawInput.startsWith("PRV-");
+
+  // Phase 6 Isolation Guard: Production verification strictly rejects Preview-prefixed tickets
+  const lookupNumber =
+    !isProductionEnv && hasPreviewPrefix ? rawInput.replace(/^PRV-/, "") : rawInput;
+  const cleanNumber = !isProductionEnv && !hasPreviewPrefix && rawInput.startsWith("SSFI-")
+    ? `PRV-${rawInput}`
+    : rawInput;
 
   const db = createSupabaseAdminClient();
-  const { data: ticket } = await db
-    .from("tickets")
-    .select("ticket_number, status, issued_at, void_reason, campaigns(name)")
-    .eq("ticket_number", cleanNumber)
-    .maybeSingle();
+  const { data: ticket } =
+    isProductionEnv && hasPreviewPrefix
+      ? { data: null }
+      : await db
+          .from("tickets")
+          .select("ticket_number, status, issued_at, void_reason, campaigns(name)")
+          .eq("ticket_number", lookupNumber)
+          .maybeSingle();
 
   const isValid = ticket && (ticket.status === "ISSUED" || ticket.status === "ACTIVE");
   const isVoid = ticket && ticket.status === "VOID";

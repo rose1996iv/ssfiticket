@@ -96,6 +96,7 @@ export function sanitizeAppsScriptError(rawError: string): string {
 export function getApprovedPreviewRecipient(): string | undefined {
   const candidate =
     process.env.ALLOWED_TEST_EMAIL?.trim() ||
+    process.env.PREVIEW_ALLOWED_RECIPIENT?.trim() ||
     process.env.APPS_SCRIPT_PREVIEW_ALLOWED_RECIPIENT?.trim() ||
     process.env.GMAIL_PREVIEW_ALLOWED_RECIPIENT?.trim();
   return candidate ? candidate.toLowerCase() : undefined;

@@ -2,11 +2,10 @@
 -- Migration: 202611070002_preview_clone_alignment_and_isolation.sql
 -- Purpose:
 --   Phase 3 Preview Clone Alignment & Security Hardening Package
---   1. Restores EXECUTE grant on public.is_staff(uuid) to `anon` so public RLS
---      policies (`campaigns_public_read`, `prizes_public_read`) do not throw
---      42501 when evaluated under the anonymous publishable key.
---      (Safe because public.is_staff returns FALSE immediately when auth.uid()
---      or p_user_id is NULL.)
+--   1. Keeps EXECUTE on public.is_staff(uuid) strictly revoked from PUBLIC and
+--      anon (granted only to authenticated and service_role). Public anonymous
+--      read access on campaigns and prizes is handled via dedicated role-split
+--      RLS policies in PHASE_5_RLS_POLICY_MIGRATION.sql without invoking is_staff().
 --   2. Revokes unnecessary EXECUTE grant on trigger function
 --      public.trg_seller_messages_populate_snapshot() from anon/authenticated.
 --   3. Ensures server-side pagination and lookup indexes exist on orders,
@@ -21,8 +20,9 @@
 
 BEGIN;
 
--- 1. Restore safe EXECUTE grant on public.is_staff(uuid) for anonymous public RLS evaluation
-GRANT EXECUTE ON FUNCTION public.is_staff(uuid) TO anon, authenticated, service_role;
+-- 1. Enforce strict least-privilege on public.is_staff(uuid): never callable by anon
+REVOKE ALL ON FUNCTION public.is_staff(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_staff(uuid) TO authenticated, service_role;
 
 -- 2. Revoke excess client execute grant on internal trigger function
 REVOKE ALL ON FUNCTION public.trg_seller_messages_populate_snapshot() FROM public, anon, authenticated;

@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentUser, requireAnyRole } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { hashRecoveryToken, isValidTokenFormat } from "@/lib/payment/recoveryToken";
 import { PAYMENT_SCREENSHOT_BUCKET, validatePaymentScreenshot } from "@/lib/payment/screenshot";
 import {
   executeDownloadPaymentScreenshot,
@@ -12,22 +11,8 @@ import {
   resolvePrimaryScreenshotRole,
   type ScreenshotDownloadResult,
 } from "@/lib/payment/screenshotDownload";
+import { verifyOrderAccess } from "@/lib/security/orderAccessToken";
 
-async function authorizedPayment(orderId: string, token: string) {
-  const admin = createSupabaseAdminClient();
-  const tokenHash = hashRecoveryToken(token);
-  const { data: recovery } = await admin
-    .from("payment_recovery_tokens")
-    .select("order_id, expires_at, revoked_at")
-    .eq("token_hash", tokenHash)
-    .maybeSingle();
-  if (!recovery || recovery.order_id !== orderId || recovery.revoked_at || new Date(recovery.expires_at) <= new Date()) {
-    throw new Error("This payment link is no longer authorized.");
-  }
-  const { data: payment } = await admin.from("payments").select("id, status").eq("order_id", orderId).maybeSingle();
-  if (!payment || !["PENDING", "SUBMITTED", "FAILED"].includes(payment.status)) throw new Error("This payment is not eligible for screenshot submission.");
-  return { admin, paymentId: payment.id as string };
-}
 
 /**
  * Uploads a payment screenshot.
@@ -47,24 +32,36 @@ export async function uploadPaymentScreenshot(formData: FormData): Promise<{ suc
   if (!orderIdParsed.success) return { success: false, error: "Invalid order ID." };
   const orderId = orderIdParsed.data;
 
+  // Enforce access verification in WRITE mode (staff, owning seller, or customer token/cookie)
+  const callerToken = typeof rawToken === "string" && rawToken.trim() ? rawToken.trim() : null;
+  const access = await verifyOrderAccess(orderId, "WRITE", { rawToken: callerToken });
+  if (!access.authorized) {
+    return {
+      success: false,
+      error:
+        access.code === "TOKEN_WRITE_ALREADY_CONSUMED"
+          ? "Payment has already been finalized and proof cannot be modified."
+          : access.code === "ORDER_NOT_EDITABLE"
+          ? "This order is not eligible for screenshot upload."
+          : "You are not authorized to upload proof for this order or the payment session has expired.",
+    };
+  }
+
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const { contentType, extension } = validatePaymentScreenshot(file, bytes);
     const admin = createSupabaseAdminClient();
-    let paymentId: string;
 
-    if (rawToken && typeof rawToken === "string" && isValidTokenFormat(rawToken)) {
-      // Recovery-token-gated path
-      const authorized = await authorizedPayment(orderId, rawToken);
-      paymentId = authorized.paymentId;
-    } else {
-      // Direct public order page path — verify order exists and payment is eligible
-      const { data: payment } = await admin.from("payments").select("id, status").eq("order_id", orderId).maybeSingle();
-      if (!payment || !["PENDING", "SUBMITTED", "FAILED"].includes(payment.status)) {
-        return { success: false, error: "This payment is not eligible for screenshot submission." };
-      }
-      paymentId = payment.id as string;
+    const { data: payment } = await admin
+      .from("payments")
+      .select("id, status")
+      .eq("order_id", orderId)
+      .maybeSingle();
+
+    if (!payment || !["PENDING", "SUBMITTED", "FAILED"].includes(payment.status)) {
+      return { success: false, error: "This payment is not eligible for screenshot submission." };
     }
+    const paymentId = payment.id as string;
 
     const { data: existing } = await admin
       .from("payment_screenshots")

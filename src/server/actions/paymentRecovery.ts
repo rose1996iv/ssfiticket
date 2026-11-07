@@ -14,6 +14,7 @@ import {
   hashRecoveryToken,
   isValidTokenFormat,
 } from "@/lib/payment/recoveryToken";
+import { verifyOrderAccess } from "@/lib/security/orderAccessToken";
 
 // Schema for generating recovery link
 const generateLinkSchema = z.object({
@@ -300,6 +301,23 @@ export async function submitPaymentCompletion(
   }
 
   const { orderId, token, utr, email, whatsapp, payerName } = parsed.data;
+
+  // Authorization check in CONSUME_WRITE mode
+  const access = await verifyOrderAccess(orderId, "CONSUME_WRITE", {
+    rawToken: token,
+  });
+
+  if (!access.authorized) {
+    return {
+      success: false,
+      error:
+        access.code === "TOKEN_WRITE_ALREADY_CONSUMED"
+          ? "A payment submission has already been recorded for this order and is under review."
+          : access.code === "ORDER_INACTIVE"
+          ? "This order is inactive and cannot accept payments."
+          : "You are not authorized to submit details for this order or the payment session has expired.",
+    };
+  }
 
   // Rate limit check if token provided
   if (token) {

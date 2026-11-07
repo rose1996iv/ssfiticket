@@ -9,6 +9,11 @@ import { whatsappSchema, emailSchema } from "@/lib/validation/contact";
 import { formatIstDateTime } from "@/lib/date/timezone";
 import { manualUpiConfig } from "@/lib/config/payment";
 import { isFeatureEnabled } from "@/lib/config/featureFlags";
+import {
+  issueOrderAccessToken,
+  setOrderAccessCookie,
+  verifyOrderAccess,
+} from "@/lib/security/orderAccessToken";
 
 const publicOrderSchema = z.object({
   sellerCode: z
@@ -236,6 +241,14 @@ export async function createPublicCustomerOrder(formData: FormData): Promise<Cre
     console.warn(`[Public Order Diagnostic] [${correlationId}] Snapshot capture failed (non-fatal):`, snapshotErr);
   }
 
+  // 3b. Issue customer order access token and set HttpOnly order cookie (zero URL token leakage)
+  try {
+    const { rawToken } = await issueOrderAccessToken(orderId);
+    await setOrderAccessCookie(orderId, rawToken);
+  } catch (tokenErr) {
+    console.error(`[Public Order Diagnostic] [${correlationId}] Failed to issue order access token:`, tokenErr);
+  }
+
   // 4. Trigger automated Order Created customer notification
   try {
     const { enqueueOrderCreatedNotification } = await import("@/lib/delivery/outbox");
@@ -276,6 +289,25 @@ export async function submitPublicUpiPayment(formData: FormData): Promise<Paymen
   }
 
   const cleanUtr = parsed.data.utr ? parsed.data.utr.trim() : "";
+
+  // Verify caller order access authorization in CONSUME_WRITE mode
+  const rawToken = formData.get("token");
+  const callerToken = typeof rawToken === "string" && rawToken.trim() ? rawToken.trim() : null;
+  const access = await verifyOrderAccess(parsed.data.orderId, "CONSUME_WRITE", {
+    rawToken: callerToken,
+  });
+
+  if (!access.authorized) {
+    return {
+      success: false,
+      error:
+        access.code === "TOKEN_WRITE_ALREADY_CONSUMED"
+          ? "A payment submission has already been registered for this order and is under review."
+          : access.code === "ORDER_INACTIVE"
+          ? "This order is inactive and cannot accept payments."
+          : "You are not authorized to submit payment for this order or the payment session has expired.",
+    };
+  }
 
   // Preserve Preview / Development mock mode: Require explicitly identified test references in mock mode when UTR is provided
   // Fail-closed in Production: Mock validation is strictly forbidden in production

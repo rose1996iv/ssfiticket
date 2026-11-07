@@ -41,6 +41,15 @@ export function buildPaymentRecoveryUrl(baseUrl: string, rawToken: string): stri
 }
 
 /**
+ * Builds the secure cookie-exchange URL for customer order resumption.
+ * Exchanges the token for an HttpOnly cookie and 303 redirects to /buy/order/[orderId] with no token in the URL.
+ */
+export function buildOrderAccessExchangeUrl(baseUrl: string, orderId: string, rawToken: string): string {
+  const cleanBase = baseUrl.trim().replace(/\/+$/, "");
+  return `${cleanBase}/api/order-access/exchange?orderId=${encodeURIComponent(orderId)}&token=${encodeURIComponent(rawToken.trim())}`;
+}
+
+/**
  * In-memory sliding window rate limiter for token lookups and submissions.
  * Protects against brute-force enumeration of tokens.
  */

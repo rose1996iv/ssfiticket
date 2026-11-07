@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  Lock,
   RefreshCw,
   Ticket,
   XCircle,
@@ -19,6 +20,7 @@ import { Logo } from "@/components/brand/Logo";
 import { CustomerPaymentJourney } from "@/components/payment/CustomerPaymentJourney";
 import { PaymentDetailsForm } from "@/components/payment/PaymentDetailsForm";
 import { WhatsAppTicketDeliveryButton } from "@/components/delivery/WhatsAppTicketDeliveryButton";
+import { verifyOrderAccess } from "@/lib/security/orderAccessToken";
 
 
 type OrderData = {
@@ -54,13 +56,85 @@ type OrderData = {
 
 type PageProps = {
   params: Promise<{ orderId: string }>;
-  searchParams: Promise<{ submitted?: string }>;
+  searchParams: Promise<{ submitted?: string; error?: string }>;
 };
 
 export default async function PublicOrderDetailPage({ params, searchParams }: PageProps) {
   await connection();
   const { orderId } = await params;
   const query = await searchParams;
+
+  // Authorization gate in READ mode (verifies staff, owning seller, or customer order cookie)
+  const access = await verifyOrderAccess(orderId, "READ");
+
+  if (!access.authorized) {
+    const isRateLimited = access.code === "RATE_LIMITED" || query.error === "rate_limited";
+    const isExpired = access.code === "TOKEN_EXPIRED" || query.error === "token_expired";
+    const isRevoked = access.code === "TOKEN_REVOKED" || query.error === "token_revoked";
+    const isInactive = access.code === "ORDER_INACTIVE";
+
+    return (
+      <main className="min-h-screen bg-[#fffaf7] pb-16 text-[#35110f]">
+        <header className="border-b border-[#e8d6c5] bg-[#7c1619] px-4 py-8 text-white sm:px-6">
+          <div className="mx-auto max-w-xl text-center">
+            <div className="mb-3 flex justify-center">
+              <Logo size="md" className="transition-transform hover:scale-105" />
+            </div>
+            <p className="text-xs font-bold tracking-[0.2em] text-[#f3ce75]">SSFI LUCKY DRAW</p>
+            <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Order Access Authorization</h1>
+          </div>
+        </header>
+
+        <div className="mx-auto mt-8 max-w-md space-y-6 px-4">
+          <div className="rounded-2xl border border-[#eadbcf] bg-white p-6 sm:p-8 shadow-sm text-center space-y-4">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-800">
+              <Lock size={28} />
+            </div>
+
+            <h2 className="text-lg font-bold text-[#7c1619]">
+              {isRateLimited
+                ? "Rate Limit Exceeded"
+                : isExpired
+                ? "Payment Link Expired"
+                : isRevoked
+                ? "Payment Link Revoked"
+                : isInactive
+                ? "Order Inactive"
+                : "Access Authorization Required"}
+            </h2>
+
+            <p className="text-xs text-[#705a54] leading-relaxed">
+              {isRateLimited
+                ? "Too many access attempts were recorded for this order. Please wait 15 minutes before retrying."
+                : isExpired
+                ? "The payment access link for this order has expired. Please contact SSFI support to request a fresh link."
+                : isRevoked
+                ? "The payment access link for this order has been revoked or superseded by a newer link."
+                : isInactive
+                ? "This order has been cancelled or voided and is no longer eligible for payment."
+                : "This order checkout session cannot be accessed by URL alone. If you completed a purchase, please use the original browser window or the secure payment link provided to you."}
+            </p>
+
+            <div className="pt-4 border-t border-[#f0e7df] space-y-2 text-xs text-[#705a54]">
+              <p>Need help accessing your order?</p>
+              <p className="font-semibold text-[#7c1619]">
+                Email: {manualUpiConfig.supportEmail}
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <Link
+                href="/buy"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#7c1619] hover:underline"
+              >
+                <span>Purchase Tickets</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const db = createSupabaseAdminClient();
   const { data, error } = await db

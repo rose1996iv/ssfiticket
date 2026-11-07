@@ -4,7 +4,8 @@ import { resolveEnvironmentAppUrl } from "../config/appUrl.ts";
 /**
  * Escapes HTML characters for safe template rendering.
  */
-function escapeHtml(str: string): string {
+function escapeHtml(str?: string | null): string {
+  if (!str) return "";
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -536,12 +537,15 @@ export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailP
   html: string;
   text: string;
 } {
-  const safeName = escapeHtml(payload.customerName.trim());
+  const safeName = escapeHtml(payload.customerName?.trim());
   const safeOrder = escapeHtml(payload.orderNumber);
   const safeCampaign = escapeHtml(payload.campaignName);
   const safeDate = escapeHtml(payload.paymentConfirmedAtIst);
   const safeUrl = escapeHtml(payload.orderAccessUrl);
-  const paymentMethod = escapeHtml(payload.paymentMethod);
+  const paymentMethod = escapeHtml(payload.paymentMethod || "UPI");
+  const confirmedAmount = (payload.confirmedAmountInr ?? 0).toLocaleString("en-IN");
+  const ticketQuantity = payload.ticketQuantity ?? 1;
+  const ticketLabel = `${ticketQuantity} Ticket${ticketQuantity > 1 ? "s" : ""}`;
   const supportEmail = escapeHtml(payload.supportEmail?.trim() || "Senthangstudents@gmail.com");
   const rawSupportPhone =
     payload.supportPhone && payload.supportPhone.trim() !== "" && payload.supportPhone !== "+91 98765 43210"
@@ -561,10 +565,10 @@ export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailP
     `Payment Details:`,
     `----------------------------------------`,
     `Order Reference: ${payload.orderNumber}`,
-    `Confirmed Amount: Rs. ${payload.confirmedAmountInr.toLocaleString("en-IN")}`,
-    `Payment Method: ${payload.paymentMethod}`,
-    `Confirmed At (IST): ${payload.paymentConfirmedAtIst}`,
-    `Ticket Quantity: ${payload.ticketQuantity} Ticket${payload.ticketQuantity > 1 ? "s" : ""}`,
+    `Confirmed Amount: Rs. ${confirmedAmount}`,
+    `Payment Method: ${paymentMethod}`,
+    `Confirmed At (IST): ${safeDate}`,
+    `Ticket Quantity: ${ticketLabel}`,
     payload.sellerAttribution ? `Attributed Seller: ${payload.sellerAttribution}` : null,
     ``,
     `Your official lucky draw tickets have been generated and issued. You can view, verify, and save your official tickets online:`,
@@ -616,7 +620,7 @@ export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailP
           </tr>
           <tr>
             <td style="color: #705a54; padding-bottom: 8px;">Confirmed Payment Amount:</td>
-            <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">₹${payload.confirmedAmountInr.toLocaleString("en-IN")}</td>
+            <td style="font-weight: bold; color: #7c1619; text-align: right; padding-bottom: 8px;">₹${confirmedAmount}</td>
           </tr>
           <tr>
             <td style="color: #705a54; padding-bottom: 8px;">Payment Method:</td>
@@ -628,7 +632,7 @@ export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailP
           </tr>
           <tr>
             <td style="color: #705a54;">Tickets Authorized:</td>
-            <td style="font-weight: bold; text-align: right;">${payload.ticketQuantity} Ticket${payload.ticketQuantity > 1 ? "s" : ""}</td>
+            <td style="font-weight: bold; text-align: right;">${ticketLabel}</td>
           </tr>
           ${
             payload.sellerAttribution

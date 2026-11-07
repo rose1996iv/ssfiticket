@@ -81,12 +81,12 @@ Every table and field in the SSFI Lucky Draw schema is classified into one of si
 | `public.roles` & `public.profile_roles` | — | `id`, `name`, `profile_id`, `role_id` | — | — | — | — |
 | `public.profiles` | — | `id`, `is_active`, `created_at`, `updated_at` | `full_name`, `email`, `phone` | — | Linked to `auth.users` | — |
 | `public.sellers` | `seller_code`, `is_active`, `is_qr_active` | `id`, `profile_id`, `payment_instructions`, `qr_updated_at`, `created_at` | `display_name` | `upi_id`, `account_name`, `qr_storage_path` | — | QR file in `seller-payment-qrs` |
-| `public.customers` | — | `id`, `created_at`, `updated_at` | `full_name`, `phone`, `email`, `city` | — | — | — |
-| `public.orders` | — | `id`, `order_number`, `campaign_id`, `customer_id`, `seller_id`, `snapshot_seller_id`, `snapshot_seller_code`, `quantity`, `unit_price_paise`, `total_amount_paise`, `currency`, `status`, `expires_at`, `created_at` | `snapshot_seller_name` | — | — | — |
-| `public.payments` | — | `id`, `order_id`, `amount_paise`, `currency`, `status`, `provider`, `seller_review_status`, `seller_reviewed_at`, `verified_by`, `verified_at`, `rejection_reason` | `seller_review_note` | `utr_reference`, `payer_name`, `provider_Generate_id`, `snapshot_upi_id`, `snapshot_account_name`, `snapshot_qr_storage_path` | — | — |
+| `public.customers` | — | `id`, `profile_id`, `created_at`, `updated_at` | `full_name`, `phone`, `whatsapp_number`, `email` | — | — | — |
+| `public.orders` | — | `id`, `order_number`, `campaign_id`, `customer_id`, `seller_id`, `snapshot_seller_id`, `snapshot_seller_code`, `quantity`, `unit_price_paise`, `total_amount_paise`, `status`, `snapshot_payment_instructions`, `snapshot_captured_at`, `created_at` | `snapshot_seller_display_name` | `snapshot_upi_id`, `snapshot_account_name`, `snapshot_qr_storage_path` | — | — |
+| `public.payments` | — | `id`, `order_id`, `amount_paise`, `currency`, `status`, `payment_method`, `seller_review_status`, `seller_reviewed_at`, `verified_by`, `verified_at`, `rejection_reason` | `seller_review_note` | `utr_reference`, `payer_name` | — | — |
 | `public.payment_screenshots` | — | `id`, `payment_id`, `content_type`, `file_size_bytes`, `uploaded_at` | — | — | — | `storage_path` (Image in `payment-screenshots`) |
-| `public.payment_access_tokens` | — | `id`, `order_id`, `payment_id`, `expires_at`, `used_at`, `revoked_at` | — | — | `token_hash` | — |
-| `public.tickets` | — | `id`, `ticket_number`, `campaign_id`, `order_id`, `customer_id`, `seller_id`, `status`, `issued_at`, `void_reason`, `reissued_from_ticket_id`, `reissued_to_ticket_id` | `buyer_full_name`, `buyer_phone`, `buyer_email`, `buyer_city`, `admin_notes` | — | — | — |
+| `public.payment_recovery_tokens` | — | `id`, `order_id`, `payment_id`, `expires_at`, `used_at`, `revoked_at` | — | — | `token_hash` | — |
+| `public.tickets` | — | `id`, `ticket_number`, `campaign_id`, `order_id`, `order_item_id`, `customer_id`, `seller_id`, `status`, `issued_at`, `void_reason`, `original_ticket_id`, `reissued_ticket_id`, `contact_updated_at`, `contact_updated_by`, `contact_update_reason` | `contact_full_name`, `contact_email`, `contact_whatsapp`, `admin_notes` | — | — | — |
 | `public.customer_email_outbox` | — | `id`, `idempotency_key`, `order_id`, `customer_id`, `event_type`, `status`, `attempt_count`, `provider`, `sent_at` | `recipient`, `subject`, `body_text`, `body_html`, `metadata` | — | — | — |
 | `public.audit_logs` | — | `id`, `actor_user_id`, `action`, `entity_type`, `entity_id`, `created_at` | `metadata.old_value`, `metadata.new_value`, `metadata.reason` (when containing customer contact info) | `metadata` (when containing UTR/UPI) | `metadata` (any tokens — redacted via `sanitizeAuditMetadata`) | — |
 | `auth.users` / `auth.*` | — | — | `email`, `phone`, `raw_user_meta_data` | — | `encrypted_password`, `recovery_token`, `confirmation_token`, `refresh_tokens`, `sessions`, `mfa_factors` | — |
@@ -162,8 +162,31 @@ flowchart LR
 9. **Snapshot Backup & Restoration:**
    - Before loading a sanitized snapshot into Preview (`jiyuiydzsfydjklosvvq`), the current Preview tables are backed up to a local timestamped JSON/SQL dump in an ignored backup folder so Preview can be rolled back in <60 seconds.
 
-10. **Retention Policy:**
-    - Mirrored Preview test datasets have a maximum retention of **14 days** (or until the end of the campaign testing cycle), after which Preview is reset to clean synthetic seed fixtures.
+10. **Retention Policy (14-Day Preview Snapshot Lifecycle):**
+    - Mirrored Preview test datasets have a strict maximum retention of **14 days**, after which Preview is reset to clean synthetic seed fixtures. Every imported Preview snapshot is logged in `public.system_settings` (`key = 'preview_data_mirror_metadata'`) recording:
+      - `snapshot_id` (UUID)
+      - `created_timestamp` (ISO-8601 UTC / IST)
+      - `expiry_timestamp` (`created_timestamp + 14 days`)
+      - `source_snapshot_version` (Git commit SHA & migration watermark)
+      - `import_result` (`SUCCESS` / `ROLLED_BACK` with row counts per table)
+      - `validation_result` (PII scrub check, UPI check, email live gate check)
+    - **Production data is NEVER automatically or manually deleted by any Preview retention job.**
+
+### 3.2 Owner-Specified Synchronization Matrix
+
+| Data Category | Required Preview Treatment | Implementation Control |
+|---|---|---|
+| **Campaign configuration** | **Preserve** | Direct read-only copy of `public.campaigns` (`name`, `public_id`, `status`, `starts_at`, `ends_at`, `draw_at`, `youtube_url`, `total_ticket_limit`). |
+| **Ticket pricing** | **Preserve** | Preserve `campaigns.ticket_price_paise` (`50000` paise = ₹500) and `orders.unit_price_paise`. |
+| **Prize configuration** | **Preserve** | Preserve `public.prizes` tiers, ranks, quantities, and value labels. |
+| **Seller records** | **Preserve approved fields; protect sensitive fields** | Preserve `seller_code`, `is_active`, `is_qr_active`; replace `display_name` with `[PREVIEW] Seller <seller_code>`, `upi_id` with `preview.<seller_code>@upi`, `account_name` with `[PREVIEW TEST] <seller_code> Account`, and `qr_storage_path` with synthetic watermarked QR. |
+| **Customer records** | **Preserve record coverage; mask PII** | Preserve 100% of `customers.id` rows; mask `full_name` (`[PREVIEW] Buyer #<hash>`), `phone` & `whatsapp_number` (`90000XXXXX`), and `email` (`buyer.<hash>@preview-test.invalid`). |
+| **Orders** | **Preserve relationships and operational fields** | Preserve `id`, `customer_id`, `seller_id`, `snapshot_seller_id`, `snapshot_seller_code`, `quantity`, `total_amount_paise`, `status`; prefix `order_number` with `PRV-`; mask `snapshot_upi_id`, `snapshot_account_name`, and `snapshot_qr_storage_path`. |
+| **Payments** | **Preserve approved status and relationships; sanitize references** | Preserve `id`, `order_id`, `status`, `amount_paise`, `seller_review_status`, `submitted_at`, `verified_at`; mask `utr_reference` (`PRVUTR*`) and `payer_name` (`[PREVIEW] Payer #<hash>`). |
+| **Tickets** | **Preserve relationships; separate Preview identity** | Preserve `id`, `order_id`, `customer_id`, `seller_id`, `status`, `issued_at`; prefix `ticket_number` with `PRV-` (`PRV-SSFI-XXXXX`) so Preview tickets never validate on Production `/verify`; mask `contact_full_name`, `contact_email`, `contact_whatsapp`. |
+| **Audit logs** | **Sanitize metadata** | Preserve `action`, `entity_type`, `entity_id`, `created_at`; scrub secrets via `sanitizeAuditMetadata()` and mask any embedded customer PII/UTR in `metadata`. |
+| **Payment screenshots** | **Synthetic watermarked replacements** | Never copy Production images; point `payment_screenshots.storage_path` to `preview-fixtures/synthetic-payment-proof.png`. |
+| **Authentication credentials** | **Exclude completely** | Never export or copy `auth.users`, passwords, session tokens, refresh tokens, MFA secrets, `payment_recovery_tokens.token_hash`, or service-role keys. |
 
 ---
 
@@ -216,17 +239,17 @@ To satisfy all PostgreSQL foreign-key constraints without disabling triggers or 
 | `sellers.account_name` | Tier 4 (Financial) | `"[PREVIEW TEST] " \|\| seller_code \|\| " Account"` | `[PREVIEW TEST] SELLER-001 Account` |
 | `sellers.qr_storage_path` | Tier 6 (Evidence) | Replace with synthetic watermarked QR path | `preview-fixtures/synthetic-seller-qr.png` |
 | `orders.order_number` | Tier 2 (Internal) | `"PRV-" \|\| order_number` | `PRV-SSFI-2026-00142` |
-| `orders.snapshot_seller_name` | Tier 3 (PII) | `"[PREVIEW] Seller " \|\| COALESCE(snapshot_seller_code, 'Assigned')` | `[PREVIEW] Seller SELLER-001` |
+| `orders.snapshot_seller_display_name` | Tier 3 (PII) | `"[PREVIEW] Seller " \|\| COALESCE(snapshot_seller_code, 'Assigned')` | `[PREVIEW] Seller SELLER-001` |
+| `orders.snapshot_upi_id` | Tier 4 (Financial) | `"preview.snapshot@upi"` | `preview.snapshot@upi` |
+| `orders.snapshot_account_name` | Tier 4 (Financial) | `"[PREVIEW TEST] Snapshot Seller Account"` | `[PREVIEW TEST] Snapshot Seller Account` |
+| `orders.snapshot_qr_storage_path` | Tier 6 (Evidence) | `"preview-fixtures/synthetic-seller-qr.png"` | `preview-fixtures/synthetic-seller-qr.png` |
 | `payments.utr_reference` | Tier 4 (Financial) | `"PRVUTR" \|\| LPAD((row_num)::text, 6, '0')` | `PRVUTR000142` |
 | `payments.payer_name` | Tier 4 (Financial) | `"[PREVIEW] Payer #" \|\| Upper(Left(md5(id::text), 6))` | `[PREVIEW] Payer #2C91B4` |
-| `payments.snapshot_upi_id` | Tier 4 (Financial) | `"preview.snapshot@upi"` | `preview.snapshot@upi` |
-| `payments.snapshot_account_name` | Tier 4 (Financial) | `"[PREVIEW TEST] Snapshot Seller Account"` | `[PREVIEW TEST] Snapshot Seller Account` |
-| `payments.snapshot_qr_storage_path` | Tier 6 (Evidence) | `"preview-fixtures/synthetic-seller-qr.png"` | `preview-fixtures/synthetic-seller-qr.png` |
 | `payment_screenshots.storage_path` | Tier 6 (Evidence) | `"preview-fixtures/synthetic-payment-proof.png"` | `preview-fixtures/synthetic-payment-proof.png` |
 | `tickets.ticket_number` | Tier 2 (Internal) | `"PRV-" \|\| ticket_number` | `PRV-SSFI-00289` |
-| `tickets.buyer_full_name` | Tier 3 (PII) | Masked to match `customers.full_name` (or `"[PREVIEW OVERRIDE] Buyer"`) | `[PREVIEW OVERRIDE] Buyer #8A3F19` |
-| `tickets.buyer_phone` | Tier 3 (PII) | Masked to `90000XXXXX` | `9000000142` |
-| `tickets.buyer_email` | Tier 3 (PII) | Masked to `*.@preview-test.invalid` | `override.8a3f19c2@preview-test.invalid` |
+| `tickets.contact_full_name` | Tier 3 (PII) | Masked to match `customers.full_name` (or `"[PREVIEW OVERRIDE] Buyer"`) | `[PREVIEW OVERRIDE] Buyer #8A3F19` |
+| `tickets.contact_whatsapp` | Tier 3 (PII) | Masked to `90000XXXXX` | `9000000142` |
+| `tickets.contact_email` | Tier 3 (PII) | Masked to `*.@preview-test.invalid` | `override.8a3f19c2@preview-test.invalid` |
 | `audit_logs.metadata` | Tier 3/4/5 | Pass through `sanitizeAuditMetadata()` + replace PII/UTR fields | Secrets `[REDACTED]`, PII masked |
 
 ### 5.3 Validation & Rollback Procedures

@@ -35,9 +35,9 @@ type PaymentRow = {
     total_amount_paise: number;
     seller_id?: string | null;
     snapshot_seller_id?: string | null;
-    payment_destination_type?: string | null;
-    payment_destination_upi_id?: string | null;
-    payment_destination_account_name?: string | null;
+    snapshot_upi_id?: string | null;
+    snapshot_account_name?: string | null;
+    snapshot_qr_storage_path?: string | null;
     snapshot_seller_display_name?: string | null;
     snapshot_seller_code?: string | null;
     customers: {
@@ -152,7 +152,7 @@ export default async function PaymentsPage({
   let query = db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, payer_name, submitted_at, created_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, seller_id, snapshot_seller_id, payment_destination_type, payment_destination_upi_id, payment_destination_account_name, snapshot_seller_display_name, snapshot_seller_code, customers(id, full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(id, display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(id, display_name, seller_code))",
+      "id, status, amount_paise, utr_reference, payer_name, submitted_at, created_at, seller_review_status, orders(id, order_number, quantity, total_amount_paise, seller_id, snapshot_seller_id, snapshot_upi_id, snapshot_account_name, snapshot_qr_storage_path, snapshot_seller_display_name, snapshot_seller_code, customers(id, full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(id, display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(id, display_name, seller_code))",
       { count: "exact" }
     );
 
@@ -504,12 +504,12 @@ export default async function PaymentsPage({
                             <span className="inline-block rounded-md bg-[#fceeee] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#7c1619]">
                               {sellerAttribution.seller_code}
                             </span>
-                            {payment.orders?.payment_destination_upi_id && (
+                            {payment.orders?.snapshot_upi_id && (
                               <span
                                 className="max-w-[140px] truncate font-mono text-[10px] text-[#705a54]"
-                                title={payment.orders.payment_destination_upi_id}
+                                title={payment.orders.snapshot_upi_id}
                               >
-                                {payment.orders.payment_destination_upi_id}
+                                {payment.orders.snapshot_upi_id}
                               </span>
                             )}
                           </div>

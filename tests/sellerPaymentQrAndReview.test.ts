@@ -701,5 +701,15 @@ test("Pending Payments PGRST201 Disambiguation: Snapshot Seller & Operational Se
     !adminPaymentDetailSrc.includes("orders(id, order_number, quantity, customers(full_name, phone, whatsapp_number), sellers("),
     "Payment Detail page must never use bare sellers( inside orders"
   );
+
+  // 3. Both pages must select canonical snapshot_upi_id / snapshot_account_name columns (never non-existent payment_destination_*)
+  assert.ok(
+    adminPaymentsSrc.includes("snapshot_upi_id") && !adminPaymentsSrc.includes("payment_destination_"),
+    "Admin Payments page must use canonical snapshot_upi_id column and never payment_destination_*"
+  );
+  assert.ok(
+    adminPaymentDetailSrc.includes("snapshot_upi_id") && !adminPaymentDetailSrc.includes("payment_destination_"),
+    "Payment Detail page must use canonical snapshot_upi_id column and never payment_destination_*"
+  );
 });
 

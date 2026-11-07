@@ -33,9 +33,9 @@ type PaymentDetail = {
         id: string;
         order_number: string;
         quantity: number;
-        payment_destination_type?: string | null;
-        payment_destination_upi_id?: string | null;
-        payment_destination_account_name?: string | null;
+        snapshot_upi_id?: string | null;
+        snapshot_account_name?: string | null;
+        snapshot_qr_storage_path?: string | null;
         snapshot_seller_display_name?: string | null;
         snapshot_seller_code?: string | null;
         customers:
@@ -55,9 +55,9 @@ type PaymentDetail = {
         id: string;
         order_number: string;
         quantity: number;
-        payment_destination_type?: string | null;
-        payment_destination_upi_id?: string | null;
-        payment_destination_account_name?: string | null;
+        snapshot_upi_id?: string | null;
+        snapshot_account_name?: string | null;
+        snapshot_qr_storage_path?: string | null;
         snapshot_seller_display_name?: string | null;
         snapshot_seller_code?: string | null;
         customers:
@@ -94,7 +94,7 @@ export default async function PaymentDetailPage({
   const { data } = await db
     .from("payments")
     .select(
-      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, seller_review_status, seller_reviewed_at, seller_review_note, payment_screenshots(uploaded_at, file_size_bytes, content_type), orders(id, order_number, quantity, payment_destination_type, payment_destination_upi_id, payment_destination_account_name, snapshot_seller_display_name, snapshot_seller_code, customers(full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(display_name, seller_code))"
+      "id, status, amount_paise, utr_reference, payer_name, submitted_at, rejection_reason, seller_review_status, seller_reviewed_at, seller_review_note, payment_screenshots(uploaded_at, file_size_bytes, content_type), orders(id, order_number, quantity, snapshot_upi_id, snapshot_account_name, snapshot_qr_storage_path, snapshot_seller_display_name, snapshot_seller_code, customers(full_name, phone, whatsapp_number), sellers:sellers!orders_snapshot_seller_id_fkey(display_name, seller_code), operational_seller:sellers!orders_seller_id_fkey(display_name, seller_code))"
     )
     .eq("id", paymentId)
     .maybeSingle();
@@ -229,9 +229,9 @@ export default async function PaymentDetailPage({
             <p className="text-xs text-[#705a54]">
               Payment recipient: {effectiveSeller ? `${effectiveSeller.display_name} (${effectiveSeller.seller_code})` : "Direct sale"}
             </p>
-            {order?.payment_destination_upi_id && (
+            {order?.snapshot_upi_id && (
               <p className="font-mono text-[11px] text-[#705a54]">
-                UPI: {order.payment_destination_upi_id} {order.payment_destination_account_name ? `(${order.payment_destination_account_name})` : ""}
+                UPI: {order.snapshot_upi_id} {order.snapshot_account_name ? `(${order.snapshot_account_name})` : ""}
               </p>
             )}
             {operationalSeller && seller && operationalSeller.seller_code !== seller.seller_code && (
@@ -347,7 +347,7 @@ export default async function PaymentDetailPage({
             viewerRole="STAFF"
             initialNotes={collabRes.notes}
           />
-          <OrderAuditTimelineCard events={auditRes.events} />
+          <OrderAuditTimelineCard events={auditRes.events} orderId={order.id} />
         </>
       )}
     </div>

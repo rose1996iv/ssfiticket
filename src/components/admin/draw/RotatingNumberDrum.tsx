@@ -23,7 +23,6 @@ import {
   EligibilitySnapshot,
   DrawResultRecord,
   DrawApproval,
-  RandomnessEvidence,
 } from "@/lib/draw/types";
 import { executePrizeDraw } from "@/server/actions/luckyDraw";
 
@@ -42,7 +41,7 @@ interface RotatingNumberDrumProps {
   };
   onDrawCompleted: (result: DrawResultRecord) => void;
   onRequestApproval?: () => void;
-  onVerifyEvidence?: (evidence: RandomnessEvidence) => void;
+  onVerifyEvidence?: (result: DrawResultRecord) => void;
   onNotifyWinner?: (result: DrawResultRecord) => void;
 }
 
@@ -656,25 +655,7 @@ export function RotatingNumberDrum({
               {onVerifyEvidence && (
                 <button
                   type="button"
-                  onClick={() => {
-                    const mockEvidence: RandomnessEvidence = {
-                      id: activeResult.id,
-                      draw_id: activeResult.draw_id,
-                      prize_id: activeResult.prize_id,
-                      snapshot_id: activeResult.snapshot_id,
-                      algorithm_version: "SSFI_CSPRNG_V1",
-                      server_seed_commitment: activeResult.seed_commitment,
-                      server_seed_revealed: activeResult.seed_revealed,
-                      client_entropy: null,
-                      combined_seed: activeResult.combined_seed,
-                      selected_index: activeResult.selection_index,
-                      total_candidates: snapshot?.total_eligible_count || 1000,
-                      winning_ticket_number: activeResult.ticket_number,
-                      verification_status: "VERIFIED",
-                      created_at: activeResult.created_at,
-                    };
-                    onVerifyEvidence(mockEvidence);
-                  }}
+                  onClick={() => onVerifyEvidence(activeResult)}
                   className="px-3.5 py-2 rounded-xl text-xs font-bold border border-[#eadbcf] text-[#5c3e34] bg-[#fffaf7] hover:bg-[#f0e7df] flex items-center gap-1.5 transition-colors"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-[#7c1619]" />

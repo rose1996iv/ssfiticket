@@ -48,6 +48,20 @@ const DrawExecutionSchema = z.object({
   clientEntropy: z.string().trim().max(500).optional(),
 });
 
+const VerifyEvidenceInputSchema = z.union([
+  UuidSchema,
+  z
+    .object({
+      drawResultId: UuidSchema.optional(),
+      evidenceId: UuidSchema.optional(),
+    })
+    .refine((data) => data.drawResultId || data.evidenceId, {
+      message: "Either drawResultId or evidenceId must be provided.",
+    }),
+]);
+
+export type VerifyDrawEvidenceInput = z.infer<typeof VerifyEvidenceInputSchema>;
+
 // Helper response type
 export type ActionResponse<T = unknown> = {
   success: boolean;
@@ -252,6 +266,8 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
           .eq("draw_id", drawSession.id)
           .eq("prize_id", nextPrize.id)
           .eq("snapshot_hash", activeSnapshot.snapshot_hash)
+          .order("requested_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (app) {
@@ -838,6 +854,8 @@ export async function executePrizeDraw(input: {
         .eq("prize_id", validated.prizeId)
         .eq("snapshot_hash", snapshot.snapshot_hash)
         .eq("status", "APPROVED")
+        .order("requested_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (!approval || approval.initiator_id === approval.approver_id) {
@@ -970,24 +988,121 @@ export async function executePrizeDraw(input: {
 // 9. VERIFY DRAW EVIDENCE
 // ============================================================================
 
-export async function verifyDrawEvidenceAction(evidenceId: string): Promise<ActionResponse<{
+export async function verifyDrawEvidenceAction(
+  input: VerifyDrawEvidenceInput
+): Promise<ActionResponse<{
   isValid: boolean;
   evidence: RandomnessEvidence;
   details: string[];
+  drawResultId?: string;
 }>> {
   try {
+    await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
+    const parsed = VerifyEvidenceInputSchema.parse(input);
     const admin = createSupabaseAdminClient();
 
-    const { data: evidence, error: evErr } = await admin
-      .from("draw_randomness_evidence")
-      .select(`
-        *,
-        snapshot:snapshot_id (snapshot_hash)
-      `)
-      .eq("id", evidenceId)
-      .single();
+    let targetResultId: string | undefined;
+    let targetEvidenceId: string | undefined;
 
-    if (evErr || !evidence) {
+    if (typeof parsed === "string") {
+      targetEvidenceId = parsed;
+    } else {
+      targetResultId = parsed.drawResultId;
+      targetEvidenceId = parsed.evidenceId;
+    }
+
+    let evidence: (RandomnessEvidence & { snapshot?: { snapshot_hash?: string } }) | null = null;
+    let verifiedResultId: string | undefined;
+
+    if (targetResultId) {
+      // 1. Authoritative lookup of Draw Result by drawResultId
+      const { data: drawResult, error: resErr } = await admin
+        .from("draw_results")
+        .select(`
+          id,
+          draw_id,
+          prize_id,
+          ticket_id,
+          snapshot_id,
+          selection_index,
+          seed_commitment,
+          seed_revealed,
+          combined_seed
+        `)
+        .eq("id", targetResultId)
+        .maybeSingle();
+
+      if (resErr) {
+        return { success: false, error: resErr.message };
+      }
+      if (!drawResult) {
+        return { success: false, error: "Draw result not found." };
+      }
+      verifiedResultId = drawResult.id;
+
+      // 2. Resolve evidence record through authoritative (draw_id, prize_id) relationship
+      const { data: evRow, error: evErr } = await admin
+        .from("draw_randomness_evidence")
+        .select(`
+          *,
+          snapshot:snapshot_id (snapshot_hash)
+        `)
+        .eq("draw_id", drawResult.draw_id)
+        .eq("prize_id", drawResult.prize_id)
+        .maybeSingle();
+
+      if (evErr) {
+        return { success: false, error: evErr.message };
+      }
+      if (!evRow) {
+        return { success: false, error: "Randomness evidence not found for this draw result." };
+      }
+
+      // 3. Prevent cross-result evidence substitution if evidenceId was also supplied
+      if (targetEvidenceId && evRow.id !== targetEvidenceId) {
+        return {
+          success: false,
+          error: "Cross-result evidence substitution detected: supplied evidence does not match draw result.",
+        };
+      }
+
+      // 4. Server-side validation of field consistency between draw result and evidence record
+      if (
+        evRow.selected_index !== drawResult.selection_index ||
+        evRow.server_seed_commitment !== drawResult.seed_commitment ||
+        evRow.server_seed_revealed !== drawResult.seed_revealed ||
+        evRow.combined_seed !== drawResult.combined_seed ||
+        evRow.snapshot_id !== drawResult.snapshot_id
+      ) {
+        return {
+          success: false,
+          error: "Tampered or inconsistent evidence detected for draw result.",
+        };
+      }
+
+      evidence = evRow as unknown as (RandomnessEvidence & { snapshot?: { snapshot_hash?: string } });
+    } else if (targetEvidenceId) {
+      // Direct lookup by evidenceId
+      const { data: evRow, error: evErr } = await admin
+        .from("draw_randomness_evidence")
+        .select(`
+          *,
+          snapshot:snapshot_id (snapshot_hash)
+        `)
+        .eq("id", targetEvidenceId)
+        .maybeSingle();
+
+      if (evErr) {
+        return { success: false, error: evErr.message };
+      }
+      if (!evRow) {
+        return { success: false, error: "Randomness evidence not found." };
+      }
+
+      evidence = evRow as unknown as (RandomnessEvidence & { snapshot?: { snapshot_hash?: string } });
+    }
+
+    if (!evidence) {
       return { success: false, error: "Randomness evidence not found." };
     }
 
@@ -1011,6 +1126,7 @@ export async function verifyDrawEvidenceAction(evidenceId: string): Promise<Acti
         isValid: verification.isValid,
         evidence: evidence as RandomnessEvidence,
         details: verification.details,
+        drawResultId: verifiedResultId,
       },
     };
   } catch (err) {

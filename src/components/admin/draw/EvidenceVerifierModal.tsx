@@ -5,12 +5,13 @@ import { CheckCircle2, XCircle, ShieldCheck, Copy, Check, X } from "lucide-react
 import { verifyDrawEvidenceAction } from "@/server/actions/luckyDraw";
 
 type Props = {
-  evidenceId: string;
+  drawResultId?: string;
+  evidenceId?: string;
   isOpen: boolean;
   onClose: () => void;
 };
 
-export function EvidenceVerifierModal({ evidenceId, isOpen, onClose }: Props) {
+export function EvidenceVerifierModal({ drawResultId, evidenceId, isOpen, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [result, setResult] = useState<any | null>(null);
@@ -21,7 +22,7 @@ export function EvidenceVerifierModal({ evidenceId, isOpen, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await verifyDrawEvidenceAction(evidenceId);
+      const res = await verifyDrawEvidenceAction({ drawResultId, evidenceId });
       if (res.success && res.data) {
         setResult(res.data);
       } else {

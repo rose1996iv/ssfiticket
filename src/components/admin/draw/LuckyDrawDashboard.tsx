@@ -12,7 +12,6 @@ import {
 import {
   DrawOverviewData,
   DrawResultRecord,
-  RandomnessEvidence,
 } from "@/lib/draw/types";
 import { RotatingNumberDrum } from "./RotatingNumberDrum";
 import { EligibilityManager } from "./EligibilityManager";
@@ -34,7 +33,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Modals state
-  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+  const [selectedResultIdForEvidence, setSelectedResultIdForEvidence] = useState<string | null>(null);
   const [isEvidenceModalOpen, setIsEvidenceModalOpen] = useState(false);
   const [selectedResultIdForNotify, setSelectedResultIdForNotify] = useState<string | null>(null);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
@@ -72,8 +71,8 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
     router.refresh();
   };
 
-  const handleVerifyEvidence = (evidence: RandomnessEvidence) => {
-    setSelectedEvidenceId(evidence.id);
+  const handleVerifyEvidence = (result: DrawResultRecord) => {
+    setSelectedResultIdForEvidence(result.id);
     setIsEvidenceModalOpen(true);
   };
 
@@ -324,13 +323,13 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
       {/* ==================================================================== */}
 
       {/* Cryptographic Evidence Verifier Modal */}
-      {selectedEvidenceId && (
+      {selectedResultIdForEvidence && (
         <EvidenceVerifierModal
-          evidenceId={selectedEvidenceId}
+          drawResultId={selectedResultIdForEvidence}
           isOpen={isEvidenceModalOpen}
           onClose={() => {
             setIsEvidenceModalOpen(false);
-            setSelectedEvidenceId(null);
+            setSelectedResultIdForEvidence(null);
           }}
         />
       )}

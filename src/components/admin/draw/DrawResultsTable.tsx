@@ -13,12 +13,12 @@ import {
   CheckCircle2,
   FileCheck,
 } from "lucide-react";
-import { DrawResultRecord, RandomnessEvidence, PrizeItem } from "@/lib/draw/types";
+import { DrawResultRecord, PrizeItem } from "@/lib/draw/types";
 
 interface DrawResultsTableProps {
   results: DrawResultRecord[];
   prizes: PrizeItem[];
-  onVerifyEvidence: (evidence: RandomnessEvidence) => void;
+  onVerifyEvidence: (result: DrawResultRecord) => void;
   onNotifyWinner: (result: DrawResultRecord) => void;
 }
 
@@ -274,25 +274,7 @@ export function DrawResultsTable({
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => {
-                              const evidence: RandomnessEvidence = {
-                                id: r.id,
-                                draw_id: r.draw_id,
-                                prize_id: r.prize_id,
-                                snapshot_id: r.snapshot_id,
-                                algorithm_version: "SSFI_CSPRNG_V1",
-                                server_seed_commitment: r.seed_commitment,
-                                server_seed_revealed: r.seed_revealed,
-                                client_entropy: null,
-                                combined_seed: r.combined_seed,
-                                selected_index: r.selection_index,
-                                total_candidates: 1000,
-                                winning_ticket_number: r.ticket_number,
-                                verification_status: "VERIFIED",
-                                created_at: r.created_at,
-                              };
-                              onVerifyEvidence(evidence);
-                            }}
+                            onClick={() => onVerifyEvidence(r)}
                             className="px-2.5 py-1.5 rounded-lg border border-[#eadbcf] text-[#5c3e34] bg-[#fffaf7] hover:bg-[#f0e7df] font-semibold flex items-center gap-1 transition-colors"
                             title="Verify mathematical randomness evidence"
                           >

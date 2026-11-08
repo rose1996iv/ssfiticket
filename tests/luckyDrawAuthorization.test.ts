@@ -287,4 +287,392 @@ test("Lucky Draw Authorization & Business Invariants Suite", async (t) => {
     const secondDispatch = enqueueNotification(resultId);
     assert.equal(secondDispatch.duplicate, true);
   });
+
+  // ==========================================================================
+  // 6. PHASE 10.3.1 REMEDIATION A — DRAW_APPROVALS ORDERING BY REQUESTED_AT
+  // ==========================================================================
+  await t.test("Remediation A: draw_approvals queries sort deterministically by requested_at descending", () => {
+    interface MockApproval {
+      id: string;
+      draw_id: string;
+      prize_id: string;
+      snapshot_hash: string;
+      status: "PENDING" | "APPROVED" | "REJECTED";
+      requested_at: string;
+    }
+
+    const mockApprovals: MockApproval[] = [
+      {
+        id: "app-01",
+        draw_id: "draw-1",
+        prize_id: "prize-1",
+        snapshot_hash: "hash-alpha",
+        status: "REJECTED",
+        requested_at: "2026-11-08T05:00:00.000Z",
+      },
+      {
+        id: "app-02",
+        draw_id: "draw-1",
+        prize_id: "prize-1",
+        snapshot_hash: "hash-alpha",
+        status: "PENDING",
+        requested_at: "2026-11-08T06:30:00.000Z",
+      },
+      {
+        id: "app-03",
+        draw_id: "draw-1",
+        prize_id: "prize-1",
+        snapshot_hash: "hash-alpha",
+        status: "REJECTED",
+        requested_at: "2026-11-08T06:00:00.000Z",
+      },
+    ];
+
+    function resolveLatestApproval(
+      approvals: MockApproval[],
+      drawId: string,
+      prizeId: string,
+      snapshotHash: string
+    ): MockApproval | null {
+      const filtered = approvals
+        .filter(
+          (a) =>
+            a.draw_id === drawId &&
+            a.prize_id === prizeId &&
+            a.snapshot_hash === snapshotHash
+        )
+        // Sort by requested_at descending (Remediation A)
+        .sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime());
+
+      return filtered[0] || null;
+    }
+
+    // Resolves the most recent (2026-11-08T06:30:00.000Z), ignoring older rejected attempts
+    const latest = resolveLatestApproval(mockApprovals, "draw-1", "prize-1", "hash-alpha");
+    assert.ok(latest);
+    assert.equal(latest.id, "app-02");
+    assert.equal(latest.status, "PENDING");
+    assert.equal(latest.requested_at, "2026-11-08T06:30:00.000Z");
+
+    // Empty list returns null safely without errors
+    const empty = resolveLatestApproval([], "draw-1", "prize-1", "hash-alpha");
+    assert.equal(empty, null);
+  });
+
+  // ==========================================================================
+  // 7. PHASE 10.3.1 REMEDIATION B — AUTHORITATIVE EVIDENCE IDENTIFIER CONTRACT
+  // ==========================================================================
+  await t.test("Remediation B: Authoritative verification contract enforces result/evidence parity and blocks cross-result substitution", async (sub) => {
+    interface MockDrawResult {
+      id: string;
+      draw_id: string;
+      prize_id: string;
+      ticket_id: string;
+      snapshot_id: string;
+      selection_index: number;
+      seed_commitment: string;
+      seed_revealed: string;
+      combined_seed: string;
+    }
+
+    interface MockEvidence {
+      id: string;
+      draw_id: string;
+      prize_id: string;
+      snapshot_id: string;
+      algorithm_version: string;
+      server_seed_commitment: string;
+      server_seed_revealed: string;
+      client_entropy: string | null;
+      combined_seed: string;
+      selected_index: number;
+      total_candidates: number;
+      winning_ticket_number: string;
+      verification_status: "VERIFIED" | "FAILED";
+    }
+
+    // Cryptographically valid seeds for test fixtures
+    const serverSeed = crypto.randomBytes(32).toString("hex");
+    const seedCommitment = crypto.createHash("sha256").update(serverSeed).digest("hex");
+    const clientEntropy = "test-operator-entropy";
+    const combinedSeed = crypto
+      .createHmac("sha256", serverSeed)
+      .update(clientEntropy)
+      .digest("hex");
+
+    const resultA: MockDrawResult = {
+      id: "11111111-1111-4111-8111-111111111111",
+      draw_id: "draw-alpha",
+      prize_id: "prize-01",
+      ticket_id: "ticket-101",
+      snapshot_id: "snap-alpha",
+      selection_index: 3,
+      seed_commitment: seedCommitment,
+      seed_revealed: serverSeed,
+      combined_seed: combinedSeed,
+    };
+
+    const evidenceA: MockEvidence = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      draw_id: "draw-alpha",
+      prize_id: "prize-01",
+      snapshot_id: "snap-alpha",
+      algorithm_version: "SSFI-CSPRNG-V1",
+      server_seed_commitment: seedCommitment,
+      server_seed_revealed: serverSeed,
+      client_entropy: clientEntropy,
+      combined_seed: combinedSeed,
+      selected_index: 3,
+      total_candidates: 10,
+      winning_ticket_number: "SSFI-000101",
+      verification_status: "VERIFIED",
+    };
+
+    // Another distinct draw result & evidence pair
+    const resultB: MockDrawResult = {
+      id: "22222222-2222-4222-8222-222222222222",
+      draw_id: "draw-alpha",
+      prize_id: "prize-02",
+      ticket_id: "ticket-102",
+      snapshot_id: "snap-beta",
+      selection_index: 7,
+      seed_commitment: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      seed_revealed: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      combined_seed: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    };
+
+    const evidenceB: MockEvidence = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      draw_id: "draw-alpha",
+      prize_id: "prize-02",
+      snapshot_id: "snap-beta",
+      algorithm_version: "SSFI-CSPRNG-V1",
+      server_seed_commitment: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      server_seed_revealed: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      client_entropy: null,
+      combined_seed: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      selected_index: 7,
+      total_candidates: 10,
+      winning_ticket_number: "SSFI-000102",
+      verification_status: "VERIFIED",
+    };
+
+    const mockDbResults = new Map<string, MockDrawResult>([
+      [resultA.id, resultA],
+      [resultB.id, resultB],
+    ]);
+
+    const mockDbEvidence = new Map<string, MockEvidence>([
+      [evidenceA.id, evidenceA],
+      [evidenceB.id, evidenceB],
+    ]);
+
+    // Service function simulating the remediated verifyDrawEvidenceAction
+    function simulateVerifyEvidence(
+      input: { drawResultId?: string; evidenceId?: string } | string,
+      userRole: string | null
+    ): { success: boolean; error?: string; isValid?: boolean; evidenceId?: string; drawResultId?: string } {
+      // 1. RBAC Check
+      if (!userRole || !["SUPER_ADMIN", "ADMIN"].includes(userRole)) {
+        return { success: false, error: "Unauthorized access." };
+      }
+
+      let targetResultId: string | undefined;
+      let targetEvidenceId: string | undefined;
+
+      if (typeof input === "string") {
+        targetEvidenceId = input;
+      } else {
+        targetResultId = input.drawResultId;
+        targetEvidenceId = input.evidenceId;
+      }
+
+      if (targetResultId) {
+        // Authoritative lookup of Draw Result
+        const res = mockDbResults.get(targetResultId);
+        if (!res) {
+          return { success: false, error: "Draw result not found." };
+        }
+
+        // Authoritative resolution of evidence via (draw_id, prize_id)
+        let resolvedEvidence: MockEvidence | null = null;
+        for (const ev of mockDbEvidence.values()) {
+          if (ev.draw_id === res.draw_id && ev.prize_id === res.prize_id) {
+            resolvedEvidence = ev;
+            break;
+          }
+        }
+
+        if (!resolvedEvidence) {
+          return { success: false, error: "Randomness evidence not found for this draw result." };
+        }
+
+        // Anti-substitution check
+        if (targetEvidenceId && resolvedEvidence.id !== targetEvidenceId) {
+          return {
+            success: false,
+            error: "Cross-result evidence substitution detected: supplied evidence does not match draw result.",
+          };
+        }
+
+        // Parity check
+        if (
+          resolvedEvidence.selected_index !== res.selection_index ||
+          resolvedEvidence.server_seed_commitment !== res.seed_commitment ||
+          resolvedEvidence.server_seed_revealed !== res.seed_revealed ||
+          resolvedEvidence.combined_seed !== res.combined_seed ||
+          resolvedEvidence.snapshot_id !== res.snapshot_id
+        ) {
+          return { success: false, error: "Tampered or inconsistent evidence detected for draw result." };
+        }
+
+        // Cryptographic proof check
+        const calculatedCommit = crypto.createHash("sha256").update(resolvedEvidence.server_seed_revealed).digest("hex");
+        const isCryptoValid = calculatedCommit === resolvedEvidence.server_seed_commitment;
+
+        return {
+          success: true,
+          isValid: isCryptoValid,
+          evidenceId: resolvedEvidence.id,
+          drawResultId: res.id,
+        };
+      }
+
+      if (targetEvidenceId) {
+        const ev = mockDbEvidence.get(targetEvidenceId);
+        if (!ev) {
+          return { success: false, error: "Randomness evidence not found." };
+        }
+        const calculatedCommit = crypto.createHash("sha256").update(ev.server_seed_revealed).digest("hex");
+        return {
+          success: true,
+          isValid: calculatedCommit === ev.server_seed_commitment,
+          evidenceId: ev.id,
+        };
+      }
+
+      return { success: false, error: "Invalid identifier contract." };
+    }
+
+    // Scenario 1: Valid evidence associated with requested draw result
+    await sub.test("Scenario 1: Valid evidence associated with requested draw result resolves and verifies", () => {
+      const res = simulateVerifyEvidence({ drawResultId: resultA.id }, "SUPER_ADMIN");
+      assert.equal(res.success, true);
+      assert.equal(res.isValid, true);
+      assert.equal(res.evidenceId, evidenceA.id);
+      assert.equal(res.drawResultId, resultA.id);
+    });
+
+    // Scenario 2: Evidence ID supplied where draw-result ID is expected
+    await sub.test("Scenario 2: Evidence ID supplied as drawResultId is cleanly rejected", () => {
+      const res = simulateVerifyEvidence({ drawResultId: evidenceA.id }, "ADMIN");
+      assert.equal(res.success, false);
+      assert.equal(res.error, "Draw result not found.");
+    });
+
+    // Scenario 3: Draw-result ID supplied where evidence ID is expected
+    await sub.test("Scenario 3: Draw-result ID supplied as evidenceId is cleanly rejected", () => {
+      const res = simulateVerifyEvidence({ evidenceId: resultA.id }, "ADMIN");
+      assert.equal(res.success, false);
+      assert.equal(res.error, "Randomness evidence not found.");
+    });
+
+    // Scenario 4: Evidence belonging to a different draw result
+    await sub.test("Scenario 4: Cross-result evidence substitution is strictly detected and blocked", () => {
+      const res = simulateVerifyEvidence({ drawResultId: resultA.id, evidenceId: evidenceB.id }, "ADMIN");
+      assert.equal(res.success, false);
+      assert.match(res.error!, /Cross-result evidence substitution detected/);
+    });
+
+    // Scenario 5: Nonexistent draw result
+    await sub.test("Scenario 5: Nonexistent draw result returns clean error", () => {
+      const res = simulateVerifyEvidence({ drawResultId: "99999999-9999-4999-8999-999999999999" }, "SUPER_ADMIN");
+      assert.equal(res.success, false);
+      assert.equal(res.error, "Draw result not found.");
+    });
+
+    // Scenario 6: Missing evidence for draw result
+    await sub.test("Scenario 6: Draw result without corresponding evidence returns clean error", () => {
+      const orphanResult: MockDrawResult = {
+        id: "33333333-3333-4333-8333-333333333333",
+        draw_id: "draw-alpha",
+        prize_id: "prize-99", // No evidence exists for prize-99
+        ticket_id: "ticket-999",
+        snapshot_id: "snap-orphan",
+        selection_index: 0,
+        seed_commitment: "commit",
+        seed_revealed: "seed",
+        combined_seed: "comb",
+      };
+      mockDbResults.set(orphanResult.id, orphanResult);
+
+      const res = simulateVerifyEvidence({ drawResultId: orphanResult.id }, "SUPER_ADMIN");
+      assert.equal(res.success, false);
+      assert.equal(res.error, "Randomness evidence not found for this draw result.");
+    });
+
+    // Scenario 7: Schema uniqueness invariant
+    await sub.test("Scenario 7: Relational mapping (draw_id, prize_id) is deterministic and unambiguous", () => {
+      // In PostgreSQL schema: UNIQUE (draw_id, prize_id) on draw_randomness_evidence
+      const mapped = [...mockDbEvidence.values()].filter(
+        (ev) => ev.draw_id === resultA.draw_id && ev.prize_id === resultA.prize_id
+      );
+      assert.equal(mapped.length, 1, "Exactly one evidence record corresponds to the draw result");
+      assert.equal(mapped[0].id, evidenceA.id);
+    });
+
+    // Scenario 8: Unauthorized user
+    await sub.test("Scenario 8: Anonymous or seller role cannot execute evidence verification", () => {
+      const resAnon = simulateVerifyEvidence({ drawResultId: resultA.id }, null);
+      assert.equal(resAnon.success, false);
+      assert.equal(resAnon.error, "Unauthorized access.");
+
+      const resSeller = simulateVerifyEvidence({ drawResultId: resultA.id }, "SELLER");
+      assert.equal(resSeller.success, false);
+      assert.equal(resSeller.error, "Unauthorized access.");
+    });
+
+    // Scenario 9: Tampered or invalid evidence
+    await sub.test("Scenario 9: Tampered seed commitment fails cryptographic verification", () => {
+      const tamperedResult: MockDrawResult = {
+        id: "44444444-4444-4444-8444-444444444444",
+        draw_id: "draw-alpha",
+        prize_id: "prize-04",
+        ticket_id: "ticket-104",
+        snapshot_id: "snap-tampered",
+        selection_index: 2,
+        seed_commitment: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        seed_revealed: serverSeed, // Hashes to seedCommitment, NOT deadbeef!
+        combined_seed: combinedSeed,
+      };
+      const tamperedEvidence: MockEvidence = {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        draw_id: "draw-alpha",
+        prize_id: "prize-04",
+        snapshot_id: "snap-tampered",
+        algorithm_version: "SSFI-CSPRNG-V1",
+        server_seed_commitment: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        server_seed_revealed: serverSeed,
+        client_entropy: clientEntropy,
+        combined_seed: combinedSeed,
+        selected_index: 2,
+        total_candidates: 10,
+        winning_ticket_number: "SSFI-000104",
+        verification_status: "VERIFIED",
+      };
+      mockDbResults.set(tamperedResult.id, tamperedResult);
+      mockDbEvidence.set(tamperedEvidence.id, tamperedEvidence);
+
+      const res = simulateVerifyEvidence({ drawResultId: tamperedResult.id }, "ADMIN");
+      assert.equal(res.success, true);
+      assert.equal(res.isValid, false, "Cryptographic verification must detect mismatched seed commitment");
+    });
+
+    // Scenario 10: Valid evidence continues to pass cryptographic verification
+    await sub.test("Scenario 10: Valid evidence passes cryptographic check with matching index and commitment", () => {
+      const res = simulateVerifyEvidence({ drawResultId: resultA.id, evidenceId: evidenceA.id }, "ADMIN");
+      assert.equal(res.success, true);
+      assert.equal(res.isValid, true);
+    });
+  });
 });

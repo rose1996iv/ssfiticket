@@ -25,7 +25,7 @@ export type AppsScriptSendOptions = {
   text: string;
   html: string;
   idempotencyKey?: string;
-  eventType?: "ORDER_CREATED" | "PAYMENT_APPROVED" | "TICKETS_ISSUED" | "ADMIN_TEST";
+  eventType?: "ORDER_CREATED" | "PAYMENT_APPROVED" | "TICKETS_ISSUED" | "WINNER_ANNOUNCED" | "ADMIN_TEST";
   orderNumber?: string | null;
   ticketNumbers?: string[];
   payload?: DeliveryPayload;

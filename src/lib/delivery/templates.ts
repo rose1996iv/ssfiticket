@@ -342,8 +342,6 @@ export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload
   const safeUrl = escapeHtml(payload.orderAccessUrl);
   const paymentMethod = escapeHtml(payload.paymentMethod || "Manual UPI");
   const paymentStatus = escapeHtml(payload.paymentStatus || "PENDING");
-  const upiId = escapeHtml(payload.paymentInstructions?.upiId || "6909251270@ptaxis");
-  const upiName = escapeHtml(payload.paymentInstructions?.accountName || "HLAWN THA DAWT");
   const supportEmail = escapeHtml(payload.supportEmail?.trim() || "Senthangstudents@gmail.com");
   const rawSupportPhone =
     payload.supportPhone && payload.supportPhone.trim() !== "" && payload.supportPhone !== "+91 98765 43210"
@@ -351,9 +349,19 @@ export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload
       : null;
   const safeSupportPhone = rawSupportPhone ? escapeHtml(rawSupportPhone) : null;
 
+  const rawUpiId = payload.paymentInstructions?.upiId?.trim();
+  const hasUpiDetails = Boolean(rawUpiId && rawUpiId.length > 0);
+  const upiId = hasUpiDetails ? escapeHtml(rawUpiId!) : null;
+  const upiName = hasUpiDetails
+    ? escapeHtml(payload.paymentInstructions?.accountName?.trim() || "Assigned Seller")
+    : null;
+  const customInstructions = payload.paymentInstructions?.instructions?.trim()
+    ? escapeHtml(payload.paymentInstructions.instructions.trim())
+    : null;
+
   const subject = `[SSFI Lucky Draw] Order Received — ${payload.orderNumber}`;
 
-  const text = [
+  const textLines = [
     `SSFI LUCKY DRAW — ORDER RECEIVED`,
     `================================`,
     `Dear ${payload.customerName},`,
@@ -373,21 +381,40 @@ export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload
     ``,
     `Payment Instructions:`,
     `----------------------------------------`,
-    `1. Transfer exact amount (Rs. ${payload.totalAmountInr.toLocaleString("en-IN")}) using any UPI app.`,
-    `   Official UPI ID: ${payload.paymentInstructions?.upiId || "6909251270@ptaxis"}`,
-    `   Beneficiary Name: ${payload.paymentInstructions?.accountName || "HLAWN THA DAWT"}`,
-    `2. Note your 12-digit Bank Reference Number (UTR).`,
-    `3. Submit your UTR on your order tracking page:`,
-    `   ${payload.orderAccessUrl}`,
+  ];
+
+  if (hasUpiDetails) {
+    textLines.push(
+      `1. Transfer exact amount (Rs. ${payload.totalAmountInr.toLocaleString("en-IN")}) using any UPI app.`,
+      `   Official UPI ID: ${payload.paymentInstructions?.upiId}`,
+      `   Beneficiary Name: ${payload.paymentInstructions?.accountName || "Assigned Seller"}`
+    );
+    if (payload.paymentInstructions?.instructions?.trim()) {
+      textLines.push(`   Note: ${payload.paymentInstructions.instructions.trim()}`);
+    }
+    textLines.push(
+      `2. Note your 12-digit Bank Reference Number (UTR).`,
+      `3. Submit your UTR on your order tracking page:`,
+      `   ${payload.orderAccessUrl}`
+    );
+  } else {
+    textLines.push(
+      `Payment instructions could not be loaded automatically. Please open your secure order tracking page to view the active payment QR and submit your payment proof:`,
+      `   ${payload.orderAccessUrl}`,
+      `Do not send payments to unverified accounts.`
+    );
+  }
+
+  textLines.push(
     ``,
     `Once your payment is approved by SSFI finance, your official lucky draw tickets will be registered and delivered to this email address.`,
     ``,
     `Support Contact:`,
     `Email: ${payload.supportEmail || "Senthangstudents@gmail.com"}${rawSupportPhone ? ` | Phone: ${rawSupportPhone}` : ""}`,
-    `Official Website: https://ssfiticket.vercel.app`,
-  ]
-    .filter((l): l is string => l !== null && l !== undefined)
-    .join("\n");
+    `Official Website: https://ssfiticket.vercel.app`
+  );
+
+  const text = textLines.filter((l): l is string => l !== null && l !== undefined).join("\n");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -457,12 +484,14 @@ export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload
         </table>
 
         <!-- Payment Instructions Box -->
-        <div style="background-color: #fcf9f5; border: 1px solid #ebd9c8; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+        ${
+          hasUpiDetails
+            ? `<div style="background-color: #fcf9f5; border: 1px solid #ebd9c8; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
           <h3 style="margin: 0 0 12px; font-size: 14px; font-weight: bold; color: #7c1619; text-transform: uppercase; letter-spacing: 0.5px;">
             Payment Instructions (Manual UPI)
           </h3>
           <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #594541;">
-            To confirm your booking, please transfer <strong>₹${payload.totalAmountInr.toLocaleString("en-IN")}</strong> to the official SSFI account:
+            To confirm your booking, please transfer <strong>₹${payload.totalAmountInr.toLocaleString("en-IN")}</strong> to the assigned seller account:
           </p>
           <table width="100%" style="font-size: 13px; margin-bottom: 14px;">
             <tr>
@@ -473,11 +502,31 @@ export function renderEmailOrderCreatedMessage(payload: OrderCreatedEmailPayload
               <td style="color: #705a54; padding: 4px 0;">Beneficiary Name:</td>
               <td style="font-weight: bold; padding: 4px 0;">${upiName}</td>
             </tr>
+            ${
+              customInstructions
+                ? `<tr>
+              <td style="color: #705a54; padding: 4px 0;">Instructions:</td>
+              <td style="color: #594541; padding: 4px 0;">${customInstructions}</td>
+            </tr>`
+                : ""
+            }
           </table>
           <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #705a54;">
             After completing payment, please open your order page and submit your <strong>12-digit Bank Reference Number (UTR)</strong> so our finance team can verify your payment.
           </p>
-        </div>
+        </div>`
+            : `<div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+          <h3 style="margin: 0 0 12px; font-size: 14px; font-weight: bold; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px;">
+            Payment Verification Notice
+          </h3>
+          <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #92400e;">
+            Payment instructions could not be loaded automatically. Please open your secure order tracking page to view the active payment QR and submit your payment proof.
+          </p>
+          <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #b45309;">
+            Do not send payments to unverified accounts. Always submit your UTR through your official order tracking page.
+          </p>
+        </div>`
+        }
 
         <!-- Action Button -->
         <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 28px auto;">
@@ -667,6 +716,154 @@ export function renderEmailPaymentApprovedMessage(payload: PaymentApprovedEmailP
         <p style="margin: 0 0 4px;"><strong>Senthang Students Fellowship India (SSFI)</strong></p>
         <p style="margin: 0 0 6px;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
           safeSupportPhone ? ` | ${safeSupportPhone}` : ""
+        }</p>
+        <p style="margin: 0; font-size: 11px;">
+          <a href="https://www.youtube.com/@SenthangStudentsSSFI" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600;">Official YouTube</a> &bull;
+          <a href="https://www.facebook.com/senthangstudents" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600; margin-left: 6px;">Official Facebook</a>
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return { subject, html, text };
+}
+
+export interface WinnerNotificationPayload {
+  customerName: string;
+  ticketNumber: string;
+  prizeTitle: string;
+  prizeNumber: number;
+  campaignName: string;
+  drawDateFormatted: string;
+  ticketAccessUrl: string;
+  sellerName?: string | null;
+  supportEmail?: string;
+  supportPhone?: string;
+}
+
+/**
+ * Centrally managed Lucky Draw Winner Announcement Email Template.
+ * Dispatched manually by an administrator via the transactional Outbox.
+ */
+export function renderEmailWinnerAnnouncedMessage(payload: WinnerNotificationPayload): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const safeName = escapeHtml(payload.customerName);
+  const safeTicketNumber = escapeHtml(payload.ticketNumber);
+  const safePrizeTitle = escapeHtml(payload.prizeTitle);
+  const safeCampaign = escapeHtml(payload.campaignName);
+  const safeDate = escapeHtml(payload.drawDateFormatted);
+  const safeUrl = escapeHtml(payload.ticketAccessUrl);
+  const safeSeller = escapeHtml(payload.sellerName || "Official SSFI Representative");
+  const supportEmail = escapeHtml(payload.supportEmail || "Senthangstudents@gmail.com");
+  const supportPhone = escapeHtml(payload.supportPhone || "");
+
+  const subject = `[SSFI Lucky Draw] Congratulations! You Won ${payload.prizeTitle}`;
+
+  const text = [
+    `CONGRATULATIONS, ${payload.customerName}!`,
+    `======================================`,
+    ``,
+    `Your ticket ${payload.ticketNumber} has officially won a prize in the ${payload.campaignName}!`,
+    ``,
+    `Prize Rank: ${payload.prizeNumber === 1 ? "1st Prize (Grand Prize)" : `${payload.prizeNumber}th Prize`}`,
+    `Prize Title: ${payload.prizeTitle}`,
+    `Winning Ticket: ${payload.ticketNumber}`,
+    `Attributed Seller: ${payload.sellerName || "Official SSFI Representative"}`,
+    `Draw Date (IST): ${payload.drawDateFormatted}`,
+    ``,
+    `View your official winning ticket and cryptographic verification details:`,
+    payload.ticketAccessUrl,
+    ``,
+    `This draw was verified using pre-committed cryptographic seeds and recorded immutably in the SSFI audit ledger.`,
+    `Our organizing committee will contact you shortly regarding prize fulfillment.`,
+    ``,
+    `Support: ${payload.supportEmail || "Senthangstudents@gmail.com"}${payload.supportPhone ? ` | ${payload.supportPhone}` : ""}`,
+    `Senthang Students Fellowship India (SSFI)`,
+  ].join("\n");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Congratulations! Lucky Draw Winner Announcement</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7f3f0; margin: 0; padding: 24px 12px; color: #2d1810;">
+  <table width="100%" max-width="600" align="center" border="0" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #eadbcf; box-shadow: 0 4px 16px rgba(124, 22, 25, 0.08);">
+    <!-- Header Banner -->
+    <tr>
+      <td style="background: linear-gradient(135deg, #7c1619 0%, #a82024 100%); padding: 32px 24px; text-align: center; color: #ffffff;">
+        <span style="display: inline-block; background-color: rgba(255,255,255,0.2); padding: 4px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">
+          Official Winner Announcement
+        </span>
+        <h1 style="margin: 0 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">Congratulations, ${safeName}!</h1>
+        <p style="margin: 0; font-size: 15px; color: #fce7e7; font-weight: 500;">Your ticket was drawn in the ${safeCampaign}</p>
+      </td>
+    </tr>
+
+    <!-- Prize Box -->
+    <tr>
+      <td style="padding: 28px 24px;">
+        <div style="background-color: #fef2f2; border: 2px dashed #f87171; border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 24px;">
+          <div style="font-size: 13px; font-weight: 700; color: #991b1b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+            ${payload.prizeNumber === 1 ? "1st Prize Winner (Grand Prize)" : `${payload.prizeNumber}th Prize Winner`}
+          </div>
+          <div style="font-size: 24px; font-weight: 800; color: #7c1619; margin-bottom: 12px;">
+            ${safePrizeTitle}
+          </div>
+          <div style="display: inline-block; background-color: #ffffff; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 18px; font-size: 18px; font-weight: 800; color: #7c1619; letter-spacing: 1px;">
+            Ticket: ${safeTicketNumber}
+          </div>
+        </div>
+
+        <!-- Draw Details -->
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 24px; font-size: 14px;">
+          <tr>
+            <td style="padding: 8px 0; color: #705a54; border-bottom: 1px solid #f0e7df;">Campaign</td>
+            <td style="padding: 8px 0; font-weight: 600; text-align: right; border-bottom: 1px solid #f0e7df;">${safeCampaign}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #705a54; border-bottom: 1px solid #f0e7df;">Draw Date</td>
+            <td style="padding: 8px 0; font-weight: 600; text-align: right; border-bottom: 1px solid #f0e7df;">${safeDate}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #705a54; border-bottom: 1px solid #f0e7df;">Attributed Seller</td>
+            <td style="padding: 8px 0; font-weight: 600; text-align: right; border-bottom: 1px solid #f0e7df;">${safeSeller}</td>
+          </tr>
+        </table>
+
+        <!-- Verification Callout -->
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin-bottom: 24px; font-size: 13px; color: #166534;">
+          This draw result was selected via the SSFI Provably Fair Randomness Engine, verified with pre-committed cryptographic seeds, and permanently stamped into the immutable audit ledger.
+        </div>
+
+        <!-- Action Button -->
+        <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 28px auto;">
+          <tr>
+            <td align="center" style="border-radius: 10px; background-color: #7c1619;">
+              <a href="${safeUrl}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 10px;">
+                Verify Your Winning Ticket &rarr;
+              </a>
+            </td>
+          </tr>
+        </table>
+
+        <p style="margin: 0; font-size: 12px; color: #705a54; text-align: center;">
+          Please retain your ticket verification link. Our team will contact you shortly to coordinate prize fulfillment.
+        </p>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td style="background-color: #fffaf7; border-top: 1px solid #eadbcf; padding: 20px 24px; text-align: center; font-size: 12px; color: #705a54;">
+        <p style="margin: 0 0 4px;"><strong>Senthang Students Fellowship India (SSFI)</strong></p>
+        <p style="margin: 0 0 6px;">Support: <a href="mailto:${supportEmail}" style="color: #7c1619;">${supportEmail}</a>${
+          supportPhone ? ` | ${supportPhone}` : ""
         }</p>
         <p style="margin: 0; font-size: 11px;">
           <a href="https://www.youtube.com/@SenthangStudentsSSFI" target="_blank" style="color: #7c1619; text-decoration: none; font-weight: 600;">Official YouTube</a> &bull;

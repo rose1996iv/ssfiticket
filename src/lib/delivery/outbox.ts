@@ -16,6 +16,7 @@ import {
   renderEmailOrderCreatedMessage,
   renderEmailPaymentApprovedMessage,
   renderEmailTicketMessage,
+  renderEmailWinnerAnnouncedMessage,
 } from "./templates";
 import type { DeliveryPayload } from "./types";
 
@@ -23,6 +24,7 @@ export type EmailEventType =
   | "ORDER_CREATED"
   | "PAYMENT_APPROVED"
   | "TICKETS_ISSUED"
+  | "WINNER_ANNOUNCED"
   | "ADMIN_TEST";
 
 export type EmailJobStatus =
@@ -63,6 +65,7 @@ export type CustomerEmailSettings = {
     ORDER_CREATED: boolean;
     PAYMENT_APPROVED: boolean;
     TICKETS_ISSUED: boolean;
+    WINNER_ANNOUNCED?: boolean;
   };
 };
 
@@ -108,6 +111,7 @@ export async function getCustomerEmailSettings(): Promise<CustomerEmailSettings>
     ORDER_CREATED: true,
     PAYMENT_APPROVED: true,
     TICKETS_ISSUED: true,
+    WINNER_ANNOUNCED: true,
   };
 
   try {
@@ -201,7 +205,7 @@ export async function updateCustomerEmailLiveGate(
  * Updates the per-event customer email notification toggles in system_settings.
  */
 export async function updateCustomerEmailEventToggles(
-  events: { ORDER_CREATED?: boolean; PAYMENT_APPROVED?: boolean; TICKETS_ISSUED?: boolean },
+  events: { ORDER_CREATED?: boolean; PAYMENT_APPROVED?: boolean; TICKETS_ISSUED?: boolean; WINNER_ANNOUNCED?: boolean },
   actorUserId: string
 ): Promise<{ success: boolean; error?: string }> {
   const admin = createSupabaseAdminClient();
@@ -264,6 +268,7 @@ export async function enqueueCustomerEmail(params: {
   bodyHtml: string;
   metadata?: Record<string, unknown>;
   idempotencySuffix?: string;
+  customIdempotencyKey?: string;
 }): Promise<EmailJobRecord | null> {
   const admin = createSupabaseAdminClient();
   const cleanRecipient = params.recipient.trim().toLowerCase();
@@ -278,7 +283,11 @@ export async function enqueueCustomerEmail(params: {
   const baseKey = params.orderId
     ? `${params.eventType}:${params.orderId}`
     : `${params.eventType}:${cleanRecipient}:${Date.now()}`;
-  const idempotencyKey = params.idempotencySuffix ? `${baseKey}:${params.idempotencySuffix}` : baseKey;
+  const idempotencyKey = params.customIdempotencyKey
+    ? params.customIdempotencyKey
+    : params.idempotencySuffix
+    ? `${baseKey}:${params.idempotencySuffix}`
+    : baseKey;
 
   try {
     // 1. Check if job already exists with this idempotency key
@@ -907,6 +916,11 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
       total_amount_paise,
       created_at,
       status,
+      snapshot_upi_id,
+      snapshot_account_name,
+      snapshot_payment_instructions,
+      snapshot_seller_display_name,
+      snapshot_seller_code,
       campaigns(name),
       customers(id, full_name, email, phone, whatsapp_number),
       sellers!orders_seller_id_fkey(display_name, seller_code),
@@ -936,6 +950,33 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
   const totalAmountInr = (order.total_amount_paise || 10000) / 100;
   const createdAtIst = formatIstDateTime(order.created_at || new Date().toISOString());
 
+  // RSK-02 Fix: Strictly derive seller payment details from the immutable order payment snapshot.
+  // NEVER use hardcoded central UPI or fall back to global/legacy UPI values.
+  const rawUpiId = order.snapshot_upi_id?.trim();
+  const rawAccountName = order.snapshot_account_name?.trim();
+  const rawInstructions = order.snapshot_payment_instructions?.trim();
+
+  const hasSnapshotUpi = Boolean(rawUpiId && rawUpiId.length > 0);
+  const paymentInstructions = hasSnapshotUpi
+    ? {
+        upiId: rawUpiId!,
+        accountName:
+          rawAccountName ||
+          order.snapshot_seller_display_name?.trim() ||
+          seller?.display_name?.trim() ||
+          "Assigned Seller",
+        instructions:
+          rawInstructions ||
+          "Transfer exact amount to the assigned seller account and submit your 12-digit UTR on your order page.",
+      }
+    : undefined;
+
+  const sellerDisplayName = order.snapshot_seller_display_name?.trim() || seller?.display_name?.trim();
+  const sellerCode = order.snapshot_seller_code?.trim() || seller?.seller_code?.trim();
+  const sellerAttribution = sellerDisplayName
+    ? `${sellerDisplayName}${sellerCode ? ` (${sellerCode})` : ""}`
+    : null;
+
   const templatePayload = {
     orderNumber: order.order_number,
     orderId: order.id,
@@ -943,18 +984,14 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
     ticketQuantity,
     totalAmountInr,
     paymentMethod: "Manual UPI",
-    paymentInstructions: {
-      upiId: process.env.NEXT_PUBLIC_SSFI_UPI_ID || "6909251270@ptaxis",
-      accountName: process.env.NEXT_PUBLIC_SSFI_UPI_DISPLAY_NAME || "HLAWN THA DAWT",
-      instructions: "Transfer exact amount to the official SSFI account and submit your 12-digit UTR on your order page.",
-    },
+    paymentInstructions,
     paymentStatus: order.status || "PENDING",
     orderAccessUrl,
     campaignName: campaign?.name || "SSFI Lucky Draw",
     createdAtIst,
     supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
     supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
-    sellerAttribution: seller ? `${seller.display_name} (${seller.seller_code})` : null,
+    sellerAttribution,
   };
 
   const { subject, html, text } = renderEmailOrderCreatedMessage(templatePayload);
@@ -971,6 +1008,8 @@ export async function enqueueOrderCreatedNotification(orderId: string): Promise<
       order_number: order.order_number,
       ticket_quantity: ticketQuantity,
       total_amount_inr: totalAmountInr,
+      snapshot_upi_id: hasSnapshotUpi ? rawUpiId : null,
+      snapshot_seller_code: sellerCode || null,
     },
   });
 }
@@ -1143,5 +1182,172 @@ export async function enqueueTicketsIssuedNotification(
       actor_user_id: actorUserId || null,
     },
   });
+}
+
+/**
+ * Enqueues a winner announcement notification into the customer transactional email Outbox.
+ * Enforces:
+ * - Manual Admin action.
+ * - Idempotency key: `WINNER_ANNOUNCED:${resultId}`
+ * - Authoritative stamping via `public.admin_stamp_winner_notification` RPC.
+ */
+export async function enqueueWinnerNotification(
+  resultId: string,
+  actorUserId: string
+): Promise<{ success: boolean; outboxId?: string; error?: string }> {
+  const admin = createSupabaseAdminClient();
+
+  // 1. Fetch draw result details with joins
+  const { data: result, error: fetchErr } = await admin
+    .from("draw_results")
+    .select(`
+      id,
+      draw_id,
+      campaign_id,
+      prize_id,
+      ticket_id,
+      selection_index,
+      created_at,
+      notified_at,
+      prizes:prize_id (
+        id,
+        prize_number,
+        title,
+        description
+      ),
+      tickets:ticket_id (
+        id,
+        ticket_number,
+        customer_id,
+        order_id,
+        seller_id,
+        customers:customer_id (
+          id,
+          full_name,
+          email,
+          phone
+        ),
+        sellers:seller_id (
+          id,
+          display_name,
+          seller_code
+        )
+      ),
+      campaigns:campaign_id (
+        id,
+        name
+      )
+    `)
+    .eq("id", resultId)
+    .single();
+
+  if (fetchErr || !result) {
+    return { success: false, error: fetchErr?.message || "Draw result not found." };
+  }
+
+  if (result.notified_at) {
+    return {
+      success: false,
+      error: `Winner notification has already been recorded at ${result.notified_at}`,
+    };
+  }
+
+  // Type coercions for Supabase relational embeds
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prize = result.prizes as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ticket = result.tickets as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const customer = ticket?.customers as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seller = ticket?.sellers as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const campaign = result.campaigns as any;
+
+  const recipient = customer?.email?.trim();
+  if (!recipient || !recipient.includes("@")) {
+    return { success: false, error: "Winner customer does not have a valid email address." };
+  }
+
+  const drawDateFormatted = formatIstDateTime(result.created_at);
+  const ticketAccessUrl = getCustomerOrderUrl(ticket?.order_id || "");
+
+  const { subject, html, text } = renderEmailWinnerAnnouncedMessage({
+    customerName: customer?.full_name || "Valued Supporter",
+    ticketNumber: ticket?.ticket_number || "SSFI-TICKET",
+    prizeTitle: prize?.title || "Lucky Draw Prize",
+    prizeNumber: prize?.prize_number || 1,
+    campaignName: campaign?.name || "SSFI Lucky Draw",
+    drawDateFormatted,
+    ticketAccessUrl,
+    sellerName: seller ? `${seller.display_name} (${seller.seller_code})` : null,
+    supportPhone: process.env.NEXT_PUBLIC_SUPPORT_PHONE || undefined,
+    supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "Senthangstudents@gmail.com",
+  });
+
+  const idempotencyKey = `WINNER_ANNOUNCED:${resultId}`;
+
+  const job = await enqueueCustomerEmail({
+    orderId: ticket?.order_id || null,
+    customerId: customer?.id || null,
+    eventType: "WINNER_ANNOUNCED",
+    recipient,
+    subject,
+    bodyText: text,
+    bodyHtml: html,
+    customIdempotencyKey: idempotencyKey,
+    metadata: {
+      result_id: resultId,
+      prize_id: result.prize_id,
+      prize_number: prize?.prize_number,
+      prize_title: prize?.title,
+      ticket_id: result.ticket_id,
+      ticket_number: ticket?.ticket_number,
+      ticket_numbers: ticket?.ticket_number ? [ticket.ticket_number] : [],
+      actor_user_id: actorUserId,
+    },
+  });
+
+  if (!job) {
+    return { success: false, error: "Failed to enqueue winner email into outbox." };
+  }
+
+  // 2. Authoritatively stamp draw_result using authoritative RPC with direct trigger-compliant fallback
+  let stamped = false;
+  if (actorUserId) {
+    try {
+      const { error: rpcErr } = await admin.rpc("admin_stamp_winner_notification", {
+        p_result_id: resultId,
+        p_outbox_id: job.id,
+        p_actor: actorUserId,
+      });
+      if (!rpcErr) {
+        stamped = true;
+      } else {
+        console.warn(`[Email Outbox] admin_stamp_winner_notification RPC notice: ${rpcErr.message}. Attempting direct trigger-compliant update.`);
+      }
+    } catch (rpcEx) {
+      console.warn(`[Email Outbox] admin_stamp_winner_notification RPC exception:`, rpcEx);
+    }
+  }
+
+  if (!stamped) {
+    const nowIso = new Date().toISOString();
+    const { error: stampErr } = await admin
+      .from("draw_results")
+      .update({
+        notified_at: nowIso,
+        notified_by: actorUserId || null,
+        notification_outbox_id: job.id,
+      })
+      .eq("id", resultId);
+
+    if (stampErr) {
+      console.error(`[Email Outbox] draw_results notification stamping failed:`, stampErr);
+      return { success: false, error: stampErr.message, outboxId: job.id };
+    }
+  }
+
+  return { success: true, outboxId: job.id };
 }
 

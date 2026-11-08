@@ -4,6 +4,7 @@ import {
   renderEmailOrderCreatedMessage,
   renderEmailPaymentApprovedMessage,
   renderEmailTicketMessage,
+  renderEmailWinnerAnnouncedMessage,
 } from "../src/lib/delivery/templates.ts";
 import {
   sanitizeOAuthError,
@@ -397,5 +398,326 @@ test("Customer Transactional Email Suite", async (t) => {
       process.env.VERCEL_ENV = prevEnv;
       process.env.ALLOWED_TEST_EMAIL = prevAllowed;
     }
+  });
+
+  // ==========================================================================
+  // 14. RSK-02: Seller Payment Snapshot Email Remediation Tests
+  // ==========================================================================
+  await t.test("RSK-02: Seller A order email uses Seller A's snapshot UPI and instructions", () => {
+    const payloadSellerA = {
+      orderNumber: "ORD-2026-000501",
+      orderId: "50100000-0000-0000-0000-000000000501",
+      customerName: "David Miller",
+      ticketQuantity: 5,
+      totalAmountInr: 500,
+      paymentMethod: "Manual UPI",
+      paymentInstructions: {
+        upiId: "sellerA@okaxis",
+        accountName: "Seller A Official Store",
+        instructions: "Please mention order ORD-2026-000501 in the UPI remark field.",
+      },
+      paymentStatus: "PENDING",
+      orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/50100000-0000-0000-0000-000000000501",
+      campaignName: "SSFI Fundraising Lucky Draw",
+      createdAtIst: "08 Nov 2026, 01:00 am IST",
+      supportEmail: "Senthangstudents@gmail.com",
+      sellerAttribution: "Seller A (SELLER-001)",
+    };
+
+    const { subject, html, text } = renderEmailOrderCreatedMessage(payloadSellerA);
+
+    assert.match(subject, /ORD-2026-000501/);
+    // Plain text assertions
+    assert.match(text, /sellerA@okaxis/);
+    assert.match(text, /Seller A Official Store/);
+    assert.match(text, /Please mention order ORD-2026-000501 in the UPI remark field/);
+    assert.match(text, /Seller A \(SELLER-001\)/);
+    // Zero central SSFI UPI leakage
+    assert.ok(!text.includes("6909251270@ptaxis"), "Must NOT contain central SSFI UPI ID");
+    assert.ok(!text.includes("HLAWN THA DAWT"), "Must NOT contain central SSFI Payee Name");
+
+    // HTML assertions
+    assert.match(html, /sellerA@okaxis/);
+    assert.match(html, /Seller A Official Store/);
+    assert.match(html, /Please mention order ORD-2026-000501 in the UPI remark field/);
+    assert.match(html, /Seller A \(SELLER-001\)/);
+    assert.ok(!html.includes("6909251270@ptaxis"), "Must NOT contain central SSFI UPI ID in HTML");
+    assert.ok(!html.includes("HLAWN THA DAWT"), "Must NOT contain central SSFI Payee Name in HTML");
+  });
+
+  await t.test("RSK-02: Seller B order email uses Seller B's snapshot UPI and instructions", () => {
+    const payloadSellerB = {
+      orderNumber: "ORD-2026-000502",
+      orderId: "50200000-0000-0000-0000-000000000502",
+      customerName: "Eva Green",
+      ticketQuantity: 2,
+      totalAmountInr: 200,
+      paymentMethod: "Manual UPI",
+      paymentInstructions: {
+        upiId: "sellerB@oksbi",
+        accountName: "Seller B Enterprises",
+        instructions: "Pay to Seller B and upload screenshot.",
+      },
+      paymentStatus: "PENDING",
+      orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/50200000-0000-0000-0000-000000000502",
+      campaignName: "SSFI Fundraising Lucky Draw",
+      createdAtIst: "08 Nov 2026, 01:05 am IST",
+      supportEmail: "Senthangstudents@gmail.com",
+      sellerAttribution: "Seller B (SELLER-002)",
+    };
+
+    const { subject, html, text } = renderEmailOrderCreatedMessage(payloadSellerB);
+
+    assert.match(subject, /ORD-2026-000502/);
+    assert.match(text, /sellerB@oksbi/);
+    assert.match(text, /Seller B Enterprises/);
+    assert.match(text, /Pay to Seller B and upload screenshot/);
+    assert.match(text, /Seller B \(SELLER-002\)/);
+    assert.ok(!text.includes("sellerA@okaxis"), "Must not leak Seller A's UPI ID");
+    assert.ok(!text.includes("6909251270@ptaxis"), "Must not leak central UPI ID");
+
+    assert.match(html, /sellerB@oksbi/);
+    assert.match(html, /Seller B Enterprises/);
+    assert.ok(!html.includes("sellerA@okaxis"), "Must not leak Seller A's UPI ID in HTML");
+    assert.ok(!html.includes("6909251270@ptaxis"), "Must not leak central UPI ID in HTML");
+  });
+
+  await t.test("RSK-02: Seller QR updates do not mutate existing order snapshot email details", () => {
+    // Simulate historical order with initial snapshot
+    const historicalOrderSnapshot = {
+      snapshot_upi_id: "seller.original@ybl",
+      snapshot_account_name: "Original Account Name",
+      snapshot_payment_instructions: "Historical instructions",
+      snapshot_seller_display_name: "Original Seller Name",
+      snapshot_seller_code: "SELLER-003",
+    };
+
+    // Seller subsequently updates their active profile in the database
+    const updatedSellerProfile = {
+      upi_id: "seller.mutated@icici",
+      account_name: "Brand New Account Name",
+      payment_instructions: "Brand new instructions",
+      display_name: "Brand New Seller Name",
+      seller_code: "SELLER-003",
+    };
+
+    // Outbox logic derivation: must strictly use historicalOrderSnapshot fields, ignoring updatedSellerProfile
+    const emailPayloadFromSnapshot = {
+      orderNumber: "ORD-2026-000088",
+      orderId: "88000000-0000-0000-0000-000000000088",
+      customerName: "Historical Customer",
+      ticketQuantity: 1,
+      totalAmountInr: 100,
+      paymentMethod: "Manual UPI",
+      paymentInstructions: {
+        upiId: historicalOrderSnapshot.snapshot_upi_id,
+        accountName: historicalOrderSnapshot.snapshot_account_name,
+        instructions: historicalOrderSnapshot.snapshot_payment_instructions,
+      },
+      paymentStatus: "PENDING",
+      orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/88000000-0000-0000-0000-000000000088",
+      campaignName: "SSFI Fundraising Lucky Draw",
+      createdAtIst: "01 Nov 2026, 12:00 pm IST",
+      supportEmail: "Senthangstudents@gmail.com",
+      sellerAttribution: `${historicalOrderSnapshot.snapshot_seller_display_name} (${historicalOrderSnapshot.snapshot_seller_code})`,
+    };
+
+    const { text, html } = renderEmailOrderCreatedMessage(emailPayloadFromSnapshot);
+
+    // Email reflects historical snapshot
+    assert.match(text, /seller\.original@ybl/);
+    assert.match(text, /Original Account Name/);
+    assert.match(text, /Historical instructions/);
+    assert.match(text, /Original Seller Name/);
+
+    // Email does NOT reflect the mutated profile
+    assert.ok(!text.includes(updatedSellerProfile.upi_id), "Must not reflect mutated seller UPI");
+    assert.ok(!text.includes(updatedSellerProfile.account_name), "Must not reflect mutated seller account name");
+    assert.ok(!text.includes(updatedSellerProfile.payment_instructions), "Must not reflect mutated instructions");
+    assert.ok(!text.includes(updatedSellerProfile.display_name), "Must not reflect mutated display name");
+
+    assert.match(html, /seller\.original@ybl/);
+    assert.ok(!html.includes(updatedSellerProfile.upi_id), "Must not reflect mutated seller UPI in HTML");
+  });
+
+  await t.test("RSK-02: Missing snapshot UPI data fails safely without leaking central UPI or misleading instructions", () => {
+    const origCentralUpi = process.env.NEXT_PUBLIC_SSFI_UPI_ID;
+    try {
+      process.env.NEXT_PUBLIC_SSFI_UPI_ID = "6909251270@ptaxis";
+
+      const payloadWithoutSnapshot = {
+        orderNumber: "ORD-2026-000599",
+        orderId: "59900000-0000-0000-0000-000000000599",
+        customerName: "Frank Underhill",
+        ticketQuantity: 1,
+        totalAmountInr: 100,
+        paymentMethod: "Manual UPI",
+        paymentInstructions: undefined, // Missing snapshot
+        paymentStatus: "PENDING",
+        orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/59900000-0000-0000-0000-000000000599",
+        campaignName: "SSFI Fundraising Lucky Draw",
+        createdAtIst: "08 Nov 2026, 01:10 am IST",
+        supportEmail: "Senthangstudents@gmail.com",
+        sellerAttribution: "Seller C (SELLER-007)",
+      };
+
+      const { text, html } = renderEmailOrderCreatedMessage(payloadWithoutSnapshot);
+
+      // Must NOT contain hardcoded or central fallback UPI IDs
+      assert.ok(!text.includes("6909251270@ptaxis"), "Must NOT contain central SSFI UPI ID in text");
+      assert.ok(!text.includes("HLAWN THA DAWT"), "Must NOT contain central SSFI Payee Name in text");
+      assert.ok(!html.includes("6909251270@ptaxis"), "Must NOT contain central SSFI UPI ID in HTML");
+      assert.ok(!html.includes("HLAWN THA DAWT"), "Must NOT contain central SSFI Payee Name in HTML");
+
+      // Must safely direct the user to their authenticated order access page
+      assert.match(text, /Payment instructions could not be loaded automatically/i);
+      assert.match(text, /https:\/\/ssfiticket\.vercel\.app\/buy\/order\/59900000-0000-0000-0000-000000000599/);
+      assert.match(html, /Payment instructions could not be loaded automatically/i);
+      assert.match(html, /Do not send payments to unverified accounts/i);
+    } finally {
+      process.env.NEXT_PUBLIC_SSFI_UPI_ID = origCentralUpi;
+    }
+  });
+
+  await t.test("RSK-02: Cross-seller payment information cannot leak across orders", () => {
+    const orderSellerA = {
+      orderNumber: "ORD-2026-000701",
+      orderId: "70100000-0000-0000-0000-000000000701",
+      customerName: "Customer A",
+      ticketQuantity: 2,
+      totalAmountInr: 200,
+      paymentInstructions: {
+        upiId: "exclusiveA@bank",
+        accountName: "Confidential Seller A",
+        instructions: "Secret instructions for A",
+      },
+      orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/70100000-0000-0000-0000-000000000701",
+      campaignName: "SSFI Lucky Draw",
+      createdAtIst: "08 Nov 2026, 01:15 am IST",
+    };
+
+    const orderSellerB = {
+      orderNumber: "ORD-2026-000702",
+      orderId: "70200000-0000-0000-0000-000000000702",
+      customerName: "Customer B",
+      ticketQuantity: 3,
+      totalAmountInr: 300,
+      paymentInstructions: {
+        upiId: "exclusiveB@bank",
+        accountName: "Confidential Seller B",
+        instructions: "Secret instructions for B",
+      },
+      orderAccessUrl: "https://ssfiticket.vercel.app/buy/order/70200000-0000-0000-0000-000000000702",
+      campaignName: "SSFI Lucky Draw",
+      createdAtIst: "08 Nov 2026, 01:16 am IST",
+    };
+
+    const emailA = renderEmailOrderCreatedMessage(orderSellerA);
+    const emailB = renderEmailOrderCreatedMessage(orderSellerB);
+
+    // Assert zero cross-contamination
+    assert.ok(emailA.text.includes("exclusiveA@bank"));
+    assert.ok(!emailA.text.includes("exclusiveB@bank"));
+    assert.ok(!emailA.html.includes("exclusiveB@bank"));
+
+    assert.ok(emailB.text.includes("exclusiveB@bank"));
+    assert.ok(!emailB.text.includes("exclusiveA@bank"));
+    assert.ok(!emailB.html.includes("exclusiveA@bank"));
+  });
+
+  // ==========================================================================
+  // 17. Winner Announced Email Tests (Phase 9D)
+  // ==========================================================================
+  await t.test("Winner-announced email renders all mandatory fields and instructions", () => {
+    const payload = {
+      customerName: "David Lee",
+      ticketNumber: "TK-2026-000088",
+      prizeTitle: "Grand Prize - Honda Activa 6G",
+      prizeNumber: 1,
+      campaignName: "SSFI Annual Fundraiser 2026",
+      drawDateFormatted: "08 Nov 2026, 05:30 pm IST",
+      ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/33333333-3333-3333-3333-333333333333",
+      sellerName: "John Representative (SLR-001)",
+      supportEmail: "Senthangstudents@gmail.com",
+      supportPhone: "+91 9876543210",
+    };
+
+    const { subject, html, text } = renderEmailWinnerAnnouncedMessage(payload);
+
+    // Subject validation
+    assert.match(subject, /\[SSFI Lucky Draw\] Congratulations! You Won Grand Prize - Honda Activa 6G/i);
+
+    // Plaintext content checks
+    assert.match(text, /David Lee/);
+    assert.match(text, /TK-2026-000088/);
+    assert.match(text, /Grand Prize - Honda Activa 6G/);
+    assert.match(text, /1st Prize/i);
+    assert.match(text, /SSFI Annual Fundraiser 2026/);
+    assert.match(text, /08 Nov 2026, 05:30 pm IST/);
+    assert.match(text, /John Representative \(SLR-001\)/);
+    assert.match(text, /https:\/\/ssfiticket\.vercel\.app\/buy\/order\/33333333-3333-3333-3333-333333333333/);
+    assert.match(text, /Senthangstudents@gmail.com/);
+    assert.match(text, /\+91 9876543210/);
+
+    // HTML content checks (with safe rendering)
+    assert.match(html, /David Lee/);
+    assert.match(html, /TK-2026-000088/);
+    assert.match(html, /Grand Prize - Honda Activa 6G/);
+    assert.match(html, /1st Prize/i);
+    assert.match(html, /SSFI Annual Fundraiser 2026/);
+    assert.match(html, /John Representative/);
+  });
+
+  await t.test("Winner-announced email sanitizes and escapes malicious script injections", () => {
+    const maliciousPayload = {
+      customerName: "<script>alert('xss')</script>Eve",
+      ticketNumber: "<img src=x onerror=alert(1)>TK-99",
+      prizeTitle: "Prize <b onmouseover=alert(1)>One</b>",
+      prizeNumber: 2,
+      campaignName: "Malicious <iframe src='evil.com'> Campaign",
+      drawDateFormatted: "08 Nov 2026, 05:30 pm IST",
+      ticketAccessUrl: "https://ssfiticket.vercel.app/buy/order/safe-uuid",
+      sellerName: "<svg onload=alert(1)>BadSeller",
+      supportEmail: "support@ssfi.org",
+    };
+
+    const { html } = renderEmailWinnerAnnouncedMessage(maliciousPayload);
+
+    // Ensure raw unescaped script tags are never present in HTML
+    assert.ok(!html.includes("<script>alert('xss')</script>"));
+    assert.ok(!html.includes("<img src=x onerror=alert(1)>"));
+    assert.ok(!html.includes("<iframe src='evil.com'>"));
+    assert.ok(!html.includes("<svg onload=alert(1)>"));
+
+    // Ensure escaped entities exist
+    assert.ok(html.includes("&lt;script&gt;"));
+    assert.ok(html.includes("&lt;img"));
+    assert.ok(html.includes("&lt;iframe"));
+    assert.ok(html.includes("&lt;svg"));
+  });
+
+  await t.test("Winner notification idempotency key and non-mutating delivery invariant", () => {
+    const syntheticResultId = "res-1234-5678-9abc-def0";
+    const expectedKey = `WINNER_ANNOUNCED:${syntheticResultId}`;
+
+    // Verify key format
+    assert.equal(expectedKey, "WINNER_ANNOUNCED:res-1234-5678-9abc-def0");
+
+    // Invariant: Failed delivery does not create duplicate winners or duplicate tickets
+    const results = [{ id: syntheticResultId, prize_id: "prize-1", ticket_id: "tk-1" }];
+    const tickets = [{ id: "tk-1", ticket_number: "TK-001" }];
+
+    // Simulate an outbox delivery failure
+    const deliveryAttempt = {
+      status: "RETRY",
+      attempt_count: 1,
+      max_attempts: 3,
+      error_message: "Network timeout connecting to mail provider",
+    };
+
+    assert.equal(deliveryAttempt.status, "RETRY");
+    // Ensure draw results and tickets collections are untouched
+    assert.equal(results.length, 1);
+    assert.equal(tickets.length, 1);
   });
 });

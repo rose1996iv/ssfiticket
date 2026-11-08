@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   ShoppingBag,
   Ticket,
+  Trophy,
   Users,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const navItems = [
   { href: "/admin/payments", label: "Pending Payments", icon: Banknote },
   { href: "/admin/orders", label: "Orders Directory", icon: ShoppingBag },
   { href: "/admin/tickets", label: "Issued Tickets", icon: Ticket },
+  { href: "/admin/draw", label: "Lucky Draw", icon: Trophy },
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/sellers", label: "Sellers & QR Codes", icon: QrCode },
   { href: "/admin/messages", label: "Seller Messaging", icon: MessageSquare },

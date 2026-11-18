@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Trophy,
   Users,
@@ -13,6 +12,8 @@ import {
   DrawOverviewData,
   DrawResultRecord,
 } from "@/lib/draw/types";
+import { getDrawOverview } from "@/server/actions/luckyDraw";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { RotatingNumberDrum } from "./RotatingNumberDrum";
 import { EligibilityManager } from "./EligibilityManager";
 import { FirstPrizeApprovalCard } from "./FirstPrizeApprovalCard";
@@ -25,12 +26,19 @@ interface LuckyDrawDashboardProps {
 }
 
 export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
-  const router = useRouter();
   const [data, setData] = useState<DrawOverviewData>(initialData);
   const [activeTab, setActiveTab] = useState<"stage" | "eligibility" | "results" | "approval">(
     "stage"
   );
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const hadDisconnectRef = useRef(false);
+  const refreshInFlightRef = useRef(false);
+
+  // Sync local state whenever server-rendered initialData updates
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
 
   // Modals state
   const [selectedResultIdForEvidence, setSelectedResultIdForEvidence] = useState<string | null>(null);
@@ -38,18 +46,98 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   const [selectedResultIdForNotify, setSelectedResultIdForNotify] = useState<string | null>(null);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
 
-  const handleRefresh = async () => {
+  const refreshOverview = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     setIsRefreshing(true);
-    router.refresh();
-    setTimeout(() => {
+    try {
+      const res = await getDrawOverview(data.campaign?.id);
+      if (res.success && res.data) {
+        setData(res.data);
+      }
+    } catch {
+      // Ignore transient network errors during background refresh
+    } finally {
+      refreshInFlightRef.current = false;
       setIsRefreshing(false);
-    }, 800);
+    }
+  }, [data.campaign?.id]);
+
+  const handleRefresh = async () => {
+    await refreshOverview();
   };
+
+  // Realtime subscription + browser online/visibility reconnect synchronization
+  useEffect(() => {
+    const campaignId = data.campaign?.id;
+    if (!campaignId) return;
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      void refreshOverview();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      hadDisconnectRef.current = true;
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshOverview();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    let supabase: ReturnType<typeof createSupabaseBrowserClient> | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let channel: any = null;
+    try {
+      supabase = createSupabaseBrowserClient();
+      channel = supabase
+        .channel(`ssfi-admin-draw-${campaignId}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "draw_results", filter: `campaign_id=eq.${campaignId}` },
+          () => void refreshOverview()
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "draw_eligibility_snapshots", filter: `campaign_id=eq.${campaignId}` },
+          () => void refreshOverview()
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "draw_approvals", filter: `campaign_id=eq.${campaignId}` },
+          () => void refreshOverview()
+        )
+        .subscribe((status: string) => {
+          if (status === "SUBSCRIBED" && hadDisconnectRef.current) {
+            hadDisconnectRef.current = false;
+            void refreshOverview();
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            hadDisconnectRef.current = true;
+          }
+        });
+    } catch {
+      // Realtime optional fallback; manual and online/visibility reconnect remain active
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (supabase && channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [data.campaign?.id, refreshOverview]);
 
   const handleDrawCompleted = (newResult: DrawResultRecord) => {
     setData((prev) => {
       const existing = prev.results.filter((r) => r.id !== newResult.id);
-      const updatedResults = [newResult, ...existing];
+      const updatedResults = [...existing, newResult];
       const drawnIds = new Set(updatedResults.map((r) => r.prize_id));
 
       // Re-determine next prize (5th -> 4th -> 3rd -> 2nd -> 1st)
@@ -66,9 +154,11 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
         ...prev,
         results: updatedResults,
         nextPrize: next,
+        activeSnapshot: null,
+        pendingApproval: null,
       };
     });
-    router.refresh();
+    void refreshOverview();
   };
 
   const handleVerifyEvidence = (result: DrawResultRecord) => {
@@ -110,6 +200,11 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          {!isOnline && (
+            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+              Offline — Reconnecting
+            </span>
+          )}
           <button
             type="button"
             onClick={handleRefresh}
@@ -262,7 +357,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
           activePrize={nextPrize || prizes[0] || null}
           activeSnapshot={activeSnapshot}
           onSnapshotLocked={() => {
-            router.refresh();
+            void refreshOverview();
             setActiveTab("stage");
           }}
         />
@@ -294,7 +389,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
                 isAdmin: userRole.isAdmin,
               }}
               onUpdated={() => {
-                router.refresh();
+                void refreshOverview();
               }}
             />
           ) : (
@@ -344,7 +439,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
             setSelectedResultIdForNotify(null);
           }}
           onSuccess={() => {
-            router.refresh();
+            void refreshOverview();
           }}
         />
       )}

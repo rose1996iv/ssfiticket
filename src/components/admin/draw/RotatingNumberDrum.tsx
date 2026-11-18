@@ -122,7 +122,7 @@ export function RotatingNumberDrum({
 }: RotatingNumberDrumProps) {
   // Default placeholder format
   const DEFAULT_FORMAT = "SSFI-000000";
-  const initialResult = results[0] || null;
+  const initialResult = results.length > 0 ? results[results.length - 1] : null;
   const initialTicketNumber = initialResult?.ticket_number || DEFAULT_FORMAT;
 
   const [isSpinning, setIsSpinning] = useState(false);
@@ -137,6 +137,21 @@ export function RotatingNumberDrum({
 
   const spinIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const drumContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync activeResult when results prop updates (e.g. notification stamp or reconnect refresh)
+  useEffect(() => {
+    if (isSpinning || results.length === 0) return;
+    setActiveResult((prev) => {
+      if (prev) {
+        const updated = results.find((r) => r.id === prev.id);
+        if (updated) return updated;
+      }
+      const latest = results[results.length - 1];
+      setDisplayedChars(latest.ticket_number.split(""));
+      setStoppingReels(new Array(latest.ticket_number.length).fill(true));
+      return latest;
+    });
+  }, [results, isSpinning]);
 
   // Clean up spin timers on unmount
   useEffect(() => {

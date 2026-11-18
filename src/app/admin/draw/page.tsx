@@ -5,11 +5,16 @@ import { LuckyDrawDashboard } from "@/components/admin/draw/LuckyDrawDashboard";
 import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
-export default async function LuckyDrawAdminPage() {
+export default async function LuckyDrawAdminPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ campaignId?: string }>;
+}) {
   await connection();
   await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
 
-  const res = await getDrawOverview();
+  const resolvedParams = searchParams ? await searchParams : undefined;
+  const res = await getDrawOverview(resolvedParams?.campaignId);
 
   if (!res.success || !res.data) {
     return (

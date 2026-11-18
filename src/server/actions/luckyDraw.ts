@@ -5,7 +5,19 @@ import { revalidatePath } from "next/cache";
 import { requireAnyRole, hasCurrentUserRole, requireAuth } from "@/lib/auth/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sortTicketsCanonically, computeCanonicalSnapshotHash, verifyDrawEvidence } from "@/lib/draw/canonical";
-import { generateServerSeed, computeCombinedSeed, deriveWinningIndex } from "@/lib/draw/randomness";
+import {
+  CANONICAL_CAMPAIGN_PUBLIC_ID,
+  validateResolvedDrawCampaign,
+} from "@/lib/draw/campaignSelection";
+import {
+  generateServerSeed,
+  computeCombinedSeed,
+  deriveWinningIndex,
+  resolveClientEntropy,
+  verifySeedCommitment,
+} from "@/lib/draw/randomness";
+import { sealDrawSeed, unsealDrawSeed, type SealedSeedEnvelope } from "@/lib/draw/sealing";
+import { emitPublicDrawExecutedBroadcast } from "@/lib/draw/realtimeBroadcast";
 import { enqueueWinnerNotification } from "@/lib/delivery/outbox";
 import { renderEmailWinnerAnnouncedMessage } from "@/lib/delivery/templates";
 import { formatIstDateTime } from "@/lib/date/timezone";
@@ -20,6 +32,7 @@ import type {
   EligibilitySnapshot,
   DrawApproval,
   RandomnessEvidence,
+  PublicDrawWinnerRecord,
 } from "@/lib/draw/types";
 
 // ============================================================================
@@ -75,32 +88,59 @@ export type ActionResponse<T = unknown> = {
 
 export async function getDrawOverview(campaignId?: string): Promise<ActionResponse<DrawOverviewData>> {
   try {
-    const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+    const user = await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
     const isSuperAdmin = await hasCurrentUserRole("SUPER_ADMIN");
     const isAdmin = await hasCurrentUserRole("ADMIN");
 
     const admin = createSupabaseAdminClient();
 
-    // 1. Resolve Target Campaign
-    let targetCampaignId = campaignId;
-    if (!targetCampaignId) {
-      const { data: activeCampaign } = await admin
+    // 1. Resolve Target Campaign (Canonical by default; explicit override requires ADMIN/SUPER_ADMIN)
+    const canOverrideCampaign = isSuperAdmin || isAdmin;
+    let resolvedCandidate: { id: string; public_id: string; status: string } | null = null;
+    let campLookupErr: { message: string } | null = null;
+
+    if (campaignId) {
+      const parsedId = UuidSchema.safeParse(campaignId);
+      if (!parsedId.success) {
+        return { success: false, error: "Invalid campaign ID format." };
+      }
+      if (!canOverrideCampaign) {
+        return {
+          success: false,
+          error: "Unauthorized: only SUPER_ADMIN or ADMIN may select a non-default campaign.",
+        };
+      }
+      const { data, error } = await admin
         .from("campaigns")
-        .select("id")
-        .in("status", ["ACTIVE", "CLOSED"])
-        .order("created_at", { ascending: false })
-        .limit(1)
+        .select("id, public_id, status")
+        .eq("id", parsedId.data)
         .maybeSingle();
-
-      targetCampaignId = activeCampaign?.id;
+      resolvedCandidate = data;
+      campLookupErr = error;
+    } else {
+      const { data, error } = await admin
+        .from("campaigns")
+        .select("id, public_id, status")
+        .eq("public_id", CANONICAL_CAMPAIGN_PUBLIC_ID)
+        .maybeSingle();
+      resolvedCandidate = data;
+      campLookupErr = error;
     }
 
-    if (!targetCampaignId) {
-      return {
-        success: false,
-        error: "No active or closed campaign found for lucky draw.",
-      };
+    if (campLookupErr) {
+      return { success: false, error: campLookupErr.message || "Failed to resolve draw campaign." };
     }
+
+    const campaignValidation = validateResolvedDrawCampaign(resolvedCandidate, {
+      requestedCampaignId: campaignId ?? null,
+      canOverrideCampaign,
+    });
+
+    if (!campaignValidation.valid) {
+      return { success: false, error: campaignValidation.error };
+    }
+
+    const targetCampaignId = campaignValidation.campaign.id;
 
     // 2. Fetch Campaign Details
     const { data: campaign, error: campErr } = await admin
@@ -125,7 +165,8 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
     }
     const prizes: PrizeItem[] = prizesRaw || [];
 
-    // 4. Fetch or Create Active Draw Session for Campaign
+    // 4. Fetch Active Draw Session for Campaign (Read-only: do not auto-insert on overview read)
+    const VIRTUAL_DRAFT_DRAW_ID = "00000000-0000-0000-0000-000000000000";
     let { data: drawSession } = await admin
       .from("draws")
       .select("*")
@@ -135,21 +176,14 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
       .maybeSingle();
 
     if (!drawSession) {
-      // Create initial draw session
-      const { data: newSession, error: createDrawErr } = await admin
-        .from("draws")
-        .insert({
-          campaign_id: targetCampaignId,
-          name: `${campaign.name} — Official Lucky Draw`,
-          status: "DRAFT",
-        })
-        .select()
-        .single();
-
-      if (createDrawErr) {
-        return { success: false, error: createDrawErr.message };
-      }
-      drawSession = newSession;
+      drawSession = {
+        id: VIRTUAL_DRAFT_DRAW_ID,
+        campaign_id: targetCampaignId,
+        name: `${campaign.name} — Official Lucky Draw`,
+        status: "DRAFT",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
     }
 
     // 5. Fetch Existing Draw Results
@@ -244,10 +278,12 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
     let activeSnapshot: EligibilitySnapshot | null = null;
     let pendingApproval: DrawApproval | null = null;
 
-    if (nextPrize && drawSession) {
+    if (nextPrize && drawSession && drawSession.id !== VIRTUAL_DRAFT_DRAW_ID) {
       const { data: snap } = await admin
         .from("draw_eligibility_snapshots")
-        .select("*")
+        .select(
+          "id, draw_id, campaign_id, prize_id, total_eligible_count, previous_winner_count, manual_exclusion_count, snapshot_hash, algorithm_version, seed_commitment, sealing_kid, is_locked, locked_at, locked_by"
+        )
         .eq("draw_id", drawSession.id)
         .eq("prize_id", nextPrize.id)
         .eq("is_locked", true)
@@ -329,7 +365,7 @@ export async function getEligibleTickets(
   }
 ): Promise<ActionResponse<{ tickets: EligibleTicketRosterItem[]; totalCount: number; eligibleCount: number }>> {
   try {
-    await requireAnyRole(["SUPER_ADMIN", "ADMIN", "FUNDRAISING_MANAGER"]);
+    await requireAnyRole(["SUPER_ADMIN", "ADMIN"]);
     const admin = createSupabaseAdminClient();
 
     // 1. Fetch previous winners in the campaign (disqualified from subsequent prizes)
@@ -608,18 +644,58 @@ export async function lockEligibilitySnapshot(input: {
       })
       .parse(input);
 
-    // 1. Fetch draw session & prize
-    const { data: draw } = await admin.from("draws").select("id, campaign_id").eq("id", validated.drawId).single();
-    if (!draw) return { success: false, error: "Draw session not found." };
-
-    const { data: prize } = await admin.from("prizes").select("id, prize_number").eq("id", validated.prizeId).single();
+    // 1. Fetch prize & resolve draw session (creating initial DRAFT session if virtual placeholder was passed)
+    const { data: prize } = await admin
+      .from("prizes")
+      .select("id, campaign_id, prize_number")
+      .eq("id", validated.prizeId)
+      .single();
     if (!prize) return { success: false, error: "Prize not found." };
+
+    let { data: draw } = await admin
+      .from("draws")
+      .select("id, campaign_id")
+      .eq("id", validated.drawId)
+      .maybeSingle();
+
+    if (!draw && validated.drawId === "00000000-0000-0000-0000-000000000000") {
+      const { data: existingCampaignDraw } = await admin
+        .from("draws")
+        .select("id, campaign_id")
+        .eq("campaign_id", prize.campaign_id)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+      if (existingCampaignDraw) {
+        draw = existingCampaignDraw;
+      } else {
+        const { data: campaignRow } = await admin
+          .from("campaigns")
+          .select("name")
+          .eq("id", prize.campaign_id)
+          .single();
+        const { data: createdDraw, error: createDrawErr } = await admin
+          .from("draws")
+          .insert({
+            campaign_id: prize.campaign_id,
+            name: `${campaignRow?.name || "Campaign"} — Official Lucky Draw`,
+            status: "DRAFT",
+          })
+          .select("id, campaign_id")
+          .single();
+        if (createDrawErr || !createdDraw) {
+          return { success: false, error: createDrawErr?.message || "Draw session not found." };
+        }
+        draw = createdDraw;
+      }
+    }
+
+    if (!draw) return { success: false, error: "Draw session not found." };
 
     // 2. Check if snapshot is already locked
     const { data: existing } = await admin
       .from("draw_eligibility_snapshots")
       .select("id, snapshot_hash, total_eligible_count")
-      .eq("draw_id", validated.drawId)
+      .eq("draw_id", draw.id)
       .eq("prize_id", validated.prizeId)
       .eq("is_locked", true)
       .maybeSingle();
@@ -678,14 +754,26 @@ export async function lockEligibilitySnapshot(input: {
     const ticketIds = canonicalRoster.map((t) => t.id);
     const snapshotHash = computeCanonicalSnapshotHash(ticketNumbers);
 
-    // 7. Call authoritative Phase 9C RPC
+    // 7. Generate CSPRNG server seed & commitment at snapshot lock time, seal with context-bound AES-256-GCM
+    // Plaintext serverSeed MUST NOT be persisted or logged; only commitment and sealed envelope are stored.
+    const { serverSeed, seedCommitment } = generateServerSeed();
+    const sealedEnvelope = sealDrawSeed(serverSeed, {
+      campaignId: draw.campaign_id,
+      drawId: draw.id,
+      prizeId: validated.prizeId,
+    });
+
+    // 8. Call authoritative Phase 9C / B2.6 RPC (atomic idempotent per (draw_id, prize_id))
     const { data: snapshotId, error: rpcErr } = await admin.rpc("admin_lock_eligibility_snapshot", {
-      p_draw_id: validated.drawId,
+      p_draw_id: draw.id,
       p_prize_id: validated.prizeId,
       p_snapshot_hash: snapshotHash,
       p_ticket_ids: ticketIds,
       p_ticket_numbers: ticketNumbers,
       p_actor: user.id,
+      p_seed_commitment: seedCommitment,
+      p_sealed_seed_envelope: sealedEnvelope,
+      p_sealing_kid: sealedEnvelope.kid,
     });
 
     if (rpcErr) {
@@ -866,22 +954,33 @@ export async function executePrizeDraw(input: {
       }
     }
 
-    // 4. Generate CSPRNG server entropy or use pre-committed seed
-    let serverSeed: string;
-    let seedCommitment: string;
+    // 4. Retrieve sealed seed envelope & pre-committed seed hash from the locked snapshot (fail closed if missing)
+    const sealedEnvelope = snapshot.sealed_seed_envelope as SealedSeedEnvelope | null | undefined;
+    const seedCommitment = snapshot.seed_commitment as string | null | undefined;
 
-    if (draw.seed_commitment && draw.seed_revealed) {
-      // Re-use session seed if already pre-committed and revealed
-      serverSeed = draw.seed_revealed;
-      seedCommitment = draw.seed_commitment;
-    } else {
-      const entropy = generateServerSeed();
-      serverSeed = entropy.serverSeed;
-      seedCommitment = entropy.seedCommitment;
+    if (!sealedEnvelope || !seedCommitment) {
+      return {
+        success: false,
+        error: "Snapshot is missing pre-committed sealed seed material. Re-lock snapshot with Phase B2.6 sealing.",
+      };
     }
 
-    // 5. Operator / Client entropy contribution
-    const clientEntropy = validated.clientEntropy || `${Date.now()}:${Math.floor(Math.random() * 1000000)}`;
+    const sealingContext = {
+      campaignId: draw.campaign_id,
+      drawId: validated.drawId,
+      prizeId: validated.prizeId,
+    };
+    const serverSeed = unsealDrawSeed(sealedEnvelope, sealingContext);
+
+    if (!verifySeedCommitment(serverSeed, seedCommitment)) {
+      return {
+        success: false,
+        error: "Cryptographic integrity failure: server seed commitment verification failed.",
+      };
+    }
+
+    // 5. Supplementary operator / CSPRNG client entropy (no insecure PRNG fallback)
+    const clientEntropy = resolveClientEntropy(validated.clientEntropy);
 
     // 6. Compute combined seed & derive winning index deterministically (zero modulo bias)
     const combinedSeed = computeCombinedSeed(serverSeed, clientEntropy, snapshot.snapshot_hash, validated.prizeId);
@@ -900,9 +999,24 @@ export async function executePrizeDraw(input: {
       p_client_entropy: clientEntropy,
     });
 
-    if (execErr) {
-      return { success: false, error: execErr.message };
+    if (execErr || !rpcRes?.result_id) {
+      return { success: false, error: execErr?.message || "Draw execution did not return a committed result." };
     }
+
+    // 8. Emit public-safe `draw_executed` Realtime broadcast ONLY after confirmed DB commit (L-01 fix)
+    const { data: campaignForBroadcast } = await admin
+      .from("campaigns")
+      .select("public_id")
+      .eq("id", draw.campaign_id)
+      .maybeSingle();
+
+    await emitPublicDrawExecutedBroadcast({
+      commitSucceeded: !execErr && Boolean(rpcRes?.result_id),
+      rpcError: execErr,
+      resultId: rpcRes.result_id,
+      campaignPublicId: campaignForBroadcast?.public_id || CANONICAL_CAMPAIGN_PUBLIC_ID,
+      prizeNumber: prize.prize_number,
+    });
 
     const { data: createdResult } = await admin
       .from("draw_results")
@@ -1233,4 +1347,48 @@ export async function dispatchWinnerNotification(resultId: string): Promise<Acti
     return { success: false, error: (err as Error).message };
   }
 }
+
+// ============================================================================
+// 12. PUBLIC DRAW WINNERS (TICKET_NUMBER_ONLY — NO PII)
+// ============================================================================
+
+export async function getPublicDrawWinners(
+  campaignPublicId: string = CANONICAL_CAMPAIGN_PUBLIC_ID
+): Promise<ActionResponse<PublicDrawWinnerRecord[]>> {
+  try {
+    const cleanPublicId = (campaignPublicId || CANONICAL_CAMPAIGN_PUBLIC_ID).trim();
+    if (!cleanPublicId || cleanPublicId.length > 128) {
+      return { success: false, error: "Invalid campaign identifier." };
+    }
+
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin.rpc("get_public_draw_winners", {
+      p_campaign_public_id: cleanPublicId,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Explicitly project only TICKET_NUMBER_ONLY fields; never return PII or internal UUIDs
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const winners: PublicDrawWinnerRecord[] = (Array.isArray(data) ? data : []).map((row: any) => ({
+      prize_number: Number(row.prize_number),
+      prize_title: String(row.prize_title ?? ""),
+      ticket_number: String(row.ticket_number ?? ""),
+      drawn_at: String(row.drawn_at ?? ""),
+      algorithm_version: String(row.algorithm_version ?? "SSFI-CSPRNG-V1"),
+      seed_commitment: String(row.seed_commitment ?? ""),
+      seed_revealed: String(row.seed_revealed ?? ""),
+      combined_seed: String(row.combined_seed ?? ""),
+      selection_index: Number(row.selection_index ?? 0),
+      total_candidates: Number(row.total_candidates ?? 0),
+    }));
+
+    return { success: true, data: winners };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
 

@@ -69,6 +69,27 @@ export function deriveWinningIndex(combinedSeed: string, totalCandidates: number
 }
 
 /**
+ * Validates or generates cryptographically secure client/operator entropy.
+ * Never uses Math.random(); fails closed if CSPRNG is unavailable or input is malformed.
+ */
+export function resolveClientEntropy(rawClientEntropy?: string | null): string {
+  if (rawClientEntropy === undefined || rawClientEntropy === null) {
+    const bytes = crypto.randomBytes(16);
+    if (bytes.length !== 16) {
+      throw new Error("CSPRNG failure while generating supplementary client entropy.");
+    }
+    return bytes.toString("hex");
+  }
+
+  const trimmed = rawClientEntropy.trim();
+  if (trimmed.length === 0 || trimmed.length > 500) {
+    throw new Error("Client entropy must be a non-empty string up to 500 characters.");
+  }
+
+  return trimmed;
+}
+
+/**
  * Validates whether a revealed seed matches the expected commitment.
  */
 export function verifySeedCommitment(serverSeed: string, commitment: string): boolean {

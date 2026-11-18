@@ -10,8 +10,10 @@ import { PaymentInstructionsSection } from "@/components/home/PaymentInstruction
 import { OfficialSellerDirectory } from "@/components/home/OfficialSellerDirectory";
 import { OfficialContactsSection } from "@/components/home/OfficialContactsSection";
 import { OfficialFooter } from "@/components/home/OfficialFooter";
+import { PublicDrawWinnersSection } from "@/components/home/PublicDrawWinnersSection";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getPublicSellerDirectory } from "@/server/actions/sellerDirectory";
+import { getPublicDrawWinners } from "@/server/actions/luckyDraw";
 import { evaluateCampaignSchedule } from "@/lib/date/timezone";
 import { manualUpiConfig } from "@/lib/config/payment";
 
@@ -26,14 +28,21 @@ const prizes = [
   ["5th Prize", "Mini Soundbox Celebration"],
 ] as const;
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams?: Promise<{ campaign?: string }>;
+}) {
   await connection();
+  const resolvedParams = searchParams ? await searchParams : undefined;
+  const activeCampaignPublicId =
+    resolvedParams?.campaign?.trim() || "ssfi-fundraising-lucky-draw";
   const db = createSupabaseAdminClient();
 
   const { data: campaign } = await db
     .from("campaigns")
     .select("id, name, status, start_at, end_at, ticket_price_paise, total_ticket_limit, sold_ticket_count")
-    .eq("public_id", "ssfi-fundraising-lucky-draw")
+    .eq("public_id", activeCampaignPublicId)
     .maybeSingle();
 
   const schedule = evaluateCampaignSchedule(
@@ -46,6 +55,8 @@ export default async function Home() {
     ? campaign.ticket_price_paise / 100
     : 100;
   const publicSellers = await getPublicSellerDirectory();
+  const publicWinnersRes = await getPublicDrawWinners(activeCampaignPublicId);
+  const publicWinners = publicWinnersRes.success && publicWinnersRes.data ? publicWinnersRes.data : [];
 
   return (
     <main className="min-h-screen bg-[#fffaf7] text-[#35110f]">
@@ -137,6 +148,12 @@ export default async function Home() {
           </dl>
         </article>
       </section>
+
+      {/* Official Certified Draw Winners (TICKET_NUMBER_ONLY — shown when draw is EXECUTED) */}
+      <PublicDrawWinnersSection
+        initialWinners={publicWinners}
+        campaignPublicId={activeCampaignPublicId}
+      />
 
       {/* Step-by-Step Ticket Purchase Guideline */}
       <PurchaseGuideline

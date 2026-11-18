@@ -40,6 +40,9 @@ export interface EligibilitySnapshot {
   manual_exclusion_count: number;
   snapshot_hash: string;
   algorithm_version: string;
+  seed_commitment?: string | null;
+  sealed_seed_envelope?: unknown;
+  sealing_kid?: string | null;
   is_locked: boolean;
   locked_at: string;
   locked_by: string;
@@ -98,6 +101,19 @@ export interface RandomnessEvidence {
   winning_ticket_number: string;
   verification_status: VerificationStatus;
   created_at: string;
+}
+
+export interface PublicDrawWinnerRecord {
+  prize_number: number;
+  prize_title: string;
+  ticket_number: string;
+  drawn_at: string;
+  algorithm_version: string;
+  seed_commitment: string;
+  seed_revealed: string;
+  combined_seed: string;
+  selection_index: number;
+  total_candidates: number;
 }
 
 export interface DrawResultRecord {

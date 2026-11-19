@@ -1,5 +1,6 @@
 import type { DeliveryPayload } from "./types.ts";
 import { resolveEnvironmentAppUrl } from "../config/appUrl.ts";
+import { formatPrizeLabel, formatPrizeWinnerLabel } from "../draw/formatOrdinal.ts";
 
 /**
  * Escapes HTML characters for safe template rendering.
@@ -770,7 +771,7 @@ export function renderEmailWinnerAnnouncedMessage(payload: WinnerNotificationPay
     ``,
     `Your ticket ${payload.ticketNumber} has officially won a prize in the ${payload.campaignName}!`,
     ``,
-    `Prize Rank: ${payload.prizeNumber === 1 ? "1st Prize (Grand Prize)" : `${payload.prizeNumber}th Prize`}`,
+    `Prize Rank: ${formatPrizeLabel(payload.prizeNumber, { grandLabel: "full" })}`,
     `Prize Title: ${payload.prizeTitle}`,
     `Winning Ticket: ${payload.ticketNumber}`,
     `Attributed Seller: ${payload.sellerName || "Official SSFI Representative"}`,
@@ -810,7 +811,7 @@ export function renderEmailWinnerAnnouncedMessage(payload: WinnerNotificationPay
       <td style="padding: 28px 24px;">
         <div style="background-color: #fef2f2; border: 2px dashed #f87171; border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 24px;">
           <div style="font-size: 13px; font-weight: 700; color: #991b1b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
-            ${payload.prizeNumber === 1 ? "1st Prize Winner (Grand Prize)" : `${payload.prizeNumber}th Prize Winner`}
+            ${formatPrizeWinnerLabel(payload.prizeNumber, { grandLabel: "full" })}
           </div>
           <div style="font-size: 24px; font-weight: 800; color: #7c1619; margin-bottom: 12px;">
             ${safePrizeTitle}

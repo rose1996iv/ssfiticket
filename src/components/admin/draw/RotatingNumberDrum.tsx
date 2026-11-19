@@ -24,6 +24,7 @@ import {
   DrawResultRecord,
   DrawApproval,
 } from "@/lib/draw/types";
+import { formatPrizeLabel, formatPrizeWinnerLabel } from "@/lib/draw/formatOrdinal";
 import { executePrizeDraw } from "@/server/actions/luckyDraw";
 
 interface RotatingNumberDrumProps {
@@ -31,6 +32,11 @@ interface RotatingNumberDrumProps {
   session: DrawSession | null;
   prizes: PrizeItem[];
   snapshot: EligibilitySnapshot | null;
+  snapshots?: EligibilitySnapshot[];
+  eligibleTicketCount?: number;
+  selectedPrizeId?: string | null;
+  onSelectPrize?: (prizeId: string) => void;
+  onGoToEligibility?: (prizeId?: string) => void;
   results: DrawResultRecord[];
   nextPrize: PrizeItem | null;
   approval: DrawApproval | null;
@@ -58,7 +64,7 @@ class DrumAudio {
       }
     }
     if (this.ctx && this.ctx.state === "suspended") {
-      this.ctx.resume().catch(() => {});
+      this.ctx.resume().catch(() => { });
     }
     return this.ctx;
   }
@@ -112,9 +118,15 @@ export function RotatingNumberDrum({
   session,
   prizes,
   snapshot,
+  snapshots,
+  eligibleTicketCount,
+  selectedPrizeId,
+  onSelectPrize,
+  onGoToEligibility,
   results,
   nextPrize,
   approval,
+  currentUser,
   onDrawCompleted,
   onRequestApproval,
   onVerifyEvidence,
@@ -126,6 +138,9 @@ export function RotatingNumberDrum({
   const initialTicketNumber = initialResult?.ticket_number || DEFAULT_FORMAT;
 
   const [isSpinning, setIsSpinning] = useState(false);
+  const [internalSelectedPrizeId, setInternalSelectedPrizeId] = useState<string | null>(
+    () => selectedPrizeId || nextPrize?.id || initialResult?.prize_id || prizes[0]?.id || null
+  );
   const [displayedChars, setDisplayedChars] = useState<string[]>(() => initialTicketNumber.split(""));
   const [activeResult, setActiveResult] = useState<DrawResultRecord | null>(initialResult);
   const [drawError, setDrawError] = useState<string | null>(null);
@@ -137,6 +152,45 @@ export function RotatingNumberDrum({
 
   const spinIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const drumContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const effectiveSelectedPrizeId =
+    selectedPrizeId !== undefined ? selectedPrizeId : internalSelectedPrizeId;
+
+  const inspectedPrize =
+    prizes.find((p) => p.id === effectiveSelectedPrizeId) ||
+    nextPrize ||
+    (activeResult ? prizes.find((p) => p.id === activeResult.prize_id) || null : null) ||
+    prizes[0] ||
+    null;
+
+  const inspectedResult = inspectedPrize
+    ? results.find((r) => r.prize_id === inspectedPrize.id) || null
+    : null;
+
+  const allSnapshots = snapshots || (snapshot ? [snapshot] : []);
+  const inspectedSnapshot = inspectedPrize
+    ? allSnapshots.find((s) => s.prize_id === inspectedPrize.id) ||
+    (snapshot?.prize_id === inspectedPrize.id ? snapshot : null)
+    : snapshot;
+
+  const handleSelectPrizeCard = (prize: PrizeItem) => {
+    if (isSpinning) return;
+    setDrawError(null);
+    setInternalSelectedPrizeId(prize.id);
+    if (onSelectPrize) {
+      onSelectPrize(prize.id);
+    }
+    const existingResult = results.find((r) => r.prize_id === prize.id) || null;
+    if (existingResult) {
+      setActiveResult(existingResult);
+      setDisplayedChars(existingResult.ticket_number.split(""));
+      setStoppingReels(new Array(existingResult.ticket_number.length).fill(true));
+    } else {
+      setActiveResult(null);
+      setDisplayedChars(DEFAULT_FORMAT.split(""));
+      setStoppingReels(new Array(DEFAULT_FORMAT.length).fill(true));
+    }
+  };
 
   // Sync activeResult when results prop updates (e.g. notification stamp or reconnect refresh)
   useEffect(() => {
@@ -222,7 +276,7 @@ export function RotatingNumberDrum({
   // Safe replay animation
   const handleReplayAnimation = () => {
     if (isSpinning || !activeResult) return;
-    runDrumAnimation(activeResult.ticket_number, () => {});
+    runDrumAnimation(activeResult.ticket_number, () => { });
   };
 
   // Main draw execution handler
@@ -304,6 +358,51 @@ export function RotatingNumberDrum({
   // Sorted ceremonial sequence (5th down to 1st)
   const ceremonialPrizes = [...prizes].sort((a, b) => b.prize_number - a.prize_number);
 
+  const hasDrawRole = ["SUPER_ADMIN", "ADMIN"].includes(currentUser.role);
+  const targetPrizeForDraw = inspectedPrize || nextPrize;
+  const isTargetCurrentNext = Boolean(
+    targetPrizeForDraw && nextPrize && targetPrizeForDraw.id === nextPrize.id && !inspectedResult
+  );
+  const isTargetSnapshotLocked = Boolean(
+    inspectedSnapshot?.is_locked &&
+    targetPrizeForDraw &&
+    inspectedSnapshot.prize_id === targetPrizeForDraw.id
+  );
+  const isFirstPrizeTarget = targetPrizeForDraw?.prize_number === 1;
+  const isFirstPrizeApproved = !isFirstPrizeTarget || approval?.status === "APPROVED";
+  const canExecuteCurrentDraw =
+    hasDrawRole &&
+    isTargetCurrentNext &&
+    isTargetSnapshotLocked &&
+    isFirstPrizeApproved &&
+    !isSpinning;
+
+  // Determine exact disabled reason for the Draw button when it is disabled
+  let disabledReasonType:
+    | "NONE"
+    | "INSUFFICIENT_AUTHORIZATION"
+    | "DRAW_ALREADY_EXECUTED"
+    | "PREVIOUS_PRIZE_REQUIRED"
+    | "NO_ELIGIBLE_TICKETS"
+    | "SNAPSHOT_REQUIRED"
+    | "DUAL_APPROVAL_REQUIRED" = "NONE";
+
+  if (!hasDrawRole) {
+    disabledReasonType = "INSUFFICIENT_AUTHORIZATION";
+  } else if (inspectedResult || !nextPrize) {
+    disabledReasonType = "DRAW_ALREADY_EXECUTED";
+  } else if (targetPrizeForDraw && targetPrizeForDraw.id !== nextPrize.id) {
+    disabledReasonType = "PREVIOUS_PRIZE_REQUIRED";
+  } else if (!isTargetSnapshotLocked) {
+    if (eligibleTicketCount !== undefined && eligibleTicketCount <= 0) {
+      disabledReasonType = "NO_ELIGIBLE_TICKETS";
+    } else {
+      disabledReasonType = "SNAPSHOT_REQUIRED";
+    }
+  } else if (isFirstPrizeTarget && !isFirstPrizeApproved) {
+    disabledReasonType = "DUAL_APPROVAL_REQUIRED";
+  }
+
   return (
     <div className="space-y-6">
       {/* ==================================================================== */}
@@ -326,36 +425,46 @@ export function RotatingNumberDrum({
           </div>
         </div>
 
-        {/* Prize sequence grid */}
+        {/* Prize sequence grid — every card is an interactive button */}
         <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
           {ceremonialPrizes.map((p) => {
             const resultForPrize = results.find((r) => r.prize_id === p.id);
+            const snapshotForCard =
+              allSnapshots.find((s) => s.prize_id === p.id) ||
+              (snapshot?.prize_id === p.id ? snapshot : null);
             const isCompleted = Boolean(resultForPrize);
             const isCurrent = nextPrize?.id === p.id && !isCompleted;
+            const isSelected = inspectedPrize?.id === p.id;
             const isFirstPrize = p.prize_number === 1;
+            const isCardReadyToDraw =
+              isCurrent &&
+              Boolean(snapshotForCard?.is_locked) &&
+              (!isFirstPrize || approval?.status === "APPROVED");
 
             return (
-              <div
+              <button
                 key={p.id}
-                className={`relative rounded-xl p-3.5 border transition-all ${
-                  isCompleted
-                    ? "bg-[#f0fdf4] border-[#bbf7d0] text-[#166534]"
-                    : isCurrent
-                    ? "bg-[#fef2f2] border-[#7c1619] ring-2 ring-[#7c1619]/20 text-[#7c1619] shadow-sm"
-                    : "bg-[#faf8f6] border-[#eadbcf] text-[#705a54] opacity-80"
-                }`}
+                type="button"
+                data-testid={`prize-card-${p.prize_number}`}
+                aria-pressed={isSelected}
+                onClick={() => handleSelectPrizeCard(p)}
+                className={`relative text-left rounded-xl p-3.5 border transition-all cursor-pointer focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7c1619] focus-visible:ring-2 focus-visible:ring-[#d6a23b] focus-visible:ring-offset-2 focus-visible:ring-offset-white ${isCompleted
+                  ? "bg-[#f0fdf4] border-[#bbf7d0] text-[#166534] hover:border-[#4ade80]"
+                  : isCurrent
+                    ? "bg-[#fef2f2] border-[#7c1619] text-[#7c1619] shadow-sm hover:bg-[#fee2e2]/60"
+                    : "bg-[#faf8f6] border-[#eadbcf] text-[#705a54] hover:bg-[#fffaf7] hover:border-[#d6a23b]"
+                  } ${isSelected ? "ring-2 ring-[#7c1619] shadow-md" : ""}`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span
-                    className={`text-xs font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                      isCompleted
-                        ? "bg-[#dcfce7] text-[#15803d]"
-                        : isCurrent
+                    className={`text-xs font-extrabold uppercase px-2 py-0.5 rounded-full ${isCompleted
+                      ? "bg-[#dcfce7] text-[#15803d]"
+                      : isCurrent
                         ? "bg-[#7c1619] text-white"
                         : "bg-[#e8d6c5] text-[#5c3e34]"
-                    }`}
+                      }`}
                   >
-                    {p.prize_number === 1 ? "1st (Grand)" : `${p.prize_number}th Prize`}
+                    {formatPrizeLabel(p.prize_number)}
                   </span>
 
                   {isCompleted ? (
@@ -379,24 +488,32 @@ export function RotatingNumberDrum({
                     <span className="font-mono font-bold text-[#166534]">
                       {resultForPrize.ticket_number}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveResult(resultForPrize)}
-                      className="text-[11px] underline font-medium hover:text-[#14532d]"
-                    >
-                      View
-                    </button>
+                    <span className="text-[11px] underline font-medium text-[#14532d]">
+                      {isSelected ? "Selected" : "View"}
+                    </span>
                   </div>
                 ) : isCurrent ? (
-                  <div className="mt-2 pt-2 border-t border-[#fecaca] text-xs font-bold text-[#7c1619]">
-                    Ready to Draw &rarr;
+                  <div className="mt-2 pt-2 border-t border-[#fecaca] text-xs font-bold text-[#7c1619] flex items-center justify-between">
+                    <span>
+                      {isCardReadyToDraw
+                        ? "Ready to Draw →"
+                        : !snapshotForCard?.is_locked
+                          ? "Snapshot Required"
+                          : "Dual Auth Required"}
+                    </span>
+                    {isSelected && <span className="text-[10px] uppercase">Active</span>}
                   </div>
                 ) : (
-                  <div className="mt-2 pt-2 border-t border-[#eadbcf] text-xs text-[#a89086]">
-                    {isFirstPrize ? "Dual Control" : "Upcoming"}
+                  <div className="mt-2 pt-2 border-t border-[#eadbcf] text-xs text-[#a89086] flex items-center justify-between">
+                    <span>{isFirstPrize ? "Dual Control" : "Awaiting Sequence"}</span>
+                    {isSelected && (
+                      <span className="text-[10px] font-bold text-[#7c1619] uppercase">
+                        Selected
+                      </span>
+                    )}
                   </div>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -421,11 +538,13 @@ export function RotatingNumberDrum({
             <Sparkles className="w-3.5 h-3.5" /> Provably Fair Mechanical Drum • CSPRNG
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-            {nextPrize
-              ? `Drawing ${nextPrize.prize_number === 1 ? "1st Prize (Grand Prize)" : `${nextPrize.prize_number}th Prize`}: ${nextPrize.title}`
-              : activeResult
-              ? `${activeResult.prize_number === 1 ? "1st Prize" : `${activeResult.prize_number}th Prize`} Drawn: ${activeResult.prize_title}`
-              : "All Campaign Prizes Drawn"}
+            {inspectedResult
+              ? `${formatPrizeLabel(inspectedResult.prize_number)} Drawn: ${inspectedResult.prize_title}`
+              : targetPrizeForDraw
+                ? `Drawing ${formatPrizeLabel(targetPrizeForDraw.prize_number, { grandLabel: "full" })}: ${targetPrizeForDraw.title}`
+                : activeResult
+                  ? `${formatPrizeLabel(activeResult.prize_number)} Drawn: ${activeResult.prize_title}`
+                  : "All Campaign Prizes Drawn"}
           </h2>
           <p className="text-xs sm:text-sm text-[#f5d9c2]/80 mt-1">
             Rejection-sampled CSPRNG • HMAC-SHA256 • Pre-committed Seed Reveal
@@ -457,11 +576,10 @@ export function RotatingNumberDrum({
               return (
                 <div
                   key={idx}
-                  className={`relative w-9 h-14 sm:w-13 sm:h-20 flex items-center justify-center rounded-lg sm:rounded-xl font-mono text-2xl sm:text-4xl font-black shadow-lg transition-all duration-150 ${
-                    isLocked
-                      ? "bg-gradient-to-b from-[#2a0e10] via-[#541619] to-[#2a0e10] text-[#fde047] border-2 border-[#f3ce75] shadow-[0_0_12px_rgba(243,206,117,0.4)]"
-                      : "bg-gradient-to-b from-[#1a0a0b] via-[#331113] to-[#1a0a0b] text-[#fbcfe8] border border-[#a82024]/60 blur-[0.4px] animate-pulse"
-                  }`}
+                  className={`relative w-9 h-14 sm:w-13 sm:h-20 flex items-center justify-center rounded-lg sm:rounded-xl font-mono text-2xl sm:text-4xl font-black shadow-lg transition-all duration-150 ${isLocked
+                    ? "bg-gradient-to-b from-[#2a0e10] via-[#541619] to-[#2a0e10] text-[#fde047] border-2 border-[#f3ce75] shadow-[0_0_12px_rgba(243,206,117,0.4)]"
+                    : "bg-gradient-to-b from-[#1a0a0b] via-[#331113] to-[#1a0a0b] text-[#fbcfe8] border border-[#a82024]/60 blur-[0.4px] animate-pulse"
+                    }`}
                 >
                   {/* Subtle inner drum reel texture lines */}
                   <div className="pointer-events-none absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-black/50 to-transparent rounded-t-lg sm:rounded-t-xl" />
@@ -481,8 +599,8 @@ export function RotatingNumberDrum({
               {isSpinning
                 ? "DECELERATING REELS..."
                 : activeResult
-                ? `INDEX: #${activeResult.selection_index}`
-                : "AWAITING DRAW"}
+                  ? `INDEX: #${activeResult.selection_index}`
+                  : "AWAITING DRAW"}
             </span>
           </div>
         </div>
@@ -499,70 +617,213 @@ export function RotatingNumberDrum({
         )}
 
         {/* Draw controls & trigger */}
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6">
-          {nextPrize ? (
-            <>
-              {nextPrize.prize_number === 1 && (!approval || approval.status !== "APPROVED") ? (
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  <div className="bg-[#fffaf7]/10 backdrop-blur-xs border border-[#f3ce75]/40 rounded-xl px-4 py-2.5 text-xs text-[#f5d9c2] flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-[#f3ce75]" />
+        <div className="flex flex-col items-center justify-center gap-4 mt-6">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            {targetPrizeForDraw && !inspectedResult && nextPrize ? (
+              <button
+                type="button"
+                data-testid="draw-prize-button"
+                disabled={!canExecuteCurrentDraw}
+                onClick={handleDrawWinner}
+                className={`relative group px-8 py-4 rounded-2xl text-base font-extrabold uppercase tracking-wider flex items-center gap-3 transition-all duration-200 shadow-xl ${!canExecuteCurrentDraw
+                  ? "bg-stone-700 text-stone-400 cursor-not-allowed border border-stone-600"
+                  : "bg-gradient-to-r from-[#d97706] via-[#f59e0b] to-[#d97706] text-[#2d1810] hover:scale-105 active:scale-95 border-2 border-[#fef08a] shadow-[0_0_24px_rgba(245,158,11,0.5)]"
+                  }`}
+              >
+                {isSpinning ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-[#2d1810] border-t-transparent rounded-full animate-spin" />
+                    <span>Selecting Winner...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5 fill-current" />
                     <span>
-                      Policy A Dual Control: 1st Prize requires two-person authorization.
+                      Draw {formatPrizeLabel(targetPrizeForDraw.prize_number, { grandLabel: "full" })}
                     </span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="text-center">
+                <span className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#166534]/40 border border-[#22c55e]/50 text-[#86efac] text-xs font-bold uppercase tracking-wider">
+                  <CheckCircle2 className="w-4 h-4" />{" "}
+                  {!nextPrize
+                    ? "All Campaign Prizes Successfully Drawn"
+                    : `${formatPrizeLabel(inspectedResult?.prize_number ?? 1)} Already Executed`}
+                </span>
+              </div>
+            )}
+
+            {activeResult && !isSpinning && (
+              <button
+                type="button"
+                onClick={handleReplayAnimation}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/20 flex items-center gap-1.5 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Replay Reveal
+              </button>
+            )}
+          </div>
+
+          {/* Explicit Disabled-State & Precondition Explanation Panel */}
+          {disabledReasonType !== "NONE" && !isSpinning && (
+            <div
+              data-testid="draw-disabled-reason"
+              className="w-full max-w-2xl rounded-2xl bg-black/45 border border-[#f3ce75]/40 p-4 text-xs text-[#f5d9c2]"
+            >
+              {disabledReasonType === "SNAPSHOT_REQUIRED" && targetPrizeForDraw && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Lock className="w-4 h-4 text-[#f3ce75] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-[#f3ce75]">
+                        Eligibility Snapshot Required
+                      </p>
+                      <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                        Drawing{" "}
+                        <strong>
+                          {formatPrizeLabel(targetPrizeForDraw.prize_number, { grandLabel: "full" })}{" "}
+                          ({targetPrizeForDraw.title})
+                        </strong>{" "}
+                        is disabled because an immutable eligibility snapshot and pre-committed cryptographic seed have not been locked yet
+                        {eligibleTicketCount !== undefined
+                          ? ` (${eligibleTicketCount} eligible tickets ready in pool).`
+                          : "."}
+                      </p>
+                    </div>
+                  </div>
+                  {onGoToEligibility && (
+                    <button
+                      type="button"
+                      data-testid="cta-lock-snapshot"
+                      onClick={() => onGoToEligibility(targetPrizeForDraw.id)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-[#f3ce75] text-[#2d1810] hover:bg-[#ebd082] shrink-0 transition-colors shadow-sm"
+                    >
+                      Lock Eligibility Snapshot &rarr;
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {disabledReasonType === "NO_ELIGIBLE_TICKETS" && targetPrizeForDraw && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-amber-300">No Eligible Tickets</p>
+                      <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                        There are currently 0 eligible issued tickets with verified payments available for{" "}
+                        <strong>{targetPrizeForDraw.title}</strong>. At least one eligible ticket is required to lock a snapshot and execute a draw.
+                      </p>
+                    </div>
+                  </div>
+                  {onGoToEligibility && (
+                    <button
+                      type="button"
+                      onClick={() => onGoToEligibility(targetPrizeForDraw.id)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 text-white shrink-0 transition-colors"
+                    >
+                      Inspect Roster &rarr;
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {disabledReasonType === "PREVIOUS_PRIZE_REQUIRED" && targetPrizeForDraw && nextPrize && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Clock className="w-4 h-4 text-[#f3ce75] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-[#f3ce75]">
+                        Previous Prize Must Be Completed
+                      </p>
+                      <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                        Sequential ceremonial reveal (5th &rarr; 4th &rarr; 3rd &rarr; 2nd &rarr; 1st) is strictly enforced. You must complete{" "}
+                        <strong>
+                          {formatPrizeLabel(nextPrize.prize_number)} ({nextPrize.title})
+                        </strong>{" "}
+                        before{" "}
+                        <strong>{formatPrizeLabel(targetPrizeForDraw.prize_number)}</strong>{" "}
+                        can be locked or drawn.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="cta-switch-current-prize"
+                    onClick={() => handleSelectPrizeCard(nextPrize)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#f3ce75] text-[#2d1810] hover:bg-[#ebd082] shrink-0 transition-colors shadow-sm"
+                  >
+                    Switch to {formatPrizeLabel(nextPrize.prize_number)} &rarr;
+                  </button>
+                </div>
+              )}
+
+              {disabledReasonType === "DUAL_APPROVAL_REQUIRED" && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Lock className="w-4 h-4 text-[#f3ce75] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-[#f3ce75]">
+                        Policy A Dual Authorization Required
+                      </p>
+                      <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                        The 1st Prize eligibility snapshot is locked, but executing the Grand Prize draw requires initiation by a{" "}
+                        <strong>SUPER_ADMIN</strong> and approval by a distinct administrator (Current status:{" "}
+                        <strong>{approval?.status || "NOT INITIATED"}</strong>).
+                      </p>
+                    </div>
                   </div>
                   {onRequestApproval && (
                     <button
                       type="button"
                       onClick={onRequestApproval}
-                      className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#f3ce75] text-[#2d1810] hover:bg-[#ebd082] transition-colors shadow-md"
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-[#f3ce75] text-[#2d1810] hover:bg-[#ebd082] shrink-0 transition-colors shadow-sm"
                     >
-                      Open Dual Authorization
+                      Open Dual Authorization &rarr;
                     </button>
                   )}
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isSpinning || !snapshot?.is_locked}
-                  onClick={handleDrawWinner}
-                  className={`relative group px-8 py-4 rounded-2xl text-base font-extrabold uppercase tracking-wider flex items-center gap-3 transition-all duration-200 shadow-xl ${
-                    isSpinning || !snapshot?.is_locked
-                      ? "bg-stone-700 text-stone-400 cursor-not-allowed border border-stone-600"
-                      : "bg-gradient-to-r from-[#d97706] via-[#f59e0b] to-[#d97706] text-[#2d1810] hover:scale-105 active:scale-95 border-2 border-[#fef08a] shadow-[0_0_24px_rgba(245,158,11,0.5)]"
-                  }`}
-                >
-                  {isSpinning ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-[#2d1810] border-t-transparent rounded-full animate-spin" />
-                      <span>Selecting Winner...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5 fill-current" />
-                      <span>
-                        Draw {nextPrize.prize_number === 1 ? "1st Prize (Grand Prize)" : `${nextPrize.prize_number}th Prize`}
-                      </span>
-                    </>
-                  )}
-                </button>
               )}
-            </>
-          ) : (
-            <div className="text-center">
-              <span className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#166534]/40 border border-[#22c55e]/50 text-[#86efac] text-xs font-bold uppercase tracking-wider">
-                <CheckCircle2 className="w-4 h-4" /> All Campaign Prizes Successfully Drawn
-              </span>
-            </div>
-          )}
 
-          {activeResult && !isSpinning && (
-            <button
-              type="button"
-              onClick={handleReplayAnimation}
-              className="px-4 py-2.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/20 flex items-center gap-1.5 transition-colors"
-            >
-              <RotateCcw className="w-3.5 h-3.5" /> Replay Reveal
-            </button>
+              {disabledReasonType === "INSUFFICIENT_AUTHORIZATION" && (
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-red-300">Insufficient Authorization</p>
+                    <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                      Only an authenticated administrator with SUPER_ADMIN or ADMIN role is authorized to execute prize draws.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {disabledReasonType === "DRAW_ALREADY_EXECUTED" && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-[#86efac] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-[#86efac]">Draw Already Executed</p>
+                      <p className="mt-0.5 leading-relaxed text-[#f5d9c2]/90">
+                        {inspectedResult
+                          ? `${inspectedResult.prize_title} has already been drawn (Winning Ticket: ${inspectedResult.ticket_number}). Single-winner uniqueness and immutable result invariants prevent re-drawing.`
+                          : "All five scheduled prizes for this campaign have been drawn and certified."}
+                      </p>
+                    </div>
+                  </div>
+                  {nextPrize && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPrizeCard(nextPrize)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-[#f3ce75] text-[#2d1810] hover:bg-[#ebd082] shrink-0 transition-colors shadow-sm"
+                    >
+                      Switch to {formatPrizeLabel(nextPrize.prize_number)} &rarr;
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -582,7 +843,7 @@ export function RotatingNumberDrum({
                   <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-[#fef2f2] text-[#7c1619] border border-[#fecaca]">
                     {activeResult.prize_number === 1
                       ? "Grand Prize Winner"
-                      : `${activeResult.prize_number}th Prize Winner`}
+                      : formatPrizeWinnerLabel(activeResult.prize_number)}
                   </span>
                   <span className="text-xs text-[#705a54]">
                     Drawn: {new Date(activeResult.created_at).toLocaleTimeString("en-IN")} IST
@@ -682,11 +943,10 @@ export function RotatingNumberDrum({
                 <button
                   type="button"
                   onClick={() => onNotifyWinner(activeResult)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs ${
-                    activeResult.notified_at
-                      ? "bg-[#f0fdf4] text-[#166534] border border-[#bbf7d0]"
-                      : "bg-[#7c1619] hover:bg-[#601012] text-white"
-                  }`}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs ${activeResult.notified_at
+                    ? "bg-[#f0fdf4] text-[#166534] border border-[#bbf7d0]"
+                    : "bg-[#7c1619] hover:bg-[#601012] text-white"
+                    }`}
                 >
                   <Send className="w-3.5 h-3.5" />
                   {activeResult.notified_at ? "Notification Sent (Re-send)" : "Notify Winner"}

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Trophy, ShieldCheck, RefreshCw } from "lucide-react";
 import type { PublicDrawWinnerRecord } from "@/lib/draw/types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { formatPrizeLabel } from "@/lib/draw/formatOrdinal";
 import { CANONICAL_CAMPAIGN_PUBLIC_ID } from "@/lib/draw/campaignSelection";
 import {
   buildPublicWinnersChannelName,
@@ -165,7 +166,7 @@ export function PublicDrawWinnersSection({
                       : "bg-[#fef2f2] text-[#7c1619] border border-[#fecaca]"
                   }`}
                 >
-                  {w.prize_number === 1 ? "1st Prize (Grand)" : `${w.prize_number}th Prize`}
+                  {formatPrizeLabel(w.prize_number, { grandLabel: "short" })}
                 </span>
                 <span className="text-[11px] font-mono text-[#705a54]">
                   #{w.selection_index} / {w.total_candidates}

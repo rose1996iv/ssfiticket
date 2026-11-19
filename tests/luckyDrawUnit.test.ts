@@ -12,6 +12,11 @@ import {
   computeCombinedSeed,
   deriveWinningIndex,
 } from "../src/lib/draw/randomness.ts";
+import {
+  formatOrdinal,
+  formatPrizeLabel,
+  formatPrizeWinnerLabel,
+} from "../src/lib/draw/formatOrdinal.ts";
 
 test("Lucky Draw Unit Test Suite — Cryptography & Canonical Determinism", async (t) => {
   // ==========================================================================
@@ -242,5 +247,53 @@ test("Lucky Draw Unit Test Suite — Cryptography & Canonical Determinism", asyn
     });
     assert.equal(tamperedIndexResult.isValid, false);
     assert.equal(tamperedIndexResult.indexMatches, false);
+  });
+
+  // ==========================================================================
+  // 5. ORDINAL & PRIZE RANK FORMATTING (SAT-OBS-02)
+  // ==========================================================================
+  await t.test("formatOrdinal handles standard, teen, and multi-digit ordinals accurately", () => {
+    assert.equal(formatOrdinal(1), "1st");
+    assert.equal(formatOrdinal(2), "2nd");
+    assert.equal(formatOrdinal(3), "3rd");
+    assert.equal(formatOrdinal(4), "4th");
+    assert.equal(formatOrdinal(5), "5th");
+    assert.equal(formatOrdinal(10), "10th");
+    assert.equal(formatOrdinal(11), "11th");
+    assert.equal(formatOrdinal(12), "12th");
+    assert.equal(formatOrdinal(13), "13th");
+    assert.equal(formatOrdinal(14), "14th");
+    assert.equal(formatOrdinal(21), "21st");
+    assert.equal(formatOrdinal(22), "22nd");
+    assert.equal(formatOrdinal(23), "23rd");
+    assert.equal(formatOrdinal(24), "24th");
+    assert.equal(formatOrdinal(101), "101st");
+    assert.equal(formatOrdinal(111), "111th");
+    assert.equal(formatOrdinal(112), "112th");
+    assert.equal(formatOrdinal(113), "113th");
+    assert.equal(formatOrdinal(0), "0th");
+    assert.equal(formatOrdinal(Number.NaN), "NaN");
+  });
+
+  await t.test("formatPrizeLabel formats 1st through 5th Prize consistently without malformed suffixes", () => {
+    assert.equal(formatPrizeLabel(1), "1st Prize");
+    assert.equal(formatPrizeLabel(2), "2nd Prize");
+    assert.equal(formatPrizeLabel(3), "3rd Prize");
+    assert.equal(formatPrizeLabel(4), "4th Prize");
+    assert.equal(formatPrizeLabel(5), "5th Prize");
+
+    assert.equal(formatPrizeLabel(1, { grandLabel: "short" }), "1st Prize (Grand)");
+    assert.equal(formatPrizeLabel(1, { grandLabel: "full" }), "1st Prize (Grand Prize)");
+    assert.equal(formatPrizeLabel(2, { grandLabel: "short" }), "2nd Prize");
+    assert.equal(formatPrizeLabel(3, { grandLabel: "full" }), "3rd Prize");
+  });
+
+  await t.test("formatPrizeWinnerLabel formats winner badges consistently", () => {
+    assert.equal(formatPrizeWinnerLabel(1), "1st Prize Winner");
+    assert.equal(formatPrizeWinnerLabel(1, { grandLabel: "full" }), "1st Prize Winner (Grand Prize)");
+    assert.equal(formatPrizeWinnerLabel(2), "2nd Prize Winner");
+    assert.equal(formatPrizeWinnerLabel(3), "3rd Prize Winner");
+    assert.equal(formatPrizeWinnerLabel(4), "4th Prize Winner");
+    assert.equal(formatPrizeWinnerLabel(5), "5th Prize Winner");
   });
 });

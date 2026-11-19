@@ -12,6 +12,7 @@ import {
   DrawOverviewData,
   DrawResultRecord,
 } from "@/lib/draw/types";
+import { formatPrizeLabel } from "@/lib/draw/formatOrdinal";
 import { getDrawOverview } from "@/server/actions/luckyDraw";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { RotatingNumberDrum } from "./RotatingNumberDrum";
@@ -30,7 +31,16 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   const [activeTab, setActiveTab] = useState<"stage" | "eligibility" | "results" | "approval">(
     "stage"
   );
+  const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(
+    () =>
+      initialData.nextPrize?.id ||
+      initialData.prizes.find((p) => p.prize_number === 1)?.id ||
+      initialData.prizes[0]?.id ||
+      null
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const hadDisconnectRef = useRef(false);
   const refreshInFlightRef = useRef(false);
@@ -46,17 +56,24 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   const [selectedResultIdForNotify, setSelectedResultIdForNotify] = useState<string | null>(null);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
 
-  const refreshOverview = useCallback(async () => {
+  const refreshOverview = useCallback(async (isManual = false) => {
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     setIsRefreshing(true);
+    if (isManual) setRefreshError(null);
     try {
       const res = await getDrawOverview(data.campaign?.id);
       if (res.success && res.data) {
         setData(res.data);
+        setRefreshError(null);
+        setLastRefreshedAt(new Date().toLocaleTimeString("en-IN"));
+      } else if (isManual) {
+        setRefreshError(res.error || "Failed to refresh draw overview.");
       }
-    } catch {
-      // Ignore transient network errors during background refresh
+    } catch (err) {
+      if (isManual) {
+        setRefreshError((err as Error).message || "Network error while refreshing draw state.");
+      }
     } finally {
       refreshInFlightRef.current = false;
       setIsRefreshing(false);
@@ -64,7 +81,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   }, [data.campaign?.id]);
 
   const handleRefresh = async () => {
-    await refreshOverview();
+    await refreshOverview(true);
   };
 
   // Realtime subscription + browser online/visibility reconnect synchronization
@@ -172,6 +189,22 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
   };
 
   const { campaign, prizes, drawSession, results, nextPrize, activeSnapshot, pendingApproval, userRole } = data;
+  const allSnapshots = data.snapshots || (activeSnapshot ? [activeSnapshot] : []);
+  const selectedPrize =
+    prizes.find((p) => p.id === selectedPrizeId) ||
+    nextPrize ||
+    prizes.find((p) => p.prize_number === 1) ||
+    prizes[0] ||
+    null;
+  const selectedPrizeSnapshot = selectedPrize
+    ? allSnapshots.find((s) => s.prize_id === selectedPrize.id) ||
+      (activeSnapshot?.prize_id === selectedPrize.id ? activeSnapshot : null)
+    : activeSnapshot;
+  const firstPrize = prizes.find((p) => p.prize_number === 1) || null;
+  const firstPrizeSnapshot = firstPrize
+    ? allSnapshots.find((s) => s.prize_id === firstPrize.id) ||
+      (activeSnapshot?.prize_id === firstPrize.id ? activeSnapshot : null)
+    : null;
 
   const totalPrizes = prizes.length || 5;
   const completedPrizes = results.length;
@@ -205,6 +238,14 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
               Offline — Reconnecting
             </span>
           )}
+          {lastRefreshedAt && isOnline && (
+            <span
+              data-testid="refresh-synced-badge"
+              className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200"
+            >
+              Synced {lastRefreshedAt}
+            </span>
+          )}
           <button
             type="button"
             onClick={handleRefresh}
@@ -216,6 +257,19 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
           </button>
         </div>
       </div>
+
+      {refreshError && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-xs text-red-800 flex items-center justify-between">
+          <span>{refreshError}</span>
+          <button
+            type="button"
+            onClick={() => setRefreshError(null)}
+            className="font-bold underline ml-3"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 2. NAVIGATION TABS                                                   */}
@@ -233,7 +287,7 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
           <Trophy className="w-4 h-4" /> Live Drum Stage
           {nextPrize && (
             <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-white/20 text-white">
-              {nextPrize.prize_number === 1 ? "1st Prize" : `${nextPrize.prize_number}th Prize`}
+              {formatPrizeLabel(nextPrize.prize_number)}
             </span>
           )}
         </button>
@@ -305,6 +359,14 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
             session={drawSession}
             prizes={prizes}
             snapshot={activeSnapshot}
+            snapshots={allSnapshots}
+            eligibleTicketCount={data.eligibleTicketCount}
+            selectedPrizeId={selectedPrize?.id || null}
+            onSelectPrize={(prizeId) => setSelectedPrizeId(prizeId)}
+            onGoToEligibility={(prizeId) => {
+              if (prizeId) setSelectedPrizeId(prizeId);
+              setActiveTab("eligibility");
+            }}
             results={results}
             nextPrize={nextPrize}
             approval={pendingApproval}
@@ -354,8 +416,12 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
         <EligibilityManager
           campaignId={campaign?.id || ""}
           drawId={drawSession?.id || ""}
-          activePrize={nextPrize || prizes[0] || null}
-          activeSnapshot={activeSnapshot}
+          prizes={prizes}
+          nextPrize={nextPrize}
+          snapshots={allSnapshots}
+          onSelectPrize={(prizeId) => setSelectedPrizeId(prizeId)}
+          activePrize={selectedPrize}
+          activeSnapshot={selectedPrizeSnapshot}
           onSnapshotLocked={() => {
             void refreshOverview();
             setActiveTab("stage");
@@ -376,11 +442,11 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
       {/* TAB 4: 1ST PRIZE DUAL AUTHORIZATION */}
       {activeTab === "approval" && (
         <div className="max-w-3xl mx-auto space-y-6">
-          {drawSession && prizes.some((p) => p.prize_number === 1) && activeSnapshot ? (
+          {drawSession && firstPrize && firstPrizeSnapshot ? (
             <FirstPrizeApprovalCard
               drawId={drawSession.id}
-              prizeId={prizes.find((p) => p.prize_number === 1)!.id}
-              snapshot={activeSnapshot}
+              prizeId={firstPrize.id}
+              snapshot={firstPrizeSnapshot}
               approval={pendingApproval}
               currentUser={{
                 userId: userRole.userId,
@@ -399,11 +465,16 @@ export function LuckyDrawDashboard({ initialData }: LuckyDrawDashboardProps) {
                 Eligibility Snapshot Required
               </h4>
               <p className="text-xs text-[#a89086] max-w-md mx-auto mt-1 mb-4">
-                Before dual authorization can be requested or approved for the 1st Prize, an eligibility snapshot must first be generated and locked for this prize.
+                {nextPrize && nextPrize.prize_number > 1
+                  ? `Sequential ceremonial order (5th → 4th → 3rd → 2nd → 1st) is active (current stage: ${formatPrizeLabel(nextPrize.prize_number)}). Before dual authorization can be requested or approved for the 1st Prize, Prizes 5th through 2nd must be drawn and an eligibility snapshot must be locked for the 1st Prize.`
+                  : "Before dual authorization can be requested or approved for the 1st Prize, an eligibility snapshot must first be generated and locked for this prize."}
               </p>
               <button
                 type="button"
-                onClick={() => setActiveTab("eligibility")}
+                onClick={() => {
+                  if (nextPrize) setSelectedPrizeId(nextPrize.id);
+                  setActiveTab("eligibility");
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-[#7c1619] text-white hover:bg-[#601012] transition-colors"
               >
                 Go to Eligibility Manager &rarr;

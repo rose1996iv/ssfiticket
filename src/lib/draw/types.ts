@@ -178,6 +178,8 @@ export interface DrawOverviewData {
   results: DrawResultRecord[];
   nextPrize: PrizeItem | null;
   activeSnapshot: EligibilitySnapshot | null;
+  snapshots?: EligibilitySnapshot[];
+  eligibleTicketCount?: number;
   pendingApproval: DrawApproval | null;
   userRole: {
     isSuperAdmin: boolean;

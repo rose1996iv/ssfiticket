@@ -274,24 +274,36 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
       }
     }
 
-    // 7. Check Active Snapshot and Pending Approval for Next Prize
+    // 7. Check Locked Snapshots, Pending/Completed 1st Prize Approval, and Eligible Ticket Count
+    let snapshots: EligibilitySnapshot[] = [];
     let activeSnapshot: EligibilitySnapshot | null = null;
     let pendingApproval: DrawApproval | null = null;
 
-    if (nextPrize && drawSession && drawSession.id !== VIRTUAL_DRAFT_DRAW_ID) {
-      const { data: snap } = await admin
+    if (drawSession && drawSession.id !== VIRTUAL_DRAFT_DRAW_ID) {
+      const { data: snapsRaw } = await admin
         .from("draw_eligibility_snapshots")
         .select(
           "id, draw_id, campaign_id, prize_id, total_eligible_count, previous_winner_count, manual_exclusion_count, snapshot_hash, algorithm_version, seed_commitment, sealing_kid, is_locked, locked_at, locked_by"
         )
         .eq("draw_id", drawSession.id)
-        .eq("prize_id", nextPrize.id)
-        .eq("is_locked", true)
-        .maybeSingle();
+        .eq("is_locked", true);
 
-      activeSnapshot = snap as EligibilitySnapshot | null;
+      snapshots = (snapsRaw || []) as EligibilitySnapshot[];
 
-      if (nextPrize.prize_number === 1 && activeSnapshot) {
+      if (nextPrize) {
+        activeSnapshot = snapshots.find((s) => s.prize_id === nextPrize.id) || null;
+      } else if (prizes.length > 0) {
+        const firstPrizeItem = prizes.find((p) => p.prize_number === 1) || prizes[0];
+        activeSnapshot =
+          snapshots.find((s) => s.prize_id === firstPrizeItem.id) || snapshots[0] || null;
+      }
+
+      const firstPrize = prizes.find((p) => p.prize_number === 1);
+      const firstPrizeSnapshot = firstPrize
+        ? snapshots.find((s) => s.prize_id === firstPrize.id) || null
+        : null;
+
+      if (firstPrize && firstPrizeSnapshot) {
         const { data: app } = await admin
           .from("draw_approvals")
           .select(`
@@ -300,8 +312,8 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
             approver:approver_id (email)
           `)
           .eq("draw_id", drawSession.id)
-          .eq("prize_id", nextPrize.id)
-          .eq("snapshot_hash", activeSnapshot.snapshot_hash)
+          .eq("prize_id", firstPrize.id)
+          .eq("snapshot_hash", firstPrizeSnapshot.snapshot_hash)
           .order("requested_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -327,6 +339,28 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
       }
     }
 
+    // 8. Compute Live Eligible Ticket Count for Current/Next Prize (Read-Only)
+    const { count: issuedTicketsCount } = await admin
+      .from("tickets")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", targetCampaignId)
+      .eq("status", "ISSUED");
+
+    let activeExclusionCount = 0;
+    if (nextPrize) {
+      const { count: exclCount } = await admin
+        .from("draw_manual_exclusions")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", targetCampaignId)
+        .or(`prize_id.is.null,prize_id.eq.${nextPrize.id}`);
+      activeExclusionCount = exclCount ?? 0;
+    }
+
+    const eligibleTicketCount = Math.max(
+      0,
+      (issuedTicketsCount ?? 0) - results.length - activeExclusionCount
+    );
+
     return {
       success: true,
       data: {
@@ -336,6 +370,8 @@ export async function getDrawOverview(campaignId?: string): Promise<ActionRespon
         results,
         nextPrize,
         activeSnapshot,
+        snapshots,
+        eligibleTicketCount,
         pendingApproval,
         userRole: {
           isSuperAdmin,

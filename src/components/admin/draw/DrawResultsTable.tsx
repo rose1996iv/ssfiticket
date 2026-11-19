@@ -14,6 +14,7 @@ import {
   FileCheck,
 } from "lucide-react";
 import { DrawResultRecord, PrizeItem } from "@/lib/draw/types";
+import { formatPrizeLabel } from "@/lib/draw/formatOrdinal";
 
 interface DrawResultsTableProps {
   results: DrawResultRecord[];
@@ -187,7 +188,7 @@ export function DrawResultsTable({
                                 : "bg-[#fef2f2] text-[#7c1619] border border-[#fecaca]"
                             }`}
                           >
-                            {isFirst ? "1st (Grand)" : `${r.prize_number}th Prize`}
+                            {formatPrizeLabel(r.prize_number, { grandLabel: "short" })}
                           </span>
                         </div>
                         <div className="font-bold text-sm text-[#2d1810] mt-1">{r.prize_title}</div>

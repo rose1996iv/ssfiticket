@@ -26,10 +26,15 @@ import type {
   EligibleTicketRosterItem,
   EligibilitySnapshot,
 } from "@/lib/draw/types";
+import { formatPrizeLabel } from "@/lib/draw/formatOrdinal";
 
 type Props = {
   campaignId: string;
   activePrize: PrizeItem | null;
+  prizes?: PrizeItem[];
+  nextPrize?: PrizeItem | null;
+  snapshots?: EligibilitySnapshot[];
+  onSelectPrize?: (prizeId: string) => void;
   drawId: string;
   activeSnapshot: EligibilitySnapshot | null;
   onSnapshotLocked: () => void;
@@ -38,6 +43,10 @@ type Props = {
 export function EligibilityManager({
   campaignId,
   activePrize,
+  prizes = [],
+  nextPrize = null,
+  snapshots = [],
+  onSelectPrize,
   drawId,
   activeSnapshot,
   onSnapshotLocked,
@@ -58,7 +67,12 @@ export function EligibilityManager({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const isLocked = !!activeSnapshot?.is_locked;
+  const resolvedSnapshot =
+    activeSnapshot ||
+    (activePrize ? snapshots.find((s) => s.prize_id === activePrize.id) || null : null);
+  const isLocked = !!resolvedSnapshot?.is_locked;
+  const isCurrentNextPrize = !nextPrize || (activePrize && nextPrize.id === activePrize.id);
+  const sortedPrizes = [...prizes].sort((a, b) => b.prize_number - a.prize_number);
 
   const loadTickets = useCallback(async () => {
     if (!campaignId || !activePrize) return;
@@ -163,8 +177,8 @@ export function EligibilityManager({
   };
 
   const handleCopyHash = () => {
-    if (!activeSnapshot?.snapshot_hash) return;
-    navigator.clipboard.writeText(activeSnapshot.snapshot_hash);
+    if (!resolvedSnapshot?.snapshot_hash) return;
+    navigator.clipboard.writeText(resolvedSnapshot.snapshot_hash);
     setCopiedHash(true);
     setTimeout(() => setCopiedHash(false), 2000);
   };
@@ -179,12 +193,46 @@ export function EligibilityManager({
 
   return (
     <div className="space-y-6">
+      {/* Prize Tier Selector Bar */}
+      {sortedPrizes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#eadbcf] bg-white p-3.5 shadow-2xs">
+          <span className="text-xs font-bold uppercase tracking-wider text-[#705a54] mr-2">
+            Inspect Prize Tier:
+          </span>
+          {sortedPrizes.map((p) => {
+            const snapForP = snapshots.find((s) => s.prize_id === p.id);
+            const isSelected = activePrize.id === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                data-testid={`eligibility-prize-tab-${p.prize_number}`}
+                onClick={() => {
+                  setPage(1);
+                  if (onSelectPrize) onSelectPrize(p.id);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                  isSelected
+                    ? "bg-[#7c1619] text-white shadow-2xs"
+                    : "bg-[#fffaf7] text-[#5c3e34] border border-[#eadbcf] hover:bg-[#f0e7df]"
+                }`}
+              >
+                <span>{formatPrizeLabel(p.prize_number, { grandLabel: "short" })}</span>
+                {snapForP?.is_locked && (
+                  <Lock size={11} className={isSelected ? "text-[#f3ce75]" : "text-emerald-700"} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Header Banner */}
       <div className="flex flex-col gap-4 rounded-2xl border border-[#eadbcf] bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-[#fef2f2] px-3 py-1 text-xs font-bold text-[#7c1619] border border-[#fecaca]">
-              Target: {activePrize.prize_number === 1 ? "1st Prize (Grand Prize)" : `${activePrize.prize_number}th Prize`}
+              Target: {formatPrizeLabel(activePrize.prize_number, { grandLabel: "full" })}
             </span>
             <span className="text-xs font-semibold text-[#705a54]">
               {activePrize.title}
@@ -200,15 +248,31 @@ export function EligibilityManager({
 
         {/* Lock / Snapshot Status */}
         <div className="flex items-center gap-3">
-          {isLocked ? (
+          {isLocked && resolvedSnapshot ? (
             <div className="flex flex-col items-end">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3.5 py-1.5 text-xs font-bold text-emerald-800 border border-emerald-300">
                 <Lock size={14} />
                 Snapshot Locked & Immutable
               </span>
               <span className="mt-1 text-[11px] text-[#705a54]">
-                {new Date(activeSnapshot.locked_at).toLocaleString("en-IN")}
+                {new Date(resolvedSnapshot.locked_at).toLocaleString("en-IN")}
               </span>
+            </div>
+          ) : !isCurrentNextPrize && nextPrize ? (
+            <div className="flex flex-col items-end gap-1">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3.5 py-1.5 text-xs font-bold text-amber-900 border border-amber-300">
+                <AlertTriangle size={14} />
+                Complete {formatPrizeLabel(nextPrize.prize_number)} First
+              </span>
+              {onSelectPrize && (
+                <button
+                  type="button"
+                  onClick={() => onSelectPrize(nextPrize.id)}
+                  className="text-[11px] font-bold text-[#7c1619] hover:underline"
+                >
+                  Switch to {formatPrizeLabel(nextPrize.prize_number)} &rarr;
+                </button>
+              )}
             </div>
           ) : (
             <button
@@ -232,14 +296,14 @@ export function EligibilityManager({
       )}
 
       {/* Snapshot Hash Banner (if locked) */}
-      {isLocked && (
+      {isLocked && resolvedSnapshot && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 text-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Hash size={16} className="text-emerald-700" />
               <span className="font-semibold text-emerald-900">Canonical Roster Digest (SHA-256):</span>
               <span className="font-mono text-[11px] font-bold text-[#2d1810] bg-white px-2.5 py-1 rounded border border-emerald-200">
-                {activeSnapshot.snapshot_hash}
+                {resolvedSnapshot.snapshot_hash}
               </span>
             </div>
             <button
@@ -252,10 +316,10 @@ export function EligibilityManager({
             </button>
           </div>
           <div className="mt-2 text-[11px] text-emerald-800">
-            Algorithm: <code>{activeSnapshot.algorithm_version}</code> &bull; Verified Candidates:{" "}
-            <strong>{activeSnapshot.total_eligible_count}</strong> &bull; Disqualified Previous Winners:{" "}
-            <strong>{activeSnapshot.previous_winner_count}</strong> &bull; Manual Exclusions:{" "}
-            <strong>{activeSnapshot.manual_exclusion_count}</strong>
+            Algorithm: <code>{resolvedSnapshot.algorithm_version}</code> &bull; Verified Candidates:{" "}
+            <strong>{resolvedSnapshot.total_eligible_count}</strong> &bull; Disqualified Previous Winners:{" "}
+            <strong>{resolvedSnapshot.previous_winner_count}</strong> &bull; Manual Exclusions:{" "}
+            <strong>{resolvedSnapshot.manual_exclusion_count}</strong>
           </div>
         </div>
       )}

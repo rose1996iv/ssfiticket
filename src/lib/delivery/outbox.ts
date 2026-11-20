@@ -298,9 +298,9 @@ export async function enqueueCustomerEmail(params: {
       .maybeSingle();
 
     if (existing) {
-      if (existing.status === "SENT" || existing.status === "SIMULATED") {
+      if (existing.status === "SENT" || existing.status === "SIMULATED" || existing.status === "SENDING") {
         console.log(
-          `[Email Outbox] Job with idempotency key "${idempotencyKey}" already delivered (${existing.status}). Skipping duplicate enqueue.`
+          `[Email Outbox] Job with idempotency key "${idempotencyKey}" already ${existing.status}. Skipping duplicate enqueue.`
         );
         return existing as EmailJobRecord;
       }
@@ -332,6 +332,17 @@ export async function enqueueCustomerEmail(params: {
       .single();
 
     if (insertErr || !created) {
+      // Handle concurrent duplicate insert (23505) gracefully by returning the existing job
+      if (insertErr?.code === "23505") {
+        const { data: raced } = await admin
+          .from("customer_email_outbox")
+          .select("*")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+        if (raced) {
+          return raced as EmailJobRecord;
+        }
+      }
       console.error("[Email Outbox] Failed to insert outbox job:", insertErr);
       return null;
     }
@@ -384,9 +395,12 @@ export async function processEmailJob(
     return { success: false, status: "FAILED", error: "Outbox job not found." };
   }
 
-  // Idempotency: skip if already sent
+  // Idempotency: skip if already sent or currently in-flight
   if (job.status === "SENT") {
     return { success: true, status: "SENT" };
+  }
+  if (job.status === "SENDING") {
+    return { success: true, status: "SENDING" };
   }
 
   // 2. Check operational settings
@@ -414,14 +428,14 @@ export async function processEmailJob(
     process.env.NEXT_PUBLIC_VERCEL_ENV === "production";
   const isDev = !isProduction && (process.env.NODE_ENV !== "production" || isVercelPreview);
 
-  // In Preview or Development: Simulate unless approved test recipient
+  // In Preview or Development: NEVER bypass allowlist even when forceLive is true
   if (isDev) {
     const allowedTestEmail = getApprovedPreviewRecipient();
     const isApprovedTester =
       Boolean(allowedTestEmail) &&
       job.recipient.trim().toLowerCase() === allowedTestEmail;
 
-    if (!isApprovedTester && !options?.forceLive) {
+    if (!isApprovedTester) {
       const simProvider = isAppsScriptConfigured()
         ? "google_apps_script_preview_simulated"
         : "gmail_api_preview_simulated";

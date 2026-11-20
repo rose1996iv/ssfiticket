@@ -720,4 +720,59 @@ test("Customer Transactional Email Suite", async (t) => {
     assert.equal(results.length, 1);
     assert.equal(tickets.length, 1);
   });
+
+  // ==========================================================================
+  // 10. Phase 1 Email Automation: QR Code Image, Verification Link & Outbox Hardening
+  // ==========================================================================
+  await t.test("Ticket issuance email embeds HTTPS PNG QR code and direct verification URL per ticket", () => {
+    const previewBase = "https://ssfiticket-git-preview-production-mirror-rose1996ivs-projects.vercel.app";
+    const { html, text } = renderEmailTicketMessage({
+      orderId: "44444444-4444-4444-8444-444444444444",
+      orderNumber: "ORD-2026-009999",
+      customerName: "Synthetic Preview Tester",
+      whatsappNumber: "9000000000",
+      email: "robinsonjoseph.va@gmail.com",
+      ticketNumbers: ["SSFI-946995", "SSFI-946996"],
+      amountInr: 200,
+      campaignName: "SSFI Fundraising Lucky Draw",
+      issuedAtIst: "20 Nov 2026, 09:55 pm IST",
+      ticketAccessUrl: `${previewBase}/buy/order/44444444-4444-4444-8444-444444444444`,
+      supportEmail: "Senthangstudents@gmail.com",
+    });
+
+    for (const ticketNo of ["SSFI-946995", "SSFI-946996"]) {
+      assert.ok(
+        html.includes(`src="${previewBase}/api/tickets/${ticketNo}/qr"`),
+        `HTML email must embed HTTPS QR code URL for ${ticketNo}`
+      );
+      assert.ok(
+        html.includes(`href="${previewBase}/verify/${ticketNo}"`),
+        `HTML email must include direct verification URL for ${ticketNo}`
+      );
+      assert.ok(
+        text.includes(`${previewBase}/verify/${ticketNo}`),
+        `Plain-text email must include direct verification URL for ${ticketNo}`
+      );
+    }
+    assert.ok(!html.includes("data:image/png;base64"), "Email HTML must use HTTPS QR URLs (Gmail strips data: URIs)");
+  });
+
+  await t.test("Outbox enforces Preview allowlist unconditionally and handles concurrent 23505/SENDING safely", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const outboxSrc = fs.readFileSync(path.resolve(process.cwd(), "src/lib/delivery/outbox.ts"), "utf8");
+    const qrRouteSrc = fs.readFileSync(
+      path.resolve(process.cwd(), "src/app/api/tickets/[ticketNumber]/qr/route.ts"),
+      "utf8"
+    );
+
+    assert.ok(outboxSrc.includes('existing.status === "SENDING"'), "Outbox must skip in-flight SENDING jobs");
+    assert.ok(outboxSrc.includes('insertErr?.code === "23505"'), "Outbox must gracefully handle concurrent 23505 inserts");
+    assert.ok(
+      !outboxSrc.includes("if (!isApprovedTester && !options?.forceLive)"),
+      "Preview allowlist gate must never be bypassed by forceLive"
+    );
+    assert.ok(qrRouteSrc.includes("image/png"), "QR API route must return image/png");
+    assert.ok(qrRouteSrc.includes("VALID_TICKET_NUMBER_RE"), "QR API route must validate ticket number format");
+  });
 });

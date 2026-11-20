@@ -162,13 +162,18 @@ export function renderEmailTicketMessage(payload: DeliveryPayload): {
     `Email: ${supportEmail}${rawSupportPhone ? ` | Phone: ${rawSupportPhone}` : ""}`,
   ].filter((l) => l !== "").join("\n");
 
-  // Rich HTML template with direct links per ticket
+  // Rich HTML template with scannable QR code and direct verification links per ticket
   const ticketHtmlItems = payload.ticketNumbers
     .map((num) => {
-      const directVerifyUrl = `${baseUrl}/verify/${encodeURIComponent(num)}`;
+      const encodedNum = encodeURIComponent(num);
+      const directVerifyUrl = `${baseUrl}/verify/${encodedNum}`;
+      const qrImageUrl = `${baseUrl}/api/tickets/${encodedNum}/qr`;
       return `
-        <div style="background-color: #fffaf7; border: 1px solid #e8d6c5; border-radius: 10px; padding: 14px; text-align: center; margin: 8px 0;">
+        <div style="background-color: #fffaf7; border: 1px solid #e8d6c5; border-radius: 10px; padding: 16px; text-align: center; margin: 10px 0;">
           <span style="font-family: monospace; font-size: 19px; font-weight: bold; color: #7c1619;">${escapeHtml(num)}</span>
+          <div style="margin: 10px auto;">
+            <img src="${qrImageUrl}" alt="Verification QR Code for ${escapeHtml(num)}" width="140" height="140" style="display: block; margin: 0 auto; border-radius: 8px; border: 1px solid #eadbcf; background-color: #ffffff; padding: 4px;" />
+          </div>
           <div style="margin-top: 6px;">
             <a href="${directVerifyUrl}" target="_blank" style="font-size: 12px; color: #7c1619; text-decoration: underline; font-weight: 600;">
               Verify Ticket Online (${escapeHtml(num)}) &rarr;

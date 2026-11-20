@@ -58,7 +58,9 @@ export function hashClientIp(clientIp: string): string {
 }
 
 /**
- * Extracts client IP from standard HTTP headers
+ * Extracts client IP from trusted proxy HTTP headers.
+ * Prefers platform-overwritten headers (Vercel / reverse proxy) over leftmost
+ * client-spoofable X-Forwarded-For values.
  */
 export function getClientIpFromHeaders(
   headers?: Headers | Record<string, string | string[] | undefined> | null
@@ -75,17 +77,27 @@ export function getClientIpFromHeaders(
     return val || null;
   };
 
-  const xForwardedFor = getHeader("x-forwarded-for");
-  if (xForwardedFor) {
-    const firstIp = xForwardedFor.split(",")[0]?.trim();
-    if (firstIp) return firstIp;
+  // 1. Platform-overwritten trusted headers (cannot be spoofed by end clients behind Vercel/Cloudflare)
+  const vercelForwarded = getHeader("x-vercel-forwarded-for");
+  if (vercelForwarded) {
+    const parts = vercelForwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    const trustedIp = parts[parts.length - 1];
+    if (trustedIp) return trustedIp;
   }
 
   const xRealIp = getHeader("x-real-ip");
-  if (xRealIp) return xRealIp.trim();
+  if (xRealIp && xRealIp.trim()) return xRealIp.trim();
 
   const cfConnectingIp = getHeader("cf-connecting-ip");
-  if (cfConnectingIp) return cfConnectingIp.trim();
+  if (cfConnectingIp && cfConnectingIp.trim()) return cfConnectingIp.trim();
+
+  // 2. Fallback to rightmost proxy-appended hop in X-Forwarded-For (immune to client-prepended values)
+  const xForwardedFor = getHeader("x-forwarded-for");
+  if (xForwardedFor) {
+    const parts = xForwardedFor.split(",").map((s) => s.trim()).filter(Boolean);
+    const rightmostIp = parts[parts.length - 1];
+    if (rightmostIp) return rightmostIp;
+  }
 
   return "127.0.0.1";
 }
@@ -220,4 +232,120 @@ export async function checkOrderAccessRateLimit(
     ipAttempts: ipCount,
     orderAttempts: globalCount,
   };
+}
+
+export type ScopedRateLimitOptions = {
+  scope: string;
+  identifier: string;
+  maxAttempts: number;
+  windowSeconds: number;
+  failClosedIfUnavailable?: boolean;
+};
+
+export type ScopedRateLimitResult = {
+  allowed: boolean;
+  attempts: number;
+  limit: number;
+  retryAfterSeconds?: number;
+  reason?: "RATE_LIMIT_EXCEEDED" | "SERVICE_UNAVAILABLE";
+};
+
+/**
+ * Generic scoped rate limiter reusing Upstash Redis REST pipeline when configured,
+ * with in-memory fallback in local/test environments.
+ * Always hashes the identifier so raw user IDs or IPs are never stored in plain keys.
+ */
+export async function checkScopedRateLimit(
+  options: ScopedRateLimitOptions
+): Promise<ScopedRateLimitResult> {
+  const {
+    scope,
+    identifier,
+    maxAttempts,
+    windowSeconds,
+    failClosedIfUnavailable = false,
+  } = options;
+
+  const cleanScope = scope.replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
+  const idHash = hashClientIp(identifier || "anonymous");
+  const key = `rl:${cleanScope}:${idHash}`;
+
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const isProdRuntime =
+    process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+
+  if (upstashUrl && upstashToken) {
+    try {
+      const pipelineBody = [
+        ["INCR", key],
+        ["EXPIRE", key, windowSeconds, "NX"],
+      ];
+
+      const res = await fetch(`${upstashUrl}/pipeline`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${upstashToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(pipelineBody),
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        throw new Error(`Upstash returned HTTP ${res.status}`);
+      }
+
+      const results = (await res.json()) as Array<{ result: number }>;
+      const attempts = typeof results[0]?.result === "number" ? results[0].result : 1;
+
+      if (attempts > maxAttempts) {
+        return {
+          allowed: false,
+          attempts,
+          limit: maxAttempts,
+          retryAfterSeconds: windowSeconds,
+          reason: "RATE_LIMIT_EXCEEDED",
+        };
+      }
+
+      return { allowed: true, attempts, limit: maxAttempts };
+    } catch {
+      console.warn(`[RateLimit] Distributed Redis check failed for scope="${cleanScope}".`);
+      if (failClosedIfUnavailable && isProdRuntime) {
+        return {
+          allowed: false,
+          attempts: 0,
+          limit: maxAttempts,
+          retryAfterSeconds: 60,
+          reason: "SERVICE_UNAVAILABLE",
+        };
+      }
+    }
+  } else if (isProdRuntime) {
+    console.warn(`[RateLimit] Upstash Redis is not configured in production for scope="${cleanScope}".`);
+    if (failClosedIfUnavailable) {
+      return {
+        allowed: false,
+        attempts: 0,
+        limit: maxAttempts,
+        retryAfterSeconds: 60,
+        reason: "SERVICE_UNAVAILABLE",
+      };
+    }
+  }
+
+  sweepExpiredMemoryEntries();
+  const attempts = incrementInMemory(key, windowSeconds);
+  if (attempts > maxAttempts) {
+    return {
+      allowed: false,
+      attempts,
+      limit: maxAttempts,
+      retryAfterSeconds: windowSeconds,
+      reason: "RATE_LIMIT_EXCEEDED",
+    };
+  }
+
+  return { allowed: true, attempts, limit: maxAttempts };
 }

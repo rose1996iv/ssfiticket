@@ -309,10 +309,22 @@ export async function verifyOrderPaymentAccess(
 
   if (mode === "CONSUME_WRITE") {
     const consumedAt = new Date().toISOString();
-    await admin
+    // REV-2C-05: Concurrency-safe atomic conditional consume (only succeeds if used_at IS NULL)
+    const { data: consumedRow, error: consumeErr } = await admin
       .from("payment_recovery_tokens")
       .update({ used_at: consumedAt, updated_at: consumedAt })
-      .eq("id", tokenRow.id);
+      .eq("id", tokenRow.id)
+      .is("used_at", null)
+      .select("id")
+      .maybeSingle();
+
+    if (consumeErr || !consumedRow) {
+      return {
+        authorized: false,
+        code: "TOKEN_WRITE_ALREADY_CONSUMED",
+        order_status: order.status,
+      };
+    }
 
     return {
       authorized: true,
@@ -337,9 +349,22 @@ export async function verifyOrderPaymentAccess(
   };
 }
 
+export interface VerifyOrderAccessDeps {
+  getAuthenticatedUser: () => Promise<{ id: string } | null>;
+  isProfileActive: (userId: string) => Promise<boolean>;
+  isStaffUser: (userId: string) => Promise<boolean>;
+  hasSellerRole: (userId: string) => Promise<boolean>;
+  getActiveSellerByProfileId: (userId: string) => Promise<{ id: string; is_active: boolean } | null>;
+  getOrderSellerId: (orderId: string) => Promise<string | null>;
+  getOrderCookie: (orderId: string) => Promise<string | null>;
+  verifyToken: (orderId: string, rawToken: string, mode: AccessMode) => Promise<VerifyTokenResult>;
+}
+
 /**
  * Comprehensive authorization validator checking Staff, Owning Seller,
  * and Customer Token access with rate-limiting.
+ * Enforces active profile check (`profiles.is_active`), authoritative `has_role('SELLER')`,
+ * canonical `sellers.profile_id`, and `sellers.is_active === true`.
  */
 export async function verifyOrderAccess(
   orderId: string,
@@ -348,51 +373,116 @@ export async function verifyOrderAccess(
     rawToken?: string | null;
     requestHeaders?: Headers | null;
     skipRateLimit?: boolean;
+    deps?: Partial<VerifyOrderAccessDeps>;
   }
 ): Promise<OrderAccessResult> {
   if (!orderId) {
     return { authorized: false, code: "MISSING_ORDER_ID" };
   }
 
+  const customDeps = options?.deps;
+
   // 1. Check logged-in user session (Staff or Seller)
   try {
-    const { createSupabaseServerClient } = await import("@/lib/supabase/server");
-    const supabase = await createSupabaseServerClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    let user: { id: string } | null = null;
+    let supabaseClient: Awaited<ReturnType<(typeof import("@/lib/supabase/server"))["createSupabaseServerClient"]>> | null = null;
+    let adminClient: ReturnType<(typeof import("@/lib/supabase/admin"))["createSupabaseAdminClient"]> | null = null;
+
+    if (customDeps?.getAuthenticatedUser) {
+      user = await customDeps.getAuthenticatedUser();
+    } else {
+      const { createSupabaseServerClient } = await import("@/lib/supabase/server");
+      supabaseClient = await createSupabaseServerClient();
+      const { data } = await supabaseClient.auth.getUser();
+      user = data.user ? { id: data.user.id } : null;
+    }
 
     if (user) {
-      // Check Staff roles: SUPER_ADMIN, ADMIN, FUNDRAISING_MANAGER
-      const { data: isStaff } = await supabase.rpc("is_staff", { p_user_id: user.id });
-      if (isStaff === true) {
-        return {
-          authorized: true,
-          role: "STAFF",
-          code: "AUTHORIZED_STAFF",
-        };
-      }
+      const getAdmin = async () => {
+        if (!adminClient) {
+          const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+          adminClient = createSupabaseAdminClient();
+        }
+        return adminClient;
+      };
 
-      // Check Owning Seller
-      const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
-      const admin = createSupabaseAdminClient();
-      const { data: sellerRow } = await admin
-        .from("sellers")
-        .select("id")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      // REV-2C-05: Verify profiles.is_active === true for BOTH Staff and Seller
+      const profileActive = customDeps?.isProfileActive
+        ? await customDeps.isProfileActive(user.id)
+        : await (async () => {
+            const admin = await getAdmin();
+            const { data } = await admin
+              .from("profiles")
+              .select("is_active")
+              .eq("id", user.id)
+              .maybeSingle();
+            return data?.is_active === true;
+          })();
 
-      if (sellerRow) {
-        const { data: orderRow } = await admin
-          .from("orders")
-          .select("seller_id")
-          .eq("id", orderId)
-          .maybeSingle();
+      if (profileActive) {
+        // Check Staff roles: SUPER_ADMIN, ADMIN, FUNDRAISING_MANAGER
+        const isStaff = customDeps?.isStaffUser
+          ? await customDeps.isStaffUser(user.id)
+          : await (async () => {
+              const admin = await getAdmin();
+              const { data } = await admin.rpc("is_staff", { p_user_id: user.id });
+              return data === true;
+            })();
 
-        if (orderRow && orderRow.seller_id === sellerRow.id) {
+        if (isStaff === true) {
           return {
             authorized: true,
-            role: "SELLER",
-            code: "AUTHORIZED_SELLER",
+            role: "STAFF",
+            code: "AUTHORIZED_STAFF",
           };
+        }
+
+        // REV-2C-05: Check authoritative SELLER role AND active canonical sellers.profile_id ownership
+        const hasSellerRole = customDeps?.hasSellerRole
+          ? await customDeps.hasSellerRole(user.id)
+          : await (async () => {
+              const admin = await getAdmin();
+              const { data } = await admin.rpc("has_role", {
+                p_user_id: user.id,
+                p_role: "SELLER",
+              });
+              return data === true;
+            })();
+
+        if (hasSellerRole) {
+          const sellerRow = customDeps?.getActiveSellerByProfileId
+            ? await customDeps.getActiveSellerByProfileId(user.id)
+            : await (async () => {
+                const admin = await getAdmin();
+                const { data } = await admin
+                  .from("sellers")
+                  .select("id, is_active")
+                  .eq("profile_id", user.id)
+                  .maybeSingle();
+                return data ? { id: data.id, is_active: data.is_active === true } : null;
+              })();
+
+          if (sellerRow && sellerRow.is_active === true) {
+            const orderSellerId = customDeps?.getOrderSellerId
+              ? await customDeps.getOrderSellerId(orderId)
+              : await (async () => {
+                  const admin = await getAdmin();
+                  const { data } = await admin
+                    .from("orders")
+                    .select("seller_id")
+                    .eq("id", orderId)
+                    .maybeSingle();
+                  return data?.seller_id ?? null;
+                })();
+
+            if (orderSellerId && orderSellerId === sellerRow.id) {
+              return {
+                authorized: true,
+                role: "SELLER",
+                code: "AUTHORIZED_SELLER",
+              };
+            }
+          }
         }
       }
     }
@@ -402,7 +492,11 @@ export async function verifyOrderAccess(
 
   // 2. Customer Token Flow
   // Check token from option parameter or HttpOnly cookie
-  const token = options?.rawToken || (await getOrderAccessCookie(orderId));
+  const token =
+    options?.rawToken ||
+    (customDeps?.getOrderCookie
+      ? await customDeps.getOrderCookie(orderId)
+      : await getOrderAccessCookie(orderId));
 
   if (!token) {
     return {
@@ -438,7 +532,9 @@ export async function verifyOrderAccess(
   }
 
   // 4. Verify token against database
-  const verification = await verifyOrderPaymentAccess(orderId, token, mode);
+  const verification = customDeps?.verifyToken
+    ? await customDeps.verifyToken(orderId, token, mode)
+    : await verifyOrderPaymentAccess(orderId, token, mode);
 
   if (verification.authorized) {
     return {
